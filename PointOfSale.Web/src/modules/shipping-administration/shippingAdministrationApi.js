@@ -316,6 +316,11 @@ export function createShippingAdministrationSummary(accounts) {
         blockedCarriers,
         connectionWarnings,
         activationBlockers,
+        recommendedNextActionKey: configuredCarriers === 0
+            ? 'createAccount'
+            : activationBlockers > 0
+                ? 'reviewBlockers'
+                : 'monitor',
         recommendedNextAction: configuredCarriers === 0
             ? 'Create a carrier account from a backend-supported carrier.'
             : activationBlockers > 0

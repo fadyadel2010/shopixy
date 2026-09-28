@@ -17,7 +17,7 @@ namespace PointOfSale.Tests.Admin;
 public sealed class AdminOrderListPostgresTests
 {
     [Fact]
-    public async Task ListOrders_Postgres_ReturnsTenantStorefrontOrderWithoutSetOperationFailure()
+    public async Task ListOrders_Postgres_IsolatesStorefrontAndCommerceHubWithoutSetOperationFailure()
     {
         if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext))
         {
@@ -51,14 +51,27 @@ public sealed class AdminOrderListPostgresTests
                 },
                 "admin-order-list-postgres");
 
-            Assert.Equal(2, result.TotalCount);
+            Assert.Equal(1, result.TotalCount);
             var storefrontOrder = Assert.Single(result.Items, item => item.OrderId == orderId);
             Assert.Equal(tenantId, storefrontOrder.TenantId);
             Assert.Equal($"ORD-TEST-{orderId:N}", storefrontOrder.OrderNumber);
             Assert.Equal(PaymentStatus.AwaitingVerification, storefrontOrder.PaymentStatus);
             Assert.False(storefrontOrder.IsMarketplaceOrder);
 
-            var marketplaceOrder = Assert.Single(result.Items, item => item.OrderId == subOrderId);
+            Assert.DoesNotContain(result.Items, item => item.OrderId == subOrderId);
+
+            var commerceHubResult = await service.ListOrdersAsync(
+                tenantId,
+                new AdminOrderListQuery
+                {
+                    Page = 1,
+                    PageSize = 20,
+                    Source = OrderSource.Marketplace,
+                    SortBy = "createdAt",
+                    SortDirection = "desc"
+                },
+                "commercehub-order-list-postgres");
+            var marketplaceOrder = Assert.Single(commerceHubResult.Items, item => item.OrderId == subOrderId);
             Assert.Equal(tenantId, marketplaceOrder.TenantId);
             Assert.True(marketplaceOrder.IsMarketplaceOrder);
             Assert.Equal(marketplaceOrderId.ToString(), marketplaceOrder.SourceOrderId);

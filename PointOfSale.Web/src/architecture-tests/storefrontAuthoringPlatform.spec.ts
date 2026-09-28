@@ -86,9 +86,9 @@ describe('Wave 3 Storefront Authoring Platform architecture', () => {
         const englishLocale = JSON.parse(source(path.join(SRC_DIR, 'i18n', 'locales', 'en.json')))
         expect(englishLocale.storefront.homepageEditor.publishHomepage).toBe('Publish Homepage')
         expect(englishLocale.storefront.homepageEditor.publishTemplate).toBe('Publish Product Template')
+        expect(englishLocale.storefront.cms.pageEditor.publishPage).toBe('Publish Page')
+        expect(englishLocale.storefront.cms.navigationEditor.publish).toBe('Publish Header and Footer Navigation')
         ;[
-            'Publish Page',
-            'Publish Header and Footer Navigation',
             'Save live Footer',
             'Activate theme now',
             'Publish Colors & Typography',

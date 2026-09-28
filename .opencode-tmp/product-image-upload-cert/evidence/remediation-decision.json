@@ -1,0 +1,24 @@
+{
+  "recordedBeforeRuntimeRemediation": true,
+  "confirmedDefect": "The Dell QA process selects R2StorageService while all required R2 configuration values are absent.",
+  "directEvidence": [
+    "Authorized JPEG and WEBP requests reached UploadController and R2StorageService.",
+    "R2StorageService.EnsureConfigured threw before client creation or PutObjectAsync.",
+    "All canonical R2 settings are absent from the API process and appsettings.QA.json.",
+    "Dell /health/ready reports r2 Unhealthy: Cloudflare R2 is not fully configured."
+  ],
+  "affectedComponent": "Dell QA runtime configuration for PointOfSale.API storage",
+  "expectedBehavior": "QA uses the intended Cloudflare R2 provider and completes upload before product-media registration.",
+  "approvedMinimalFix": "Provision canonical R2 settings using a Dell-side secret source and restart only the API.",
+  "requiredSettings": [
+    "R2_ACCOUNT_ID or R2_SERVICE_URL",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_BUCKET"
+  ],
+  "optionalSetting": "R2_PUBLIC_URL; when absent, product media can use the authenticated application serving route.",
+  "regressionRisk": "Incorrect endpoint, bucket, credentials, or permissions can keep readiness unhealthy or cause S3 errors. Restarting only the API briefly interrupts Dell API traffic.",
+  "applicationCodeChangeJustified": false,
+  "status": "blocked: no approved credential-bearing source or values are accessible",
+  "secretsRecorded": false
+}

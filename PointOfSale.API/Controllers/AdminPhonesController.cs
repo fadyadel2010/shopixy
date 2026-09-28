@@ -145,11 +145,6 @@ public class AdminPhonesController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
-        if (string.IsNullOrWhiteSpace(request.PhoneNumber))
-        {
-            return BadRequest(new AdminApiErrorResponse("PHONE_NUMBER_REQUIRED", "Phone number is required.", traceId));
-        }
-
         if (request.OrderId == Guid.Empty)
         {
             return BadRequest(new AdminApiErrorResponse("ORDER_ID_REQUIRED", "OrderId is required.", traceId));
@@ -160,7 +155,6 @@ public class AdminPhonesController : ControllerBase
             var result = await _phoneRiskProfileService.ReportSpamAsync(
                 _tenantContext.RequiredTenantId,
                 request.OrderId,
-                request.PhoneNumber,
                 GetCurrentUserId(),
                 cancellationToken);
 

@@ -61,32 +61,16 @@ public class AdminAnalyticsAttributionController : ControllerBase
         skip = Math.Max(0, skip);
         take = Math.Clamp(take, 1, 200);
 
-        var attributions = await _attributionStore.GetAttributionsByRangeAsync(
-            tenantId, startUtc, endUtc, model, skip, take, cancellationToken);
-
-        // Filter by source if specified
-        if (!string.IsNullOrWhiteSpace(source))
-        {
-            attributions = attributions
-                .Where(a => a.Source.Equals(source, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
-
-        // Filter by campaign if specified
-        if (!string.IsNullOrWhiteSpace(campaign))
-        {
-            attributions = attributions
-                .Where(a => a.Campaign?.Equals(campaign, StringComparison.OrdinalIgnoreCase) == true)
-                .ToList();
-        }
+        var page = await _attributionStore.GetAttributionPageAsync(
+            tenantId, startUtc, endUtc, model, source, campaign, skip, take, cancellationToken);
 
         var response = new OrderAttributionsResponse
         {
             StartDate = startUtc,
             EndDate = endUtc,
             Model = model.ToString(),
-            TotalCount = attributions.Count,
-            Orders = attributions.Select(a => new OrderAttributionDto
+            TotalCount = checked((int)page.TotalCount),
+            Orders = page.Items.Select(a => new OrderAttributionDto
             {
                 OrderId = a.OrderId,
                 Source = a.Source,

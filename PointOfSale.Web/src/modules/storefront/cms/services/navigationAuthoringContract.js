@@ -196,14 +196,16 @@ const assertObviousClientValidity = (link, menu, index) => {
     if (ENTITY_TYPES.has(link.type) && !isBackendGuid(link.targetId)) {
         throw new NavigationAuthoringContractError(
             'NAVIGATION_CLIENT_INVALID',
-            `${context} requires a selected ${link.type} target.`
+            `${context} requires a selected ${link.type} target.`,
+            { menu, index, field: 'targetId', linkType: link.type }
         )
     }
 
     if (link.type === 'collection' && !link.collectionKey) {
         throw new NavigationAuthoringContractError(
             'NAVIGATION_CLIENT_INVALID',
-            `${context} requires a selected collection.`
+            `${context} requires a selected collection.`,
+            { menu, index, field: 'collectionKey', linkType: link.type }
         )
     }
 

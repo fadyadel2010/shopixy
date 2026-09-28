@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using System.Security.Claims;
 using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Events.Affiliate;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Core.Interfaces.Treasury;
@@ -383,9 +384,11 @@ public class AdminAffiliateController : ControllerBase
             Builders<AffiliateOrderDocument>.Filter.Eq(d => d.TenantId, tenantId)
         };
 
+        IReadOnlyCollection<Guid>? statusOrderIds = null;
+
         if (!string.IsNullOrWhiteSpace(status))
         {
-            var statusOrderIds = await BuildAffiliateOrderIdsForLedgerStatusAsync(id, tenantId, status, ct);
+            statusOrderIds = await BuildAffiliateOrderIdsForLedgerStatusAsync(id, tenantId, status, ct);
 
             if (statusOrderIds.Count == 0)
             {
@@ -397,9 +400,41 @@ public class AdminAffiliateController : ControllerBase
                     TotalPages = 0
                 });
             }
-
-            filters.Add(Builders<AffiliateOrderDocument>.Filter.In(d => d.OrderId, statusOrderIds));
         }
+
+        var canonicalOrderQuery =
+            from order in _dbContext.Orders.IgnoreQueryFilters().AsNoTracking()
+            join attribution in _dbContext.AffiliateAttributions.IgnoreQueryFilters().AsNoTracking()
+                on new { order.TenantId, OrderId = order.Id }
+                equals new { attribution.TenantId, attribution.OrderId }
+            where !order.IsDeleted &&
+                  !attribution.IsDeleted &&
+                  order.TenantId == tenantId &&
+                  order.Source == OrderSource.Ecommerce &&
+                  order.AffiliateAccountId == id &&
+                  attribution.AffiliateAccountId == id &&
+                  order.AffiliateReferralCode == attribution.ReferralCode &&
+                  order.PromotionLinkId == attribution.PromotionLinkId
+            select order.Id;
+
+        if (statusOrderIds != null)
+        {
+            canonicalOrderQuery = canonicalOrderQuery.Where(orderId => statusOrderIds.Contains(orderId));
+        }
+
+        var canonicalOrderIds = await canonicalOrderQuery.Distinct().ToListAsync(ct);
+        if (canonicalOrderIds.Count == 0)
+        {
+            return Ok(new AffiliateOrdersResponse
+            {
+                Page = page,
+                PageSize = pageSize,
+                TotalCount = 0,
+                TotalPages = 0
+            });
+        }
+
+        filters.Add(Builders<AffiliateOrderDocument>.Filter.In(d => d.OrderId, canonicalOrderIds));
 
         var filter = Builders<AffiliateOrderDocument>.Filter.And(filters);
 

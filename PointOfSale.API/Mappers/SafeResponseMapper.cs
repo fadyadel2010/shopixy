@@ -74,7 +74,7 @@ public static class SafeResponseMapper
         TaxRate = product.TaxRate,
         Unit = product.Unit,
         MinimumStockLevel = product.MinimumStockLevel,
-        Images = product.Images,
+        Images = ResolveProductImages(product),
         IsActive = product.IsActive,
         TrackStock = product.TrackStock,
         HasVariants = product.HasVariants,
@@ -427,6 +427,21 @@ public static class SafeResponseMapper
             : product.ProductUnits
                 .Where(unit => !unit.IsDeleted)
                 .FirstOrDefault(unit => unit.IsDefault);
+
+    private static string? ResolveProductImages(Product product)
+    {
+        var canonicalImages = product.Media
+            .Where(media => string.Equals(media.MediaType, "image", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(media => media.Position)
+            .ThenBy(media => media.CreatedAtUtc)
+            .Select(media => media.Url?.Trim())
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .ToList();
+
+        return canonicalImages.Count > 0
+            ? string.Join(',', canonicalImages)
+            : product.Images;
+    }
 
     private static SalesInvoiceItemResponseDto ToSalesInvoiceItemResponseDto(SalesInvoiceItem item) => new()
     {

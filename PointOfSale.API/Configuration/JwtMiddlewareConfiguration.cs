@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using PointOfSale.API.Middleware;
 using PointOfSale.API.Models;
+using PointOfSale.API.Security;
 using System.Text;
 
 namespace PointOfSale.API.Configuration;
@@ -10,7 +11,7 @@ namespace PointOfSale.API.Configuration;
 /// PHASE CR-1: JWT Middleware Configuration with Cookie Support
 /// 
 /// SECURITY HARDENING:
-/// - Reads JWT from HttpOnly Secure cookie (SignalR)
+/// - Reads JWT from the HttpOnly POS session cookie
 /// - Falls back to Authorization header (REST APIs)
 /// - Validates tenant_id claim exists
 /// - No token logging
@@ -54,8 +55,8 @@ public static class JwtMiddlewareConfiguration
                 // PHASE CR-1: Cookie-first token extraction
                 OnMessageReceived = context =>
                 {
-                    // Priority 1: HttpOnly Secure cookie (for SignalR)
-                    if (context.Request.Cookies.TryGetValue("auth_token", out var cookieToken))
+                    // Priority 1: HttpOnly POS session cookie
+                    if (context.Request.Cookies.TryGetValue(AuthCookieConfiguration.PosAccessTokenCookieName, out var cookieToken))
                     {
                         context.Token = cookieToken;
                         return Task.CompletedTask;
@@ -137,7 +138,7 @@ public static class JwtMiddlewareConfiguration
                 if (path.StartsWithSegments("/hubs"))
                 {
                     // SignalR MUST use cookie authentication
-                    if (context.Request.Cookies.TryGetValue("auth_token", out var token))
+                    if (context.Request.Cookies.TryGetValue(AuthCookieConfiguration.PosAccessTokenCookieName, out var token))
                     {
                         context.Token = token;
                     }
@@ -157,7 +158,7 @@ public static class JwtMiddlewareConfiguration
                 else
                 {
                     // REST API: Try cookie first, then header
-                    if (context.Request.Cookies.TryGetValue("auth_token", out var cookieToken))
+                    if (context.Request.Cookies.TryGetValue(AuthCookieConfiguration.PosAccessTokenCookieName, out var cookieToken))
                     {
                         context.Token = cookieToken;
                     }

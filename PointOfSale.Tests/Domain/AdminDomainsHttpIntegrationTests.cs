@@ -33,6 +33,7 @@ using PointOfSale.Core.Models;
 using PointOfSale.Infrastructure.Certificates;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
+using PointOfSale.Tests.Infrastructure;
 using PointOfSale.Tests.Fakes;
 
 namespace PointOfSale.Tests.CustomDomains;
@@ -630,7 +631,7 @@ public sealed class AdminDomainsHttpIntegrationTests
 
         public static async Task<AdminDomainHttpFixture> StartAsync()
         {
-            var databaseRoot = new InMemoryDatabaseRoot();
+            var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
             var databaseName = $"AdminDomainsHttp_{Guid.NewGuid():N}";
             var resolver = new DeterministicDnsResolver();
             var edge = new DeterministicCaddyEdgeClient();

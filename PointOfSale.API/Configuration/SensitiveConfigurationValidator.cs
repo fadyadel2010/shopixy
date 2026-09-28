@@ -197,8 +197,8 @@ public static class SensitiveConfigurationValidator
             return;
         }
 
-        if (LooksLikePlaceholder(accountId) || LooksLikePlaceholder(accessKeyId) || LooksLikePlaceholder(secretAccessKey) ||
-            LooksLikePlaceholder(bucket) || LooksLikePlaceholder(serviceUrl) || LooksLikePlaceholder(publicUrl))
+        if (new[] { accountId, accessKeyId, secretAccessKey, bucket, serviceUrl, publicUrl }
+            .Any(static value => !string.IsNullOrWhiteSpace(value) && LooksLikePlaceholder(value)))
         {
             failures.Add("R2 configuration contains placeholder values. Provide real values or clear the partial configuration.");
             return;

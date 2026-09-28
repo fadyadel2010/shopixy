@@ -6,13 +6,14 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { RegisterForm } from '../components/RegisterForm';
 import { VerifyEmailBanner } from '../components/VerifyEmailBanner';
 import { useStoreConfigStore, selectStoreName } from '@/store';
 import type { OnlineCustomer } from '../types';
+import { resolveStorefrontReturnPath } from '../returnPath';
 
 /**
  * Register page component
@@ -20,7 +21,9 @@ import type { OnlineCustomer } from '../types';
 export const RegisterPage: React.FC = () => {
     const { t, direction } = useTranslation();
     const navigate = useNavigate();
+    const location = useLocation();
     const storeName = useStoreConfigStore(selectStoreName);
+    const returnTo = resolveStorefrontReturnPath(new URLSearchParams(location.search).get('return'));
 
     const [registrationComplete, setRegistrationComplete] = useState(false);
     const [registeredCustomer, setRegisteredCustomer] = useState<OnlineCustomer | null>(null);
@@ -28,7 +31,7 @@ export const RegisterPage: React.FC = () => {
     // Guard: redirect if already authenticated
     const { isLoading, showContent } = useAuthGuard({
         redirectIfAuthenticated: true,
-        authenticatedRedirectTo: '/',
+        authenticatedRedirectTo: returnTo,
     });
 
     // Handle successful registration
@@ -39,21 +42,17 @@ export const RegisterPage: React.FC = () => {
 
         // After a delay, redirect to home or return URL
         setTimeout(() => {
-            const params = new URLSearchParams(window.location.search);
-            const returnTo = params.get('return') || '/';
             navigate(returnTo, { replace: true });
         }, 3000);
-    }, [navigate]);
+    }, [navigate, returnTo]);
 
     // Navigate to login
     const handleLoginClick = useCallback(() => {
-        const params = new URLSearchParams(window.location.search);
-        const returnTo = params.get('return');
-        const loginUrl = returnTo
+        const loginUrl = returnTo !== '/'
             ? `/login?return=${encodeURIComponent(returnTo)}`
             : '/login';
         navigate(loginUrl);
-    }, [navigate]);
+    }, [navigate, returnTo]);
 
     // Show loading state
     if (isLoading) {

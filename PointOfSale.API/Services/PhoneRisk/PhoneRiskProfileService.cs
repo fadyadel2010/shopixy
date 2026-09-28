@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 
@@ -10,15 +11,18 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IPhoneNumberNormalizer _phoneNumberNormalizer;
+    private readonly IOrderVelocityService _orderVelocityService;
     private readonly ILogger<PhoneRiskProfileService> _logger;
 
     public PhoneRiskProfileService(
         ApplicationDbContext dbContext,
         IPhoneNumberNormalizer phoneNumberNormalizer,
+        IOrderVelocityService orderVelocityService,
         ILogger<PhoneRiskProfileService> logger)
     {
         _dbContext = dbContext;
         _phoneNumberNormalizer = phoneNumberNormalizer;
+        _orderVelocityService = orderVelocityService;
         _logger = logger;
     }
 
@@ -109,6 +113,90 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
             .AnyAsync(x => x.TenantId == tenantId && x.OrderId == orderId, cancellationToken);
     }
 
+    public async Task<AdminOrderCustomerTrustDto?> GetOrderCustomerTrustAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        var order = await _dbContext.Orders
+            .AsNoTracking()
+            .Where(x =>
+                x.Id == orderId &&
+                x.TenantId == tenantId &&
+                x.Source == OrderSource.Ecommerce &&
+                !x.IsDeleted)
+            .Select(x => new
+            {
+                CustomerPhone = x.Customer != null ? x.Customer.Phone : null,
+                OnlineCustomerPhone = x.OnlineCustomer != null ? x.OnlineCustomer.Phone : null,
+                x.GuestPhone,
+                x.IpAddress,
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (order == null)
+        {
+            return null;
+        }
+
+        var phoneNumber = order.CustomerPhone ?? order.OnlineCustomerPhone ?? order.GuestPhone;
+        var result = new AdminOrderCustomerTrustDto { OrderId = orderId };
+        if (string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            return result;
+        }
+
+        var normalizedPhone = await NormalizePhoneAsync(tenantId, phoneNumber, cancellationToken);
+        var phoneRisk = await GetStatusAsync(tenantId, phoneNumber, cancellationToken);
+        var globalSpamReports = await GetGlobalSpamReportsAsync(tenantId, phoneNumber, cancellationToken);
+        phoneRisk ??= new AdminPhoneRiskStatusDto
+        {
+            PhoneNumber = normalizedPhone,
+            GlobalSpamReports = globalSpamReports,
+        };
+
+        var previousOrders = await _dbContext.Orders
+            .AsNoTracking()
+            .Where(x =>
+                x.TenantId == tenantId &&
+                x.Id != orderId &&
+                x.Source == OrderSource.Ecommerce &&
+                !x.IsDeleted)
+            .Where(x =>
+                x.GuestPhone == phoneNumber ||
+                (x.Customer != null && x.Customer.Phone == phoneNumber) ||
+                (x.OnlineCustomer != null && x.OnlineCustomer.Phone == phoneNumber))
+            .GroupBy(_ => 1)
+            .Select(group => new
+            {
+                Total = group.Count(),
+                Cancelled = group.Count(x => x.Status == OrderStatus.Cancelled),
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var velocity = await _orderVelocityService.GetCurrentAssessmentAsync(
+            order.IpAddress,
+            normalizedPhone,
+            cancellationToken) ?? new OrderVelocityAssessment();
+        var previousOrdersCount = previousOrders?.Total ?? 0;
+        var cancelledOrdersCount = previousOrders?.Cancelled ?? 0;
+        var (riskLevel, riskSignals) = AssessRisk(
+            phoneRisk.SpamReports,
+            globalSpamReports,
+            previousOrdersCount,
+            cancelledOrdersCount,
+            velocity);
+
+        result.PhoneNumber = normalizedPhone;
+        result.PreviousOrdersCount = previousOrdersCount;
+        result.CancelledOrdersCount = cancelledOrdersCount;
+        result.HasReportedSpam = await HasReportedSpamAsync(tenantId, orderId, cancellationToken);
+        result.RiskLevel = riskLevel;
+        result.RiskSignals = riskSignals;
+        result.PhoneRisk = phoneRisk;
+        return result;
+    }
+
     public async Task<AdminPhoneRiskStatusDto> BlockAsync(
         Guid tenantId,
         string phoneNumber,
@@ -184,10 +272,10 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
     public async Task<AdminPhoneRiskStatusDto> ReportSpamAsync(
         Guid tenantId,
         Guid orderId,
-        string phoneNumber,
         Guid? reportedByUserId,
         CancellationToken cancellationToken = default)
     {
+        var phoneNumber = await ResolveOrderPhoneAsync(tenantId, orderId, cancellationToken);
         var normalizedPhone = await NormalizePhoneAsync(tenantId, phoneNumber, cancellationToken);
         var utcNow = DateTime.UtcNow;
         var createdReport = false;
@@ -275,6 +363,98 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
 
         var blockedByUser = await ResolveBlockedByUserNameAsync(profile.BlockedByUserId, cancellationToken);
         return MapStatus(profile, blockedByUser, globalSpamReports);
+    }
+
+    private async Task<string> ResolveOrderPhoneAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var orderPhone = await _dbContext.Orders
+            .AsNoTracking()
+            .Where(x =>
+                x.Id == orderId &&
+                x.TenantId == tenantId &&
+                x.Source == OrderSource.Ecommerce &&
+                !x.IsDeleted)
+            .Select(x => new
+            {
+                CustomerPhone = x.Customer != null ? x.Customer.Phone : null,
+                OnlineCustomerPhone = x.OnlineCustomer != null ? x.OnlineCustomer.Phone : null,
+                x.GuestPhone,
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var phoneNumber = orderPhone?.CustomerPhone ?? orderPhone?.OnlineCustomerPhone ?? orderPhone?.GuestPhone;
+
+        if (string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            throw new ArgumentException("The order does not have an available customer phone number.", nameof(orderId));
+        }
+
+        return phoneNumber;
+    }
+
+    private static (string Level, List<string> Signals) AssessRisk(
+        int tenantSpamReports,
+        int globalSpamReports,
+        int previousOrdersCount,
+        int cancelledOrdersCount,
+        OrderVelocityAssessment velocity)
+    {
+        var score = 0;
+        var signals = new List<string>();
+
+        if (globalSpamReports >= 5)
+        {
+            return ("CRITICAL_RISK", new List<string> { "SEVERE_GLOBAL_SPAM" });
+        }
+
+        if (globalSpamReports >= 3)
+        {
+            score += 10;
+            signals.Add("GLOBAL_SPAM");
+        }
+
+        if (tenantSpamReports >= 1)
+        {
+            score += 5;
+            signals.Add("TENANT_SPAM");
+        }
+
+        var cancellationRate = previousOrdersCount > 0
+            ? cancelledOrdersCount / (double)previousOrdersCount
+            : 0;
+        if (previousOrdersCount >= 3 && cancellationRate > 0.6)
+        {
+            score += 7;
+            signals.Add("HIGH_CANCELLATION_RATE");
+        }
+
+        if (previousOrdersCount == 0)
+        {
+            score += 2;
+            signals.Add("FIRST_ORDER");
+        }
+
+        if (velocity.IpVelocityTriggered)
+        {
+            score += 5;
+            signals.Add("IP_VELOCITY");
+        }
+
+        if (velocity.PhoneVelocityTriggered)
+        {
+            score += 5;
+            signals.Add("PHONE_VELOCITY");
+        }
+
+        return (score switch
+        {
+            < 5 => "SAFE",
+            <= 12 => "SUSPICIOUS",
+            _ => "HIGH_RISK",
+        }, signals);
     }
 
     public async Task<AdminPagedResult<AdminBlockedPhoneListItemDto>> ListBlockedAsync(

@@ -44,19 +44,6 @@ public sealed class StorefrontProductCacheInvalidator : IStorefrontProductCacheI
         bool invalidateHomepage = true,
         CancellationToken cancellationToken = default)
     {
-        var keys = new List<string>
-        {
-            CacheKeyBuilder.ProductByIdKey(_settings.InstanceName, tenantId, productId),
-            $"{CacheKeyBuilder.ProductByIdKey(_settings.InstanceName, tenantId, productId)}:affiliate"
-        };
-
-        if (!string.IsNullOrWhiteSpace(slug))
-        {
-            keys.Add(CacheKeyBuilder.ProductBySlugKey(_settings.InstanceName, tenantId, slug));
-            keys.Add(CacheKeyBuilder.ProductBySlugKey(_settings.InstanceName, tenantId, $"{slug}:affiliate"));
-        }
-
-        await _cache.RemoveManyAsync(keys, cancellationToken);
         await InvalidateTenantCollectionsAsync(tenantId, invalidateHomepage, cancellationToken);
     }
 
@@ -74,16 +61,5 @@ public sealed class StorefrontProductCacheInvalidator : IStorefrontProductCacheI
         await _cache.AdvanceInvalidationGenerationAsync(
             CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_settings.InstanceName, tenantId),
             cancellationToken);
-
-        await _cache.RemoveByPatternAsync(
-            CacheKeyBuilder.ProductsPatternKey(_settings.InstanceName, tenantId),
-            cancellationToken);
-
-        if (invalidateHomepage)
-        {
-            await _cache.RemoveByPatternAsync(
-                CacheKeyBuilder.HomePatternKey(_settings.InstanceName, tenantId),
-                cancellationToken);
-        }
     }
 }

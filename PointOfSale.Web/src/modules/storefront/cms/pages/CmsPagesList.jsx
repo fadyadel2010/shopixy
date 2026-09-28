@@ -22,7 +22,7 @@ import {
 } from '../../authoringPlatform'
 
 export function CmsPagesList() {
-    const { i18n } = useTranslation()
+    const { t, i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const navigate = useNavigate()
 
@@ -53,7 +53,7 @@ export function CmsPagesList() {
             setPages(admittedPages)
         } catch (err) {
             console.error('Failed to load CMS pages', err)
-            setError(isRTL ? 'تعذر تحميل الصفحات.' : 'Unable to load pages.')
+            setError(t('storefront.cms.pageList.loadFailed'))
         } finally {
             setIsLoading(false)
         }
@@ -66,7 +66,7 @@ export function CmsPagesList() {
         try {
             await cmsService.seedDefaultPages()
             await loadPages()
-            setNotice(isRTL ? 'تم إنشاء محتوى CMS الافتراضي.' : 'Default CMS content created successfully.')
+            setNotice(t('storefront.cms.pageList.defaultsCreated'))
         } catch (err) {
             console.error('Failed to seed CMS pages', err)
             const feedback = getAuthoringErrorFeedback(err)
@@ -83,7 +83,7 @@ export function CmsPagesList() {
         try {
             await cmsService.deletePage(page.id, page.draftVersion ?? page.publishedVersion)
             await loadPages()
-            setNotice(isRTL ? 'تم حذف الصفحة.' : 'Page deleted successfully.')
+            setNotice(t('storefront.cms.pageList.deleted'))
         } catch (err) {
             console.error('Failed to delete CMS page', err)
             const feedback = getAuthoringErrorFeedback(err)
@@ -97,10 +97,10 @@ export function CmsPagesList() {
         return (
             <AuthoringStatusBadge state={page.status === 'Published' ? 'published' : page.status === 'UnpublishedChanges' ? 'dirty' : 'draft'}>
                 {page.status === 'UnpublishedChanges'
-                    ? (isRTL ? 'مسودة جاهزة للنشر' : 'Draft ready to publish')
+                    ? t('storefront.cms.pageList.status.ready')
                     : page.status === 'Published'
-                        ? (isRTL ? 'منشور' : 'Published')
-                        : (isRTL ? 'مسودة' : 'Draft')}
+                        ? t('storefront.cms.published')
+                        : t('storefront.cms.draft')}
             </AuthoringStatusBadge>
         )
     }
@@ -108,44 +108,44 @@ export function CmsPagesList() {
     return (
         <div className="space-y-6">
             <AuthoringActionBar
-                title="Pages"
-                subtitle="Open a Page to preview its saved draft, view Page history, save, publish, or roll back. The list never publishes content."
-                backAction={{ label: 'Back', onClick: () => navigate('/storefront') }}
-                status={<AuthoringStatusBadge state="draft">{pages.length} Pages</AuthoringStatusBadge>}
+                title={t('storefront.cms.pageList.title')}
+                subtitle={t('storefront.cms.pageList.subtitle')}
+                backAction={{ label: t('storefront.cms.pageList.back'), onClick: () => navigate('/storefront') }}
+                status={<AuthoringStatusBadge state="draft">{t('storefront.cms.pageList.count', { count: pages.length })}</AuthoringStatusBadge>}
                 leading={<div className="flex flex-wrap gap-3">
                     <button
-                        onClick={() => setConfirmAction({ type: 'seed', title: 'Create Default Pages?', description: 'This creates the default CMS Page drafts. Nothing is published.' })}
+                        onClick={() => setConfirmAction({ type: 'seed', title: t('storefront.cms.pageList.seedConfirmTitle'), description: t('storefront.cms.pageList.seedConfirmDescription') })}
                         disabled={isSeeding}
                         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
                     >
                         {isSeeding ? <Loader2 size={16} className="animate-spin" /> : <FilePlus2 size={16} />}
-                        {isRTL ? 'إضافة الصفحات الافتراضية' : 'Seed Default Pages'}
+                        {t('storefront.cms.seedDefaults')}
                     </button>
                     <button
                         onClick={() => navigate('/storefront/content/pages/new')}
                         className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
                     >
                         <FilePlus2 size={16} />
-                        {isRTL ? 'صفحة جديدة' : 'New Page'}
+                        {t('storefront.cms.pageList.create')}
                     </button>
                 </div>}
             />
 
-            {error ? <AuthoringFeedback kind="error" title="Pages action failed" message={error} action={{ label: 'Retry', onClick: loadPages }} /> : null}
-            {notice ? <AuthoringFeedback kind="success" title="Pages updated" message={notice} /> : null}
+            {error ? <AuthoringFeedback kind="error" title={t('storefront.cms.pageList.actionFailed')} message={error} action={{ label: t('storefront.cms.pageList.retry'), onClick: loadPages }} /> : null}
+            {notice ? <AuthoringFeedback kind="success" title={t('storefront.cms.pageList.updated')} message={notice} /> : null}
 
             {isLoading ? (
-                <AuthoringLoadingState label="Loading Pages…" />
+                <AuthoringLoadingState label={t('storefront.cms.pageList.loading')} />
             ) : pages.length === 0 ? (
-                <AuthoringEmptyState title="No Pages" description="Create a custom Page draft or seed the default Page drafts. Nothing is published from this list." action={{ label: 'Create Page', onClick: () => navigate('/storefront/content/pages/new') }} />
+                <AuthoringEmptyState title={t('storefront.cms.pageList.emptyTitle')} description={t('storefront.cms.pageList.emptyDescription')} action={{ label: t('storefront.cms.pageList.create'), onClick: () => navigate('/storefront/content/pages/new') }} />
             ) : (
                 <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                    <div className="grid grid-cols-[1.3fr_1fr_0.9fr_0.9fr_0.9fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                        <span>{isRTL ? 'الصفحة' : 'Page'}</span>
-                        <span>{isRTL ? 'النوع' : 'Mode'}</span>
-                        <span>{isRTL ? 'الحالة' : 'Status'}</span>
-                        <span>{isRTL ? 'آخر تحديث' : 'Updated'}</span>
-                        <span className="text-right">{isRTL ? 'الإجراءات' : 'Actions'}</span>
+                    <div className="hidden grid-cols-[1.3fr_1fr_0.9fr_0.9fr_0.9fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 md:grid">
+                        <span>{t('storefront.cms.pageList.columns.page')}</span>
+                        <span>{t('storefront.cms.pageList.columns.mode')}</span>
+                        <span>{t('storefront.cms.pageList.columns.status')}</span>
+                        <span>{t('storefront.cms.pageList.columns.updated')}</span>
+                        <span className="text-end">{t('storefront.cms.pageList.columns.actions')}</span>
                     </div>
 
                     <div className="divide-y divide-slate-100">
@@ -155,7 +155,7 @@ export function CmsPagesList() {
                             return (
                                 <div
                                     key={page.id}
-                                    className="grid grid-cols-[1.3fr_1fr_0.9fr_0.9fr_0.9fr] gap-4 px-6 py-5"
+                                    className="grid grid-cols-1 gap-3 px-4 py-5 md:grid-cols-[1.3fr_1fr_0.9fr_0.9fr_0.9fr] md:gap-4 md:px-6"
                                 >
                                     <div>
                                         <div className="font-medium text-slate-900">{page.title}</div>
@@ -164,29 +164,29 @@ export function CmsPagesList() {
 
                                     <div className="text-sm text-slate-600">
                                         {page.contentType === 'Blocks'
-                                            ? (isRTL ? 'كتل مرنة' : 'Blocks')
-                                            : (isRTL ? 'نص غني' : 'Rich text')}
+                                            ? t('storefront.cms.pageList.blocks')
+                                            : t('storefront.cms.pageList.richText')}
                                     </div>
 
                                     <div>{renderStatus(page)}</div>
 
                                     <div className="text-sm text-slate-500">
-                                        {page.updatedAtUtc ? new Date(page.updatedAtUtc).toLocaleString() : '-'}
+                                        {page.updatedAtUtc ? new Date(page.updatedAtUtc).toLocaleString(isRTL ? 'ar' : 'en') : '-'}
                                     </div>
 
-                                    <div className="flex justify-end gap-2">
+                                    <div className="flex justify-start gap-2 md:justify-end">
                                         <button
                                             onClick={() => navigate(`/storefront/content/pages/${page.id}`)}
                                             className="rounded-xl border border-slate-200 p-2 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                                            title={isRTL ? 'تعديل' : 'Edit'}
+                                            title={t('storefront.cms.pageList.edit')}
                                         >
                                             <PencilLine size={16} />
                                         </button>
                                         <button
-                                            onClick={() => setConfirmAction({ type: 'delete', page, title: 'Delete Page?', description: `Delete "${page.title}" from the current Page workspace?` })}
+                                            onClick={() => setConfirmAction({ type: 'delete', page, title: t('storefront.cms.pageList.deleteConfirmTitle'), description: t('storefront.cms.pageList.deleteConfirmDescription', { title: page.title }) })}
                                             disabled={isBusy}
                                             className="rounded-xl border border-rose-200 p-2 text-rose-700 transition hover:bg-rose-50 disabled:opacity-60"
-                                            title={isRTL ? 'حذف' : 'Delete'}
+                                            title={t('storefront.cms.pageList.delete')}
                                         >
                                             {isBusy ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                                         </button>
@@ -201,7 +201,7 @@ export function CmsPagesList() {
                 open={confirmAction != null}
                 title={confirmAction?.title}
                 description={confirmAction?.description}
-                confirmLabel={confirmAction?.type === 'delete' ? 'Delete Page' : 'Create Default Pages'}
+                confirmLabel={confirmAction?.type === 'delete' ? t('storefront.cms.pageList.deletePage') : t('storefront.cms.seedDefaults')}
                 confirmTone={confirmAction?.type === 'delete' ? 'danger' : 'primary'}
                 busy={isSeeding || Boolean(busyPageId)}
                 onClose={() => setConfirmAction(null)}

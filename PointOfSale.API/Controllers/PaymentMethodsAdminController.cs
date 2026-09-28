@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Localization;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
@@ -77,6 +78,7 @@ public class PaymentMethodsAdminController : ControllerBase
         SetNoStoreHeaders();
 
         return Ok(SupportedPaymentMethodCodes
+            .Where(code => !FawryFinancialAuthorityPolicy.IsFawry(code))
             .Select(MapToCatalogDto)
             .OrderBy(provider => provider.SortOrder)
             .ToList());
@@ -94,7 +96,7 @@ public class PaymentMethodsAdminController : ControllerBase
         var tenantId = TenantId;
 
         var methods = await _dbContext.TenantPaymentMethods
-            .Where(m => m.TenantId == tenantId)
+            .Where(m => m.TenantId == tenantId && m.Code != "FAWRY")
             .OrderBy(m => m.SortOrder)
             .ThenBy(m => m.Code)
             .ToListAsync(cancellationToken);
@@ -1108,7 +1110,7 @@ public class PaymentMethodsAdminController : ControllerBase
             StatusCodes.Status422UnprocessableEntity,
             new ApiErrorResponse(
                 FawryFinancialAuthorityPolicy.Code,
-                FawryFinancialAuthorityPolicy.Message,
+                PaymentErrorLocalization.GetFawryUnavailableMessage(Request.Headers.AcceptLanguage),
                 GetTraceId()));
 
     private void SetNoStoreHeaders()

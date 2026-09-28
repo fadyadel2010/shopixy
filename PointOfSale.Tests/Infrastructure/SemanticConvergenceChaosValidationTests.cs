@@ -601,7 +601,8 @@ public sealed class SemanticConvergenceChaosValidationTests : IDisposable
             Id = tenantId,
             Name = $"tenant-{tenantId:N}",
             Slug = $"tenant-{tenantId:N}",
-            IsActive = isActive
+            IsActive = isActive,
+            Status = isActive ? TenantStatus.Active : TenantStatus.Suspended
         };
 
     private static Product Product(Guid tenantId, Guid productId) =>

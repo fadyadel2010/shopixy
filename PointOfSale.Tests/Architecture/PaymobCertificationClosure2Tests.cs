@@ -7,6 +7,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Payments.Runtime.Domain;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Architecture;
 
@@ -110,7 +111,7 @@ public sealed class PaymobCertificationClosure2Tests
     public async Task RestartRecovery_MustReuseDurablePaymentKeyWithoutProviderCalls()
     {
         var databaseName = Guid.NewGuid().ToString("N");
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
         var tenantId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
         var intentId = Guid.NewGuid();

@@ -66,7 +66,7 @@ export function buildTenantHeaders() {
     }
 }
 
-function buildOrderQueryParams(filters) {
+export function buildOrderQueryParams(filters) {
     const params = new URLSearchParams()
 
     params.set('page', String(filters.page || DEFAULT_PAGE))
@@ -119,7 +119,11 @@ export async function getAdminOrders(filters, signal) {
         })
 
         const lifecycleAccepted = requireMarketplaceOrderLifecycleListAuthority(response.data)
-        return requireVendorOrderVisibilityListAuthority(lifecycleAccepted, useAuthStore.getState().user)
+        const scoped = requireVendorOrderVisibilityListAuthority(lifecycleAccepted, useAuthStore.getState().user)
+        if (scoped.items.some((order) => order.isMarketplaceOrder === true || order.source !== 'Ecommerce')) {
+            throw new Error('Storefront orders authority rejected a cross-domain order.')
+        }
+        return scoped
     } catch (error) {
         throw mapAdminOrdersError(error, 'Unable to load tenant orders right now.')
     }
@@ -133,9 +137,67 @@ export async function getAdminOrderDetails(orderId, signal) {
         })
 
         const lifecycleAccepted = requireMarketplaceOrderLifecycleAuthority(response.data)
-        return requireVendorOrderVisibilityAuthority(lifecycleAccepted, useAuthStore.getState().user, orderId)
+        const scoped = requireVendorOrderVisibilityAuthority(lifecycleAccepted, useAuthStore.getState().user, orderId)
+        if (scoped.isMarketplaceOrder === true || scoped.source !== 'Ecommerce') {
+            throw new Error('Storefront order authority rejected a cross-domain order.')
+        }
+        return scoped
     } catch (error) {
         throw mapAdminOrdersError(error, 'Unable to load order details right now.')
+    }
+}
+
+function requireOrderScopedResponse(payload, orderId, label) {
+    if (!payload || String(payload.orderId || '').toLowerCase() !== String(orderId || '').toLowerCase()) {
+        throw new Error(`${label} rejected order-target mismatch.`)
+    }
+
+    return payload
+}
+
+export async function getAdminOrderCustomerTrust(orderId, signal) {
+    try {
+        const response = await api.get(`/admin/orders/${orderId}/customer-trust`, {
+            headers: buildTenantHeaders(),
+            signal,
+        })
+        return requireOrderScopedResponse(response.data, orderId, 'Customer trust authority')
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to load customer trust evidence right now.')
+    }
+}
+
+export async function getAdminOrderSessionIntelligence(orderId, signal) {
+    try {
+        const response = await api.get(`/admin/orders/${orderId}/session-intelligence`, {
+            headers: buildTenantHeaders(),
+            signal,
+        })
+        return response.status === 204 || !response.data
+            ? null
+            : requireOrderScopedResponse(response.data, orderId, 'Session intelligence authority')
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to load session intelligence right now.')
+    }
+}
+
+export async function runAdminOrderCustomerPhoneAction(orderId, action, reason) {
+    const endpoints = {
+        block: `/admin/orders/${orderId}/customer-phone/block`,
+        unblock: `/admin/orders/${orderId}/customer-phone/unblock`,
+        reportSpam: `/admin/orders/${orderId}/customer-phone/report-spam`,
+    }
+    const endpoint = endpoints[action]
+    if (!endpoint) {
+        throw new Error('This customer phone action is not supported.')
+    }
+
+    try {
+        const payload = action === 'block' ? { reason: reason?.trim() || null } : undefined
+        const response = await api.post(endpoint, payload, { headers: buildTenantHeaders() })
+        return response.data
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to update this customer phone right now.')
     }
 }
 
@@ -318,22 +380,32 @@ export async function cancelAdminShipment(shipmentId, reason) {
     }
 }
 
-export async function downloadAdminOrderCheckoutAttachment(orderId, attachmentId, fileName) {
+export async function getAdminOrderCheckoutAttachmentBlob(orderId, attachmentId, signal) {
     try {
         const response = await api.get(`/admin/orders/${orderId}/checkout-attachments/${attachmentId}/download`, {
             headers: buildTenantHeaders(),
             responseType: 'blob',
+            signal,
         })
 
-        const blobUrl = window.URL.createObjectURL(response.data)
+        return response.data
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to load this attachment right now.')
+    }
+}
+
+export async function downloadAdminOrderCheckoutAttachment(orderId, attachmentId, fileName) {
+    const blob = await getAdminOrderCheckoutAttachmentBlob(orderId, attachmentId)
+
+    const blobUrl = window.URL.createObjectURL(blob)
+    try {
         const link = document.createElement('a')
         link.href = blobUrl
         link.download = fileName || 'checkout-attachment'
         document.body.appendChild(link)
         link.click()
         link.remove()
+    } finally {
         window.URL.revokeObjectURL(blobUrl)
-    } catch (error) {
-        throw mapAdminOrdersError(error, 'Unable to download this attachment right now.')
     }
 }

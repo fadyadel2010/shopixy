@@ -213,7 +213,14 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                 return null;
             }
 
-            if (ShouldBypassForProjectionLag(key, cacheType, envelope.ProjectionLastUpdatedAtUtc, envelope.SourceEventOccurredAtUtc, maxProjectionLag))
+            if (ShouldBypassForProjectionLag(
+                    key,
+                    cacheType,
+                    envelope.ProjectionLastUpdatedAtUtc,
+                    envelope.SourceEventOccurredAtUtc,
+                    envelope.ProjectionVersion,
+                    envelope.SourceVersion,
+                    maxProjectionLag))
             {
                 _telemetry.RecordMiss(cacheType);
                 await database.KeyDeleteAsync(key);
@@ -269,6 +276,8 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
             ttl,
             projectionLastUpdatedAtUtc,
             sourceEventOccurredAtUtc,
+            projectionVersion: null,
+            sourceVersion: null,
             schemaVersion,
             invalidationGenerationKey: null,
             expectedInvalidationGeneration: 0,
@@ -282,6 +291,8 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         TimeSpan ttl,
         DateTime? projectionLastUpdatedAtUtc,
         DateTime? sourceEventOccurredAtUtc,
+        long? projectionVersion,
+        long? sourceVersion,
         int schemaVersion,
         string? invalidationGenerationKey,
         long expectedInvalidationGeneration,
@@ -303,12 +314,15 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
 
         try
         {
+            _telemetry.RecordWriteOutcome(cacheType, "attempted");
             var envelope = new CacheEnvelope<T>
             {
                 Payload = value,
                 CachedAtUtc = DateTime.UtcNow,
                 ProjectionLastUpdatedAtUtc = projectionLastUpdatedAtUtc,
                 SourceEventOccurredAtUtc = sourceEventOccurredAtUtc,
+                ProjectionVersion = projectionVersion,
+                SourceVersion = sourceVersion,
                 InvalidationGeneration = expectedInvalidationGeneration,
                 SchemaVersion = schemaVersion
             };
@@ -325,7 +339,17 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
             var sw = Stopwatch.StartNew();
             if (invalidationGenerationKey == null)
             {
-                await database.StringSetAsync(key, payload, ttl);
+                var written = await database.StringSetAsync(key, payload, ttl);
+                if (!written)
+                {
+                    _telemetry.RecordWriteOutcome(cacheType, "command_false");
+                    _telemetry.RecordFailure(cacheType);
+                    _logger.LogWarning(
+                        "Redis cache write returned false | KeyHash: {KeyHash} | CacheType: {CacheType}",
+                        HashKey(key),
+                        cacheType);
+                    return;
+                }
             }
             else
             {
@@ -338,22 +362,31 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                         (long)Math.Ceiling(ttl.TotalMilliseconds),
                         payload
                     });
+                _telemetry.RecordWriteOutcome(cacheType, "script_executed");
                 if (written != 1)
                 {
+                    _telemetry.RecordWriteOutcome(cacheType, "fenced");
                     _logger.LogInformation(
-                        "Skipped stale Redis cache population after invalidation advanced | Key: {Key} | CacheType: {CacheType}",
-                        key,
+                        "Skipped stale Redis cache population after invalidation advanced | KeyHash: {KeyHash} | CacheType: {CacheType}",
+                        HashKey(key),
                         cacheType);
                     return;
                 }
             }
             sw.Stop();
+            _telemetry.RecordWriteOutcome(cacheType, "command_succeeded");
             _telemetry.RecordWriteLatency(cacheType, sw.Elapsed);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _telemetry.RecordWriteOutcome(cacheType, "cancelled");
+            throw;
         }
         catch (Exception ex)
         {
+            _telemetry.RecordWriteOutcome(cacheType, "failed");
             _telemetry.RecordFailure(cacheType, ex);
-            _logger.LogWarning(ex, "Redis cache write failed | Key: {Key} | CacheType: {CacheType}", key, cacheType);
+            _logger.LogWarning(ex, "Redis cache write failed | KeyHash: {KeyHash} | CacheType: {CacheType}", HashKey(key), cacheType);
         }
     }
 
@@ -566,6 +599,8 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                 cacheType,
                 population.ProjectionLastUpdatedAtUtc,
                 population.SourceEventOccurredAtUtc,
+                population.ProjectionVersion,
+                population.SourceVersion,
                 maxProjectionLag);
 
             if (!shouldBypassCache)
@@ -577,6 +612,8 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                     ttl,
                     population.ProjectionLastUpdatedAtUtc,
                     population.SourceEventOccurredAtUtc,
+                    population.ProjectionVersion,
+                    population.SourceVersion,
                     population.SchemaVersion,
                     invalidationGenerationKey,
                     expectedInvalidationGeneration,
@@ -773,8 +810,50 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         string cacheType,
         DateTime? projectionLastUpdatedAtUtc,
         DateTime? sourceEventOccurredAtUtc,
+        long? projectionVersion,
+        long? sourceVersion,
         TimeSpan? maxProjectionLag)
     {
+        var shouldBypass = CacheProjectionFreshnessGuard.ShouldBypass(
+            projectionLastUpdatedAtUtc,
+            sourceEventOccurredAtUtc,
+            projectionVersion,
+            sourceVersion,
+            maxProjectionLag);
+
+        if (!shouldBypass)
+        {
+            if (!projectionVersion.HasValue && !sourceVersion.HasValue &&
+                maxProjectionLag.HasValue && projectionLastUpdatedAtUtc.HasValue && sourceEventOccurredAtUtc.HasValue)
+            {
+                _telemetry.RecordProjectionLag(cacheType, projectionLastUpdatedAtUtc.Value - sourceEventOccurredAtUtc.Value);
+            }
+
+            return false;
+        }
+
+        if (projectionVersion.HasValue || sourceVersion.HasValue)
+        {
+            if (!projectionVersion.HasValue || !sourceVersion.HasValue)
+            {
+                _logger.LogWarning(
+                    "Bypassing cache because projection/source revision proof is incomplete | Key: {Key} | CacheType: {CacheType} | ProjectionVersion: {ProjectionVersion} | SourceVersion: {SourceVersion}",
+                    key,
+                    cacheType,
+                    projectionVersion,
+                    sourceVersion);
+                return true;
+            }
+
+            _logger.LogWarning(
+                "Bypassing cache because projection revision is behind source revision | Key: {Key} | CacheType: {CacheType} | ProjectionVersion: {ProjectionVersion} | SourceVersion: {SourceVersion}",
+                key,
+                cacheType,
+                projectionVersion,
+                sourceVersion);
+            return true;
+        }
+
         if (!maxProjectionLag.HasValue || !projectionLastUpdatedAtUtc.HasValue || !sourceEventOccurredAtUtc.HasValue)
         {
             return false;
@@ -782,11 +861,6 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
 
         var lag = projectionLastUpdatedAtUtc.Value - sourceEventOccurredAtUtc.Value;
         _telemetry.RecordProjectionLag(cacheType, lag);
-
-        if (lag <= maxProjectionLag.Value)
-        {
-            return false;
-        }
 
         _logger.LogWarning(
             "Bypassing cache because projection lag exceeded threshold | Key: {Key} | CacheType: {CacheType} | ProjectionUpdatedAtUtc: {ProjectionUpdatedAtUtc} | SourceEventOccurredAtUtc: {SourceEventOccurredAtUtc} | MaxProjectionLagSeconds: {MaxProjectionLagSeconds}",

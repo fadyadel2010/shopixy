@@ -2,21 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { AlertCircle, Package, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Ban, Flag, Package, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import {
-    downloadAdminOrderCheckoutAttachment,
     cancelAdminOrder,
     cancelAdminShipment,
     confirmAdminReturnReceipt,
+    getAdminOrderCustomerTrust,
     getAdminOrderDetails,
     getAdminOrderFulfillmentActions,
     getAdminOrderPaymentActions,
     getAdminOrders,
+    getAdminOrderSessionIntelligence,
+    runAdminOrderCustomerPhoneAction,
     runAdminOrderFulfillmentAction,
     runAdminOrderPaymentAction,
     updateAdminOrderStatus,
 } from '../services/adminOrdersApi'
 import { presentOrderCheckoutFields } from './orderCheckoutFieldPresentation'
+import OrderCheckoutAttachmentPreview from './OrderCheckoutAttachmentPreview'
 import { useAuthStore } from '../store/authStore'
 import { requireShipmentActionAuthority } from '../modules/shipping/shipmentActionAuthority'
 import {
@@ -68,15 +71,15 @@ const PAYMENT_STATUS_OPTIONS = [
     'AmountMismatch',
 ]
 const SORT_OPTIONS = [
-    { value: 'createdAt:desc', label: 'Newest first' },
-    { value: 'createdAt:asc', label: 'Oldest first' },
-    { value: 'orderNumber:asc', label: 'Order number A-Z' },
-    { value: 'orderNumber:desc', label: 'Order number Z-A' },
-    { value: 'customerName:asc', label: 'Customer A-Z' },
-    { value: 'totalAmount:desc', label: 'Total high-low' },
-    { value: 'totalAmount:asc', label: 'Total low-high' },
-    { value: 'status:asc', label: 'Status A-Z' },
-    { value: 'paymentStatus:asc', label: 'Payment A-Z' },
+    { value: 'createdAt:desc', labelKey: 'orders.management.sort.newest' },
+    { value: 'createdAt:asc', labelKey: 'orders.management.sort.oldest' },
+    { value: 'orderNumber:asc', labelKey: 'orders.management.sort.orderAsc' },
+    { value: 'orderNumber:desc', labelKey: 'orders.management.sort.orderDesc' },
+    { value: 'customerName:asc', labelKey: 'orders.management.sort.customerAsc' },
+    { value: 'totalAmount:desc', labelKey: 'orders.management.sort.totalDesc' },
+    { value: 'totalAmount:asc', labelKey: 'orders.management.sort.totalAsc' },
+    { value: 'status:asc', labelKey: 'orders.management.sort.statusAsc' },
+    { value: 'paymentStatus:asc', labelKey: 'orders.management.sort.paymentAsc' },
 ]
 const SORT_OPTION_VALUES = new Set(SORT_OPTIONS.map((option) => option.value))
 const MAX_DELIVERY_REFERENCE_LENGTH = 200
@@ -90,8 +93,8 @@ function parsePositiveInt(value, fallback) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function formatCurrency(amount, currency) {
-    return new Intl.NumberFormat('en-US', {
+function formatCurrency(amount, currency, locale = 'en-US') {
+    return new Intl.NumberFormat(locale, {
         style: 'currency',
         currency: currency || 'EGP',
         minimumFractionDigits: 2,
@@ -115,17 +118,38 @@ function getMarketplaceLineagePresentation(order) {
     return order?.isMarketplaceOrder ? requireBackendMarketplaceLineageAuthority(order) : null
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, locale = 'en-US', unavailable = 'Unavailable') {
     if (!value) {
-        return 'Unavailable'
+        return unavailable
     }
 
     const parsed = new Date(value)
     if (Number.isNaN(parsed.getTime())) {
-        return 'Unavailable'
+        return unavailable
     }
 
-    return parsed.toLocaleString()
+    return parsed.toLocaleString(locale)
+}
+
+function formatJourneyDuration(seconds, t) {
+    const safeSeconds = Math.max(0, Number(seconds) || 0)
+    const minutes = Math.floor(safeSeconds / 60)
+    const remainingSeconds = safeSeconds % 60
+
+    return minutes > 0
+        ? t('orders.sessionJourney.durationMinutes', { minutes, seconds: remainingSeconds })
+        : t('orders.sessionJourney.durationSeconds', { seconds: remainingSeconds })
+}
+
+function customerRiskPresentation(t, level) {
+    const presentations = {
+        UNAVAILABLE: { label: t('orders.customerRisk.unavailable'), tone: 'slate' },
+        CRITICAL_RISK: { label: t('orders.customerRisk.criticalRisk'), tone: 'rose' },
+        HIGH_RISK: { label: t('orders.customerRisk.highRisk'), tone: 'rose' },
+        SUSPICIOUS: { label: t('orders.customerRisk.suspicious'), tone: 'amber' },
+        SAFE: { label: t('orders.customerRisk.safe'), tone: 'emerald' },
+    }
+    return presentations[level] || presentations.UNAVAILABLE
 }
 
 export function normalizeFilters(searchParams) {
@@ -150,7 +174,7 @@ export function normalizeFilters(searchParams) {
     }
 }
 
-function StatusBadge({ value, tone = 'slate' }) {
+function StatusBadge({ value, label, tone = 'slate' }) {
     const palette = {
         slate: 'border-slate-200 bg-slate-100 text-slate-700',
         emerald: 'border-emerald-200 bg-emerald-100 text-emerald-700',
@@ -161,7 +185,7 @@ function StatusBadge({ value, tone = 'slate' }) {
 
     return (
         <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${palette[tone] || palette.slate}`}>
-            {value || 'Unknown'}
+            {label || value || 'Unknown'}
         </span>
     )
 }
@@ -237,55 +261,59 @@ export function isPaymentActionExecutableFromOrdersDrawer(action) {
     return PAYMENT_ACTION_CODES.has(action?.actionCode)
 }
 
-export function validateManualDeliveryEvidence(evidence) {
+function validationMessage(t, key, fallback) {
+    return typeof t === 'function' ? t(`orders.management.validation.${key}`) : fallback
+}
+
+export function validateManualDeliveryEvidence(evidence, t) {
     const deliveryReference = evidence?.deliveryReference?.trim() || ''
     const proofOfDeliveryUrl = evidence?.proofOfDeliveryUrl?.trim() || ''
     const recipientName = evidence?.recipientName?.trim() || ''
 
-    if (!deliveryReference) return 'Delivery reference is required.'
-    if (deliveryReference.length > MAX_DELIVERY_REFERENCE_LENGTH) return 'Delivery reference is too long.'
-    if (!proofOfDeliveryUrl) return 'Proof of delivery URL is required.'
-    if (proofOfDeliveryUrl.length > MAX_PROOF_URL_LENGTH) return 'Proof of delivery URL is too long.'
-    if (/\s/.test(proofOfDeliveryUrl)) return 'Proof of delivery URL cannot contain whitespace.'
-    if (recipientName.length > MAX_RECIPIENT_NAME_LENGTH) return 'Recipient name is too long.'
+    if (!deliveryReference) return validationMessage(t, 'deliveryReferenceRequired', 'Delivery reference is required.')
+    if (deliveryReference.length > MAX_DELIVERY_REFERENCE_LENGTH) return validationMessage(t, 'deliveryReferenceTooLong', 'Delivery reference is too long.')
+    if (!proofOfDeliveryUrl) return validationMessage(t, 'proofUrlRequired', 'Proof of delivery URL is required.')
+    if (proofOfDeliveryUrl.length > MAX_PROOF_URL_LENGTH) return validationMessage(t, 'proofUrlTooLong', 'Proof of delivery URL is too long.')
+    if (/\s/.test(proofOfDeliveryUrl)) return validationMessage(t, 'proofUrlWhitespace', 'Proof of delivery URL cannot contain whitespace.')
+    if (recipientName.length > MAX_RECIPIENT_NAME_LENGTH) return validationMessage(t, 'recipientNameTooLong', 'Recipient name is too long.')
 
     try {
         const parsed = new URL(proofOfDeliveryUrl)
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-            return 'Proof of delivery must be an absolute HTTP or HTTPS URL.'
+            return validationMessage(t, 'proofUrlAbsolute', 'Proof of delivery must be an absolute HTTP or HTTPS URL.')
         }
     } catch {
-        return 'Proof of delivery must be an absolute HTTP or HTTPS URL.'
+        return validationMessage(t, 'proofUrlAbsolute', 'Proof of delivery must be an absolute HTTP or HTTPS URL.')
     }
 
     return null
 }
 
-export function validateReturnReceiptEvidence(evidence, requestedQuantity) {
+export function validateReturnReceiptEvidence(evidence, requestedQuantity, t) {
     const resellableQuantity = Number(evidence?.resellableQuantity)
     const damagedQuantity = Number(evidence?.damagedQuantity)
     const maximumQuantity = Number(requestedQuantity)
 
     if (!Number.isInteger(resellableQuantity) || !Number.isInteger(damagedQuantity)) {
-        return 'Receipt quantities must be whole numbers.'
+        return validationMessage(t, 'receiptWholeNumbers', 'Receipt quantities must be whole numbers.')
     }
     if (resellableQuantity < 0 || damagedQuantity < 0) {
-        return 'Receipt quantities cannot be negative.'
+        return validationMessage(t, 'receiptNonNegative', 'Receipt quantities cannot be negative.')
     }
     if (resellableQuantity + damagedQuantity <= 0) {
-        return 'At least one received item is required.'
+        return validationMessage(t, 'receiptOneRequired', 'At least one received item is required.')
     }
     if (!Number.isInteger(maximumQuantity) || maximumQuantity <= 0 || resellableQuantity + damagedQuantity > maximumQuantity) {
-        return 'Receipt quantities cannot exceed the approved return quantity.'
+        return validationMessage(t, 'receiptExceedsApproved', 'Receipt quantities cannot exceed the approved return quantity.')
     }
 
     return null
 }
 
-export function getLifecycleMutationErrorMessage(error) {
+export function getLifecycleMutationErrorMessage(error, t) {
     return error?.status === 409
-        ? 'The order changed. Canonical data was refreshed; review it before trying again.'
-        : error?.message || 'The lifecycle action could not be completed.'
+        ? validationMessage(t, 'staleOrder', 'The order changed. Canonical data was refreshed; review it before trying again.')
+        : error?.message || validationMessage(t, 'lifecycleFailed', 'The lifecycle action could not be completed.')
 }
 
 function createActionReference(prefix) {
@@ -300,6 +328,13 @@ function isSafeTrackingUrl(value) {
     } catch {
         return false
     }
+}
+
+function actionLabel(t, action) {
+    const code = action?.code || action?.actionCode
+    return code
+        ? t(`orders.management.actions.${code}`, { defaultValue: action?.label || code })
+        : action?.label
 }
 
 function SectionCard({ title, children }) {
@@ -340,8 +375,20 @@ function OrderDetailsPanel({
     onConfirmReturnReceipt,
     isReturnReceiptUpdating,
     returnReceiptError,
+    customerTrust,
+    isCustomerTrustLoading,
+    customerTrustError,
+    onRetryCustomerTrust,
+    onCustomerPhoneAction,
+    isCustomerPhoneActionUpdating,
+    customerPhoneActionError,
+    sessionIntelligence,
+    isSessionIntelligenceLoading,
+    sessionIntelligenceError,
+    onRetrySessionIntelligence,
 }) {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
+    const locale = i18n.resolvedLanguage === 'ar' ? 'ar-EG' : 'en-US'
     const closeButtonRef = useRef(null)
     const [statusCandidate, setStatusCandidate] = useState(order?.status || '')
     const [statusReason, setStatusReason] = useState('')
@@ -383,9 +430,7 @@ function OrderDetailsPanel({
     const orderActions = (order?.availableOrderActions || []).filter((action) => action?.code === 'cancel-order')
     const shipmentActions = (order?.availableShipmentActions || []).filter((action) => action?.code === 'cancel-shipment')
     const checkoutFieldItems = presentOrderCheckoutFields(order?.checkoutFieldSnapshots)
-    const downloadAttachmentMutation = useMutation({
-        mutationFn: ({ attachmentId, fileName }) => downloadAdminOrderCheckoutAttachment(order.orderId, attachmentId, fileName),
-    })
+    const riskPresentation = customerRiskPresentation(t, customerTrust?.riskLevel)
 
     function handleSubmitStatus(event) {
         event.preventDefault()
@@ -454,7 +499,7 @@ function OrderDetailsPanel({
     }
 
     const deliveryEvidenceError = pendingFulfillmentAction?.code === 'delivered'
-        ? validateManualDeliveryEvidence(fulfillmentEvidence)
+        ? validateManualDeliveryEvidence(fulfillmentEvidence, t)
         : null
     const canSubmitFulfillmentEvidence = pendingFulfillmentAction?.code === 'delivered'
         ? !deliveryEvidenceError
@@ -514,7 +559,7 @@ function OrderDetailsPanel({
 
     function handleSubmitReturnReceipt(event) {
         event.preventDefault()
-        if (!pendingReturnReceipt || validateReturnReceiptEvidence(returnReceiptEvidence, pendingReturnReceipt.requestedQuantity)) {
+        if (!pendingReturnReceipt || validateReturnReceiptEvidence(returnReceiptEvidence, pendingReturnReceipt.requestedQuantity, t)) {
             return
         }
 
@@ -529,7 +574,7 @@ function OrderDetailsPanel({
     }
 
     const returnReceiptEvidenceError = pendingReturnReceipt
-        ? validateReturnReceiptEvidence(returnReceiptEvidence, pendingReturnReceipt.requestedQuantity)
+        ? validateReturnReceiptEvidence(returnReceiptEvidence, pendingReturnReceipt.requestedQuantity, t)
         : null
 
     useEffect(() => {
@@ -572,9 +617,9 @@ function OrderDetailsPanel({
             <div className="flex h-full flex-col">
                 <div className="flex items-start justify-between border-b border-slate-200 px-6 py-5">
                     <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Order details</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.title')}</p>
                         <h2 id="order-details-heading" className="mt-2 text-xl font-semibold text-slate-950">
-                            {order?.orderNumber || 'Loading order'}
+                            {order?.orderNumber || t('orders.management.details.loadingOrder')}
                         </h2>
                     </div>
                     <button
@@ -582,7 +627,7 @@ function OrderDetailsPanel({
                         type="button"
                         onClick={onClose}
                         className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
-                        aria-label="Close order details"
+                        aria-label={t('orders.management.details.close')}
                     >
                         <X className="h-4 w-4" />
                     </button>
@@ -599,8 +644,8 @@ function OrderDetailsPanel({
 
                     {isError ? (
                         <div role="alert" className="rounded-3xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
-                            <p className="font-semibold">Unable to load the selected order.</p>
-                            <p className="mt-2">{error?.message || 'Please try again.'}</p>
+                            <p className="font-semibold">{t('orders.management.details.loadFailed')}</p>
+                            <p className="mt-2">{error?.message || t('orders.management.details.tryAgain')}</p>
                             <button
                                 type="button"
                                 onClick={onRetry}
@@ -608,44 +653,44 @@ function OrderDetailsPanel({
                                 className="mt-4 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 <RefreshCw className={`h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
-                                Retry
+                                {t('common.retry')}
                             </button>
                         </div>
                     ) : null}
 
                     {!isLoading && !isError && order ? (
                         <div className="space-y-5">
-                            {!order.isMarketplaceOrder ? <SectionCard title="Lifecycle">
+                            {!order.isMarketplaceOrder ? <SectionCard title={t('orders.management.details.lifecycle')}>
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Order status</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.orderStatus')}</p>
                                         <div className="mt-2">
-                                            <StatusBadge value={order.status} tone={resolveOrderTone(order.status)} />
+                                            <StatusBadge value={order.status} label={t(`orders.status.${order.status}`, { defaultValue: order.status })} tone={resolveOrderTone(order.status)} />
                                         </div>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Payment status</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.paymentStatus')}</p>
                                         <div className="mt-2">
-                                            <StatusBadge value={order.paymentStatus} tone={resolvePaymentTone(order.paymentStatus)} />
+                                            <StatusBadge value={order.paymentStatus} label={t(`orders.payment.${order.paymentStatus}`, { defaultValue: order.paymentStatus })} tone={resolvePaymentTone(order.paymentStatus)} />
                                         </div>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipment status</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.shipmentStatus || 'No shipment'}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.shipmentStatus')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.shipmentStatus || t('orders.management.details.noShipment')}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Created</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(order.createdAtUtc)}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.created')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(order.createdAtUtc, locale, t('common.unavailable'))}</p>
                                     </div>
                                 </div>
 
                                 <form className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4" onSubmit={handleSubmitStatus}>
                                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                        Request status change
+                                        {t('orders.management.details.requestStatusChange')}
                                     </p>
                                     <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1.4fr_auto] md:items-end">
                                         <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                            <span className="font-medium">Requested status</span>
+                                            <span className="font-medium">{t('orders.management.details.requestedStatus')}</span>
                                             <select
                                                 value={statusCandidate}
                                                 onChange={(event) => setStatusCandidate(event.target.value)}
@@ -653,17 +698,17 @@ function OrderDetailsPanel({
                                                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                                             >
                                                 {directStatusOptions.map((option) => (
-                                                    <option key={option} value={option}>{option}</option>
+                                                    <option key={option} value={option}>{t(`orders.status.${option}`, { defaultValue: option })}</option>
                                                 ))}
                                             </select>
                                         </label>
                                         <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                            <span className="font-medium">Reason</span>
+                                            <span className="font-medium">{t('orders.management.details.reason')}</span>
                                             <input
                                                 value={statusReason}
                                                 onChange={(event) => setStatusReason(event.target.value)}
                                                 disabled={!order.rowVersion || isStatusUpdating}
-                                                placeholder="Optional backend audit note"
+                                                placeholder={t('orders.management.details.auditNote')}
                                                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                                             />
                                         </label>
@@ -672,35 +717,35 @@ function OrderDetailsPanel({
                                             disabled={!canSubmitStatusCandidate || isStatusUpdating}
                                             className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                                         >
-                                            {isStatusUpdating ? 'Submitting' : 'Submit candidate'}
+                                            {isStatusUpdating ? t('orders.management.details.submitting') : t('orders.management.details.submitCandidate')}
                                         </button>
                                     </div>
                                     {!order.rowVersion ? (
                                         <p className="mt-3 text-sm text-amber-700">
-                                            Status mutation is withheld until the backend returns RowVersion evidence.
+                                            {t('orders.management.details.rowVersionRequired')}
                                         </p>
                                     ) : null}
                                     {statusUpdateError ? (
                                         <p className="mt-3 text-sm text-rose-700">{statusUpdateError}</p>
                                     ) : null}
                                     <p className="mt-3 text-sm text-slate-600">
-                                        Shipment, delivery, completion, cancellation, and payment-driven states are controlled by dedicated lifecycle actions.
+                                        {t('orders.management.details.dedicatedActions')}
                                     </p>
                                 </form>
 
                                 <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
                                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                        Fulfillment lifecycle
+                                        {t('orders.management.details.fulfillmentLifecycle')}
                                     </p>
                                     <div className="mt-3 grid gap-4 md:grid-cols-2">
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Fulfillment status</p>
-                                            <p className="mt-2 text-sm font-medium text-slate-900">{order.fulfillmentStatus || fulfillmentAuthority?.currentStatus || 'Unavailable'}</p>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.fulfillmentStatus')}</p>
+                                            <p className="mt-2 text-sm font-medium text-slate-900">{order.fulfillmentStatus || fulfillmentAuthority?.currentStatus || t('common.unavailable')}</p>
                                         </div>
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Authority</p>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.authority')}</p>
                                             <p className="mt-2 text-sm font-medium text-slate-900">
-                                                {isFulfillmentAuthorityLoading ? 'Loading actions' : `${fulfillmentActions.length} available`}
+                                                {isFulfillmentAuthorityLoading ? t('orders.management.details.loadingActions') : t('orders.management.details.availableActions', { count: fulfillmentActions.length })}
                                             </p>
                                         </div>
                                     </div>
@@ -720,38 +765,38 @@ function OrderDetailsPanel({
                                                     onClick={() => handleFulfillmentActionSelection(action)}
                                                     disabled={!executable || isFulfillmentActionUpdating}
                                                     aria-pressed={pendingFulfillmentAction?.code === action.code}
-                                                    title={executable ? action.label : 'This action is not supported by the current admin control.'}
+                                                    title={executable ? actionLabel(t, action) : t('orders.management.details.unsupportedAction')}
                                                     className={`rounded-full border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${pendingFulfillmentAction?.code === action.code ? 'border-sky-300 bg-sky-50 text-sky-800' : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-950'}`}
                                                 >
-                                                    {isFulfillmentActionUpdating ? 'Working' : action.label}
+                                                    {isFulfillmentActionUpdating ? t('orders.management.details.working') : actionLabel(t, action)}
                                                 </button>
                                             )
                                         }) : (
                                             <p className="text-sm text-slate-500">
-                                                No direct fulfillment actions are currently available for this order.
+                                                {t('orders.management.details.noFulfillmentActions')}
                                             </p>
                                         )}
                                     </div>
 
                                     {pendingFulfillmentAction ? (
                                         <form className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-4" onSubmit={handleSubmitFulfillmentEvidence}>
-                                            <p className="text-sm font-semibold text-sky-950">{pendingFulfillmentAction.label}</p>
+                                            <p className="text-sm font-semibold text-sky-950">{actionLabel(t, pendingFulfillmentAction)}</p>
                                             <p className="mt-1 text-xs text-sky-800">
-                                                Submit the evidence required by the backend lifecycle contract.
+                                                {t('orders.management.details.submitEvidence')}
                                             </p>
 
                                             {pendingFulfillmentAction.code === 'delivered' ? (
                                                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                        <span className="font-medium">Delivery reference</span>
+                                                        <span className="font-medium">{t('orders.management.details.deliveryReference')}</span>
                                                         <input autoFocus required maxLength={MAX_DELIVERY_REFERENCE_LENGTH} value={fulfillmentEvidence.deliveryReference} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, deliveryReference: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                                                     </label>
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                        <span className="font-medium">Proof of delivery URL</span>
+                                                        <span className="font-medium">{t('orders.management.details.proofUrl')}</span>
                                                         <input required type="url" inputMode="url" maxLength={MAX_PROOF_URL_LENGTH} aria-describedby="delivery-proof-error" value={fulfillmentEvidence.proofOfDeliveryUrl} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, proofOfDeliveryUrl: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                                                     </label>
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
-                                                        <span className="font-medium">Recipient name (optional)</span>
+                                                        <span className="font-medium">{t('orders.management.details.recipientName')}</span>
                                                         <input maxLength={MAX_RECIPIENT_NAME_LENGTH} value={fulfillmentEvidence.recipientName} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, recipientName: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                                                     </label>
                                                     {deliveryEvidenceError ? (
@@ -761,23 +806,23 @@ function OrderDetailsPanel({
                                             ) : (
                                                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
-                                                        <span className="font-medium">Reason</span>
+                                                        <span className="font-medium">{t('orders.management.details.reason')}</span>
                                                         <textarea autoFocus required maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={fulfillmentEvidence.reason} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, reason: event.target.value }))} className="min-h-24 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                                                     </label>
                                                     {pendingFulfillmentAction.code === 'failed-delivery' ? (
                                                         <>
                                                             <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                                <span className="font-medium">Attempt number</span>
+                                                                <span className="font-medium">{t('orders.management.details.attemptNumber')}</span>
                                                                 <input type="number" min="1" value={fulfillmentEvidence.attemptNumber} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, attemptNumber: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                                                             </label>
                                                             <label className="flex items-center gap-2 self-end rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                                                                 <input type="checkbox" checked={fulfillmentEvidence.canRetry} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, canRetry: event.target.checked }))} />
-                                                                Delivery can be retried
+                                                                {t('orders.management.details.canRetryDelivery')}
                                                             </label>
                                                         </>
                                                     ) : (
                                                         <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
-                                                            <span className="font-medium">Return authorization (optional)</span>
+                                                            <span className="font-medium">{t('orders.management.details.returnAuthorization')}</span>
                                                             <input value={fulfillmentEvidence.returnAuthorizationNumber} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, returnAuthorizationNumber: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                                                         </label>
                                                     )}
@@ -786,39 +831,39 @@ function OrderDetailsPanel({
 
                                             <div className="mt-4 flex flex-wrap gap-2">
                                                 <button type="submit" disabled={!canSubmitFulfillmentEvidence || isFulfillmentActionUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
-                                                    {isFulfillmentActionUpdating ? 'Submitting' : `Confirm ${pendingFulfillmentAction.label}`}
+                                                    {isFulfillmentActionUpdating ? t('orders.management.details.submitting') : t('orders.management.details.confirmNamed', { action: actionLabel(t, pendingFulfillmentAction) })}
                                                 </button>
                                                 <button type="button" onClick={resetFulfillmentEvidence} disabled={isFulfillmentActionUpdating} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-                                                    Cancel
+                                                    {t('common.cancel')}
                                                 </button>
                                             </div>
                                         </form>
                                     ) : null}
                                 </div>
                             </SectionCard> : <section className="rounded-3xl border border-blue-200 bg-blue-50 p-5">
-                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">CommerceHub vendor sub-order</p>
-                                <h3 className="mt-2 text-lg font-semibold text-slate-950">Marketplace fulfillment is isolated from Storefront order authority.</h3>
-                                <p className="mt-2 text-sm leading-6 text-slate-600">Use the dedicated CommerceHub surface for backend-authorized vendor fulfillment, return receipt, and marketplace lifecycle history.</p>
-                                <Link to={`/commercehub/orders/${order.orderId}`} className="mt-4 inline-flex rounded-full bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Open CommerceHub order</Link>
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">{t('orders.management.details.commerceHubBadge')}</p>
+                                <h3 className="mt-2 text-lg font-semibold text-slate-950">{t('orders.management.details.commerceHubTitle')}</h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-600">{t('orders.management.details.commerceHubDescription')}</p>
+                                <Link to={`/commercehub/orders/${order.orderId}`} className="mt-4 inline-flex rounded-full bg-blue-700 px-4 py-2 text-sm font-semibold text-white">{t('orders.management.details.openCommerceHub')}</Link>
                             </section>}
 
                             {!order.isMarketplaceOrder ? (
-                                <SectionCard title="Payment lifecycle">
+                                <SectionCard title={t('orders.management.details.paymentLifecycle')}>
                                     <div className="grid gap-4 md:grid-cols-2">
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Canonical payment status</p>
-                                            <div className="mt-2"><StatusBadge value={order.paymentStatus} tone={resolvePaymentTone(order.paymentStatus)} /></div>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.canonicalPaymentStatus')}</p>
+                                            <div className="mt-2"><StatusBadge value={order.paymentStatus} label={t(`orders.payment.${order.paymentStatus}`, { defaultValue: order.paymentStatus })} tone={resolvePaymentTone(order.paymentStatus)} /></div>
                                         </div>
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Payment method</p>
-                                            <p className="mt-2 text-sm font-medium text-slate-900">{paymentAuthority?.paymentMethodCode || 'Unavailable'}</p>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.paymentMethod')}</p>
+                                            <p className="mt-2 text-sm font-medium text-slate-900">{paymentAuthority?.paymentMethodCode || t('common.unavailable')}</p>
                                         </div>
                                     </div>
                                     {paymentAuthority?.statusMessage ? <p className="mt-3 text-sm text-slate-600">{paymentAuthority.statusMessage}</p> : null}
                                     {paymentAuthorityError ? <p role="alert" className="mt-3 text-sm text-rose-700">{paymentAuthorityError}</p> : null}
                                     {paymentActionError ? <p role="alert" className="mt-3 text-sm text-rose-700">{paymentActionError}</p> : null}
                                     <div className="mt-4 flex flex-wrap gap-2">
-                                        {isPaymentAuthorityLoading ? <p role="status" className="text-sm text-slate-500">Loading payment actions…</p> : null}
+                                        {isPaymentAuthorityLoading ? <p role="status" className="text-sm text-slate-500">{t('orders.management.details.loadingPaymentActions')}</p> : null}
                                         {!isPaymentAuthorityLoading && paymentActions.length ? paymentActions.map((action) => {
                                             const executable = isPaymentActionExecutableFromOrdersDrawer(action)
                                             return (
@@ -828,146 +873,269 @@ function OrderDetailsPanel({
                                                     onClick={() => handlePaymentActionSelection(action)}
                                                     disabled={!executable || isPaymentActionUpdating}
                                                     aria-pressed={pendingPaymentAction?.actionCode === action.actionCode}
-                                                    title={action.description}
+                                                    title={t(`orders.management.actionDescriptions.${action.actionCode}`, { defaultValue: action.description })}
                                                     className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                                                 >
-                                                    {isPaymentActionUpdating ? 'Working' : action.label}
+                                                    {isPaymentActionUpdating ? t('orders.management.details.working') : actionLabel(t, action)}
                                                 </button>
                                             )
                                         }) : null}
-                                        {!isPaymentAuthorityLoading && !paymentActions.length ? <p className="text-sm text-slate-500">No payment actions are currently available.</p> : null}
+                                        {!isPaymentAuthorityLoading && !paymentActions.length ? <p className="text-sm text-slate-500">{t('orders.management.details.noPaymentActions')}</p> : null}
                                     </div>
 
                                     {pendingPaymentAction ? (
                                         <form className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" onSubmit={handleSubmitPaymentAction}>
-                                            <p className="text-sm font-semibold text-amber-950">{pendingPaymentAction.label}</p>
-                                            <p className="mt-1 text-xs text-amber-800">{pendingPaymentAction.description}</p>
+                                            <p className="text-sm font-semibold text-amber-950">{actionLabel(t, pendingPaymentAction)}</p>
+                                            <p className="mt-1 text-xs text-amber-800">{t(`orders.management.actionDescriptions.${pendingPaymentAction.actionCode}`, { defaultValue: pendingPaymentAction.description })}</p>
                                             {pendingPaymentAction.actionCode === 'refund' ? (
                                                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                        <span className="font-medium">Refund amount</span>
+                                                        <span className="font-medium">{t('orders.management.details.refundAmount')}</span>
                                                         <input autoFocus required type="number" min="0.01" step="0.01" value={paymentEvidence.amount} onChange={(event) => setPaymentEvidence((current) => ({ ...current, amount: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                                     </label>
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                        <span className="font-medium">Refund reason (optional)</span>
+                                                        <span className="font-medium">{t('orders.management.details.refundReason')}</span>
                                                         <input maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={paymentEvidence.reason} onChange={(event) => setPaymentEvidence((current) => ({ ...current, reason: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                                     </label>
-                                                    <p className="text-xs text-amber-800 md:col-span-2">A refund changes payment state only; it does not relabel the order or physical return.</p>
+                                                    <p className="text-xs text-amber-800 md:col-span-2">{t('orders.management.details.refundScope')}</p>
                                                 </div>
                                             ) : (
                                                 <label className="mt-4 flex flex-col gap-2 text-sm text-slate-700">
-                                                    <span className="font-medium">Collection reference (optional)</span>
+                                                    <span className="font-medium">{t('orders.management.details.collectionReference')}</span>
                                                     <input autoFocus maxLength={MAX_DELIVERY_REFERENCE_LENGTH} value={paymentEvidence.deliveryReference} onChange={(event) => setPaymentEvidence((current) => ({ ...current, deliveryReference: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                                 </label>
                                             )}
                                             <div className="mt-4 flex flex-wrap gap-2">
-                                                <button type="submit" disabled={!canSubmitPaymentAction || isPaymentActionUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isPaymentActionUpdating ? 'Submitting' : `Confirm ${pendingPaymentAction.label}`}</button>
-                                                <button type="button" disabled={isPaymentActionUpdating} onClick={() => setPendingPaymentAction(null)} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">Cancel</button>
+                                                <button type="submit" disabled={!canSubmitPaymentAction || isPaymentActionUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isPaymentActionUpdating ? t('orders.management.details.submitting') : t('orders.management.details.confirmNamed', { action: actionLabel(t, pendingPaymentAction) })}</button>
+                                                <button type="button" disabled={isPaymentActionUpdating} onClick={() => setPendingPaymentAction(null)} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">{t('common.cancel')}</button>
                                             </div>
                                         </form>
                                     ) : null}
                                 </SectionCard>
                             ) : null}
 
-                            <SectionCard title="Shipment evidence">
+                            <SectionCard title={t('orders.management.details.shipmentEvidence')}>
                                 {order.shipment ? (
                                     <div className="grid gap-4 md:grid-cols-2">
-                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipment status</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.status}</p></div>
-                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Carrier</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.carrierName || order.shipment.shippingMethodName || 'Manual / unavailable'}</p></div>
-                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipment number</p><p className="mt-2 break-all text-sm font-medium text-slate-900">{order.shipment.shipmentNumber}</p></div>
-                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Tracking number</p><p className="mt-2 break-all text-sm font-medium text-slate-900">{order.shipment.trackingNumber || 'Unavailable'}</p></div>
-                                        {isSafeTrackingUrl(order.shipment.trackingUrl) ? <a className="text-sm font-semibold text-sky-700 underline md:col-span-2" href={order.shipment.trackingUrl} target="_blank" rel="noreferrer">Open carrier tracking</a> : null}
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.shipmentStatus')}</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.status}</p></div>
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.carrier')}</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.carrierName || order.shipment.shippingMethodName || t('orders.management.details.manualUnavailable')}</p></div>
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.shipmentNumber')}</p><p className="mt-2 break-all text-sm font-medium text-slate-900">{order.shipment.shipmentNumber}</p></div>
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.trackingNumber')}</p><p className="mt-2 break-all text-sm font-medium text-slate-900">{order.shipment.trackingNumber || t('common.unavailable')}</p></div>
+                                        {isSafeTrackingUrl(order.shipment.trackingUrl) ? <a className="text-sm font-semibold text-sky-700 underline md:col-span-2" href={order.shipment.trackingUrl} target="_blank" rel="noreferrer">{t('orders.management.details.openTracking')}</a> : null}
                                     </div>
-                                ) : <p className="text-sm text-slate-500">No shipment exists for this order.</p>}
+                                ) : <p className="text-sm text-slate-500">{t('orders.management.details.noShipment')}</p>}
                             </SectionCard>
 
                             {(orderActions.length || shipmentActions.length) ? (
-                                <SectionCard title="Administrative lifecycle commands">
+                                <SectionCard title={t('orders.management.details.administrativeCommands')}>
                                     {administrativeActionError ? <p role="alert" className="mb-3 text-sm text-rose-700">{administrativeActionError}</p> : null}
                                     <div className="flex flex-wrap gap-2">
                                         {[...orderActions, ...shipmentActions].map((action) => (
-                                            <button key={action.code} type="button" disabled={isAdministrativeActionUpdating} onClick={() => { setPendingAdministrativeAction(action); setAdministrativeReason('') }} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">{action.label}</button>
+                                            <button key={action.code} type="button" disabled={isAdministrativeActionUpdating} onClick={() => { setPendingAdministrativeAction(action); setAdministrativeReason('') }} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">{actionLabel(t, action)}</button>
                                         ))}
                                     </div>
                                     {pendingAdministrativeAction ? (
                                         <form className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4" onSubmit={handleSubmitAdministrativeAction}>
-                                            <p className="text-sm font-semibold text-rose-950">Confirm {pendingAdministrativeAction.label}</p>
-                                            <p className="mt-1 text-xs text-rose-800">This command is separate from payment refund and other lifecycle actions.</p>
+                                            <p className="text-sm font-semibold text-rose-950">{t('orders.management.details.confirmNamed', { action: actionLabel(t, pendingAdministrativeAction) })}</p>
+                                            <p className="mt-1 text-xs text-rose-800">{t('orders.management.details.administrativeSeparation')}</p>
                                             <label className="mt-4 flex flex-col gap-2 text-sm text-slate-700">
-                                                <span className="font-medium">Reason</span>
+                                                <span className="font-medium">{t('orders.management.details.reason')}</span>
                                                 <textarea autoFocus required maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={administrativeReason} onChange={(event) => setAdministrativeReason(event.target.value)} className="min-h-24 rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                             </label>
                                             <div className="mt-4 flex gap-2">
-                                                <button type="submit" disabled={!administrativeReason.trim() || isAdministrativeActionUpdating} className="rounded-full bg-rose-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isAdministrativeActionUpdating ? 'Submitting' : `Confirm ${pendingAdministrativeAction.label}`}</button>
-                                                <button type="button" disabled={isAdministrativeActionUpdating} onClick={() => setPendingAdministrativeAction(null)} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">Keep current state</button>
+                                                <button type="submit" disabled={!administrativeReason.trim() || isAdministrativeActionUpdating} className="rounded-full bg-rose-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isAdministrativeActionUpdating ? t('orders.management.details.submitting') : t('orders.management.details.confirmNamed', { action: actionLabel(t, pendingAdministrativeAction) })}</button>
+                                                <button type="button" disabled={isAdministrativeActionUpdating} onClick={() => setPendingAdministrativeAction(null)} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">{t('orders.management.details.keepCurrentState')}</button>
                                             </div>
                                         </form>
                                     ) : null}
                                 </SectionCard>
                             ) : null}
 
-                            <SectionCard title="Customer">
+                            <SectionCard title={t('orders.customer')}>
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Name</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.customer?.name || 'Unavailable'}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('common.name')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.customer?.name || t('common.unavailable')}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Email</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.customer?.email || 'Unavailable'}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('common.email')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.customer?.email || t('common.unavailable')}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Phone</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.customer?.phone || 'Unavailable'}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('common.phone')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{order.customer?.phone || t('common.unavailable')}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Order source</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sourceLabel')}</p>
                                         <p className="mt-2 text-sm font-medium text-slate-900">{getOrderSourcePresentation(order).label}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.customerIdentity')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{t(`orders.customerIdentity.${order.customer?.identityType || 'GUEST'}`)}</p>
                                     </div>
                                 </div>
                             </SectionCard>
 
+                            <SectionCard title={t('orders.management.details.customerTrust')}>
+                                {isCustomerTrustLoading ? (
+                                    <p role="status" className="text-sm text-slate-500">{t('orders.management.details.loadingCustomerTrust')}</p>
+                                ) : null}
+                                {customerTrustError ? (
+                                    <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                                        <p>{customerTrustError}</p>
+                                        <button type="button" onClick={onRetryCustomerTrust} className="mt-3 font-semibold underline">{t('common.retry')}</button>
+                                    </div>
+                                ) : null}
+                                {!isCustomerTrustLoading && !customerTrustError && customerTrust ? (
+                                    <div className="space-y-4">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <ShieldCheck className="h-5 w-5 text-slate-500" />
+                                                <StatusBadge value={customerTrust.riskLevel} label={riskPresentation.label} tone={riskPresentation.tone} />
+                                            </div>
+                                            {customerTrust.phoneRisk?.isBlocked ? (
+                                                <StatusBadge value="blocked" label={t('orders.phoneBlockedStatus')} tone="rose" />
+                                            ) : null}
+                                        </div>
+
+                                        {customerTrust.hasPhone ? (
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <div className="rounded-2xl bg-slate-50 p-4">
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.previousOrders')}</p>
+                                                    <p className="mt-2 text-xl font-semibold text-slate-950">{customerTrust.previousOrdersCount}</p>
+                                                </div>
+                                                <div className="rounded-2xl bg-slate-50 p-4">
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.canceledOrders')}</p>
+                                                    <p className="mt-2 text-xl font-semibold text-slate-950">{customerTrust.cancelledOrdersCount}</p>
+                                                </div>
+                                                <div className="rounded-2xl bg-slate-50 p-4">
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.storeSpamReports')}</p>
+                                                    <p className="mt-2 text-xl font-semibold text-slate-950">{customerTrust.phoneRisk?.spamReports || 0}</p>
+                                                </div>
+                                                <div className="rounded-2xl bg-slate-50 p-4">
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.globalSpamReports')}</p>
+                                                    <p className="mt-2 text-xl font-semibold text-slate-950">{customerTrust.phoneRisk?.globalSpamReports || 0}</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-slate-500">{t('orders.management.details.noCustomerPhone')}</p>
+                                        )}
+
+                                        {customerTrust.riskSignals?.length ? (
+                                            <ul className="space-y-2 text-sm text-amber-800">
+                                                {customerTrust.riskSignals.map((signal) => (
+                                                    <li key={signal} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                                                        {t(`orders.customerRiskSignals.${signal}`, { defaultValue: signal })}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : null}
+
+                                        {customerPhoneActionError ? <p role="alert" className="text-sm text-rose-700">{customerPhoneActionError}</p> : null}
+                                        {customerTrust.hasPhone ? (
+                                            <div className="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    disabled={isCustomerPhoneActionUpdating}
+                                                    onClick={() => onCustomerPhoneAction({
+                                                        action: customerTrust.phoneRisk?.isBlocked ? 'unblock' : 'block',
+                                                        reason: t('orders.blockPhoneDefaultReason', { orderNumber: order.orderNumber }),
+                                                    })}
+                                                    className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                                                >
+                                                    <Ban className="h-4 w-4" />
+                                                    {customerTrust.phoneRisk?.isBlocked ? t('orders.unblockPhone') : t('orders.blockPhone')}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    disabled={isCustomerPhoneActionUpdating || customerTrust.hasReportedSpam}
+                                                    onClick={() => onCustomerPhoneAction({ action: 'reportSpam' })}
+                                                    className="inline-flex items-center gap-2 rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50"
+                                                >
+                                                    <Flag className="h-4 w-4" />
+                                                    {customerTrust.hasReportedSpam ? t('orders.spamReported') : t('orders.reportSpam')}
+                                                </button>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                ) : null}
+                            </SectionCard>
+
+                            <SectionCard title={t('orders.sessionDetails')}>
+                                {isSessionIntelligenceLoading ? <p role="status" className="text-sm text-slate-500">{t('orders.loadingSessionJourney')}</p> : null}
+                                {sessionIntelligenceError ? (
+                                    <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                                        <p>{sessionIntelligenceError}</p>
+                                        <button type="button" onClick={onRetrySessionIntelligence} className="mt-3 font-semibold underline">{t('common.retry')}</button>
+                                    </div>
+                                ) : null}
+                                {!isSessionIntelligenceLoading && !sessionIntelligenceError && !sessionIntelligence ? (
+                                    <p className="text-sm text-slate-500">{t('orders.noSessionJourney')}</p>
+                                ) : null}
+                                {sessionIntelligence ? (
+                                    <div className="space-y-4">
+                                        <div className="grid gap-4 sm:grid-cols-2">
+                                            <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.source')}</p><p className="mt-2 text-sm font-medium text-slate-900">{[sessionIntelligence.source, sessionIntelligence.medium].filter(Boolean).join(' / ') || t('orders.sessionJourney.direct')}</p></div>
+                                            <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.device')}</p><p className="mt-2 text-sm font-medium text-slate-900">{sessionIntelligence.device || t('orders.sessionJourney.unknown')}</p></div>
+                                            <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.timeSpent')}</p><p className="mt-2 text-sm font-medium text-slate-900">{formatJourneyDuration(sessionIntelligence.durationSeconds, t)}</p></div>
+                                            <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.sessionsCount')}</p><p className="mt-2 text-sm font-medium text-slate-900">{sessionIntelligence.sessionsCount}</p></div>
+                                            <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.firstVisit')}</p><p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(sessionIntelligence.firstVisitAtUtc, locale, t('common.unavailable'))}</p></div>
+                                            <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.checkoutVisit')}</p><p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(sessionIntelligence.checkoutVisitAtUtc, locale, t('common.unavailable'))}</p></div>
+                                            <div className="sm:col-span-2"><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.purchaseTime')}</p><p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(sessionIntelligence.purchaseCompletedAtUtc, locale, t('common.unavailable'))}</p></div>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.sessionJourney.visitedPages')}</p>
+                                            {sessionIntelligence.visitedPages?.length ? (
+                                                <ol className="mt-3 space-y-2" dir="ltr">
+                                                    {sessionIntelligence.visitedPages.map((page, index) => <li key={`${page}-${index}`} className="break-all rounded-xl bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700">{index + 1}. {page}</li>)}
+                                                </ol>
+                                            ) : <p className="mt-2 text-sm text-slate-500">{t('orders.sessionJourney.noVisitedPages')}</p>}
+                                        </div>
+                                    </div>
+                                ) : null}
+                            </SectionCard>
+
                             {getMarketplaceLineagePresentation(order) ? (
-                                <SectionCard title="Marketplace Lineage">
+                                <SectionCard title={t('orders.management.details.marketplaceLineage')}>
                                     {(() => {
                                         const lineage = getMarketplaceLineagePresentation(order)
                                         return (
                                             <div className="grid gap-4 md:grid-cols-2">
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Marketplace</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.marketplace')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{lineage.marketplaceName}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Marketplace order</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.marketplaceOrder')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{lineage.marketplaceOrderNumber}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Marketplace identity</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.marketplaceIdentity')}</p>
                                                     <p className="mt-2 break-all text-sm font-medium text-slate-900">{lineage.marketplaceOrderId}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Vendor identity</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.vendorIdentity')}</p>
                                                     <p className="mt-2 break-all text-sm font-medium text-slate-900">{lineage.vendorId}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Vendor</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.vendor')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{lineage.vendorName}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Source type</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.sourceType')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{lineage.marketplaceSourceType}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Marketplace status</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.marketplaceStatus')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{lineage.marketplaceStatus}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Payment metadata</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.paymentMetadata')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{lineage.marketplacePaymentStatus}</p>
                                                 </div>
                                                 {lineage.externalCustomerId ? (
                                                     <div className="md:col-span-2">
-                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">External customer identity</p>
+                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.externalCustomerIdentity')}</p>
                                                         <p className="mt-2 break-all text-sm font-medium text-slate-900">{lineage.externalCustomerId}</p>
                                                     </div>
                                                 ) : null}
@@ -978,30 +1146,30 @@ function OrderDetailsPanel({
                             ) : null}
 
                             {getAffiliateAttributionPresentation(order) ? (
-                                <SectionCard title="Affiliate Attribution">
+                                <SectionCard title={t('orders.management.details.affiliateAttribution')}>
                                     {(() => {
                                         const attribution = getAffiliateAttributionPresentation(order)
                                         return (
                                             <div className="grid gap-4 md:grid-cols-2">
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Affiliate identity</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.affiliateIdentity')}</p>
                                                     <p className="mt-2 break-all text-sm font-medium text-slate-900">{attribution.affiliateAccountId}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Referral code</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.referralCode')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{attribution.referralCode}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Attribution source</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.attributionSource')}</p>
                                                     <p className="mt-2 text-sm font-medium text-slate-900">{attribution.source}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Attributed</p>
-                                                    <p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(attribution.attributedAtUtc)}</p>
+                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.attributed')}</p>
+                                                    <p className="mt-2 text-sm font-medium text-slate-900">{formatDateTime(attribution.attributedAtUtc, locale, t('common.unavailable'))}</p>
                                                 </div>
                                                 {attribution.promotionLinkId ? (
                                                     <div className="md:col-span-2">
-                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Promotion link</p>
+                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.promotionLink')}</p>
                                                         <p className="mt-2 break-all text-sm font-medium text-slate-900">{attribution.promotionLinkId}</p>
                                                     </div>
                                                 ) : null}
@@ -1013,36 +1181,36 @@ function OrderDetailsPanel({
 
                             {getAffiliateAttributionWarning(order) ? (
                                 <section role="status" className="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
-                                    Affiliate attribution is unavailable for this order. Order details remain available.
+                                    {t('orders.management.details.affiliateWarning')}
                                 </section>
                             ) : null}
 
-                            <SectionCard title="Totals">
+                            <SectionCard title={t('common.totals')}>
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Subtotal</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.subtotal, order.totals?.currency)}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.subtotal')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.subtotal, order.totals?.currency, locale)}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Discount</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.discountAmount, order.totals?.currency)}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.discount')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.discountAmount, order.totals?.currency, locale)}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Tax</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.taxAmount, order.totals?.currency)}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.tax')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.taxAmount, order.totals?.currency, locale)}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipping</p>
-                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.shippingCost, order.totals?.currency)}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.shipping')}</p>
+                                        <p className="mt-2 text-sm font-medium text-slate-900">{formatCurrency(order.totals?.shippingCost, order.totals?.currency, locale)}</p>
                                     </div>
                                     <div className="md:col-span-2">
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Total</p>
-                                        <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(order.totals?.total, order.totals?.currency)}</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.total')}</p>
+                                        <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(order.totals?.total, order.totals?.currency, locale)}</p>
                                     </div>
                                 </div>
                             </SectionCard>
 
-                            <SectionCard title="Items">
+                            <SectionCard title={t('orders.items')}>
                                 {order.items?.length ? (
                                     <div className="space-y-3">
                                         {order.items.map((item) => (
@@ -1051,14 +1219,14 @@ function OrderDetailsPanel({
                                                     <div>
                                                         <p className="font-medium text-slate-950">{item.productName}</p>
                                                         <p className="mt-1 text-sm text-slate-500">
-                                                            {item.variantName || item.sku || 'No variant'}
+                                                            {item.variantName || item.sku || t('orders.management.details.noVariant')}
                                                         </p>
                                                     </div>
-                                                    <div className="text-right">
+                                                    <div className="text-end">
                                                         <p className="text-sm font-semibold text-slate-950">
-                                                            {formatCurrency(item.total, order.totals?.currency)}
+                                                            {formatCurrency(item.total, order.totals?.currency, locale)}
                                                         </p>
-                                                        <p className="mt-1 text-xs text-slate-500">Qty {item.quantity}</p>
+                                                        <p className="mt-1 text-xs text-slate-500">{t('orders.management.details.quantity', { count: item.quantity })}</p>
                                                     </div>
                                                 </div>
                                                 {item.refunds?.length ? (
@@ -1071,14 +1239,14 @@ function OrderDetailsPanel({
                                                                 <div key={refund.refundId} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                                                                     <div className="flex flex-wrap items-start justify-between gap-3">
                                                                         <div>
-                                                                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">Customer refund</p>
-                                                                            <p className="mt-2 text-sm font-medium text-slate-950">{refund.reason || 'No reason provided'}</p>
-                                                                            <p className="mt-1 text-xs text-slate-600">Requested {formatDateTime(refund.createdAt)}</p>
+                                                                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">{t('orders.management.details.customerRefund')}</p>
+                                                                            <p className="mt-2 text-sm font-medium text-slate-950">{refund.reason || t('orders.management.details.noReasonProvided')}</p>
+                                                                            <p className="mt-1 text-xs text-slate-600">{t('orders.management.details.requestedAt', { date: formatDateTime(refund.createdAt, locale, t('common.unavailable')) })}</p>
                                                                         </div>
-                                                                        <div className="text-right">
+                                                                        <div className="text-end">
                                                                             <StatusBadge value={refund.status} tone="amber" />
                                                                             <p className="mt-2 text-sm font-semibold text-slate-950">
-                                                                                {formatCurrency(refund.amount, order.totals?.currency)} | Qty {refund.quantity}
+                                                                                {formatCurrency(refund.amount, order.totals?.currency, locale)} | {t('orders.management.details.quantity', { count: refund.quantity })}
                                                                             </p>
                                                                         </div>
                                                                     </div>
@@ -1087,16 +1255,16 @@ function OrderDetailsPanel({
                                                                         <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                                                                             <div className="grid gap-3 md:grid-cols-2">
                                                                                 <div>
-                                                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Physical return</p>
+                                                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.physicalReturn')}</p>
                                                                                     <p className="mt-2 text-sm font-semibold text-slate-950">{returnRequest.status}</p>
                                                                                 </div>
                                                                                 <div>
-                                                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Approved quantity</p>
+                                                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.approvedQuantity')}</p>
                                                                                     <p className="mt-2 text-sm font-semibold text-slate-950">{returnRequest.requestedQuantity}</p>
                                                                                 </div>
                                                                                 {returnRequest.courierName || returnRequest.trackingNumber ? (
                                                                                     <div className="md:col-span-2">
-                                                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Return tracking</p>
+                                                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.returnTracking')}</p>
                                                                                         <p className="mt-2 text-sm text-slate-700">
                                                                                             {[returnRequest.courierName, returnRequest.trackingNumber].filter(Boolean).join(' | ')}
                                                                                         </p>
@@ -1104,9 +1272,9 @@ function OrderDetailsPanel({
                                                                                 ) : null}
                                                                                 {returnRequest.status === 'Confirmed' ? (
                                                                                     <div className="md:col-span-2">
-                                                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Received condition</p>
+                                                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.receivedCondition')}</p>
                                                                                         <p className="mt-2 text-sm text-slate-700">
-                                                                                            Resellable {returnRequest.receivedResellableQuantity} | Damaged {returnRequest.receivedDamagedQuantity}
+                                                                                            {t('orders.management.details.receivedConditionSummary', { resellable: returnRequest.receivedResellableQuantity, damaged: returnRequest.receivedDamagedQuantity })}
                                                                                         </p>
                                                                                     </div>
                                                                                 ) : null}
@@ -1119,29 +1287,29 @@ function OrderDetailsPanel({
                                                                                     disabled={isReturnReceiptUpdating}
                                                                                     className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                                                                                 >
-                                                                                    Confirm received condition
+                                                                                    {t('orders.management.details.confirmReceivedCondition')}
                                                                                 </button>
                                                                             ) : returnRequest.status !== 'Confirmed' ? (
                                                                                 <p className="mt-4 text-sm text-slate-600">
-                                                                                    Receipt confirmation becomes available after platform logistics delivers the return to this vendor.
+                                                                                    {t('orders.management.details.receiptAvailability')}
                                                                                 </p>
                                                                             ) : null}
 
                                                                             {isReceiptOpen ? (
                                                                                 <form className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-4" onSubmit={handleSubmitReturnReceipt}>
-                                                                                    <p className="text-sm font-semibold text-sky-950">Confirm received inventory condition</p>
-                                                                                    <p className="mt-1 text-xs text-sky-800">This records vendor receipt only. It does not execute the customer refund.</p>
+                                                                                    <p className="text-sm font-semibold text-sky-950">{t('orders.management.details.confirmReceivedInventory')}</p>
+                                                                                    <p className="mt-1 text-xs text-sky-800">{t('orders.management.details.receiptOnlyScope')}</p>
                                                                                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                                                                                         <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                                                            <span className="font-medium">Resellable quantity</span>
+                                                                                            <span className="font-medium">{t('orders.management.details.resellableQuantity')}</span>
                                                                                             <input type="number" min="0" step="1" value={returnReceiptEvidence.resellableQuantity} onChange={(event) => setReturnReceiptEvidence((current) => ({ ...current, resellableQuantity: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                                                                         </label>
                                                                                         <label className="flex flex-col gap-2 text-sm text-slate-700">
-                                                                                            <span className="font-medium">Damaged quantity</span>
+                                                                                            <span className="font-medium">{t('orders.management.details.damagedQuantity')}</span>
                                                                                             <input type="number" min="0" step="1" value={returnReceiptEvidence.damagedQuantity} onChange={(event) => setReturnReceiptEvidence((current) => ({ ...current, damagedQuantity: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                                                                         </label>
                                                                                         <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
-                                                                                            <span className="font-medium">Receipt notes (optional)</span>
+                                                                                            <span className="font-medium">{t('orders.management.details.receiptNotes')}</span>
                                                                                             <textarea maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={returnReceiptEvidence.notes} onChange={(event) => setReturnReceiptEvidence((current) => ({ ...current, notes: event.target.value }))} className="min-h-20 rounded-2xl border border-slate-200 bg-white px-4 py-3" />
                                                                                         </label>
                                                                                     </div>
@@ -1149,10 +1317,10 @@ function OrderDetailsPanel({
                                                                                     {returnReceiptError ? <p role="alert" className="mt-3 text-sm text-rose-700">{returnReceiptError}</p> : null}
                                                                                     <div className="mt-4 flex flex-wrap gap-2">
                                                                                         <button type="submit" disabled={Boolean(returnReceiptEvidenceError) || isReturnReceiptUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
-                                                                                            {isReturnReceiptUpdating ? 'Confirming receipt' : 'Confirm receipt'}
+                                                                                            {isReturnReceiptUpdating ? t('orders.management.details.confirmingReceipt') : t('orders.management.details.confirmReceipt')}
                                                                                         </button>
                                                                                         <button type="button" onClick={() => setPendingReturnReceipt(null)} disabled={isReturnReceiptUpdating} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">
-                                                                                            Cancel
+                                                                                            {t('common.cancel')}
                                                                                         </button>
                                                                                     </div>
                                                                                 </form>
@@ -1168,11 +1336,11 @@ function OrderDetailsPanel({
                                         ))}
                                     </div>
                                 ) : (
-                                    <p className="text-sm text-slate-500">No line items were returned for this order.</p>
+                                    <p className="text-sm text-slate-500">{t('orders.management.details.noItems')}</p>
                                 )}
                             </SectionCard>
 
-                            <SectionCard title="Payments">
+                            <SectionCard title={t('orders.management.details.payments')}>
                                 {order.payments?.length ? (
                                     <div className="space-y-3">
                                         {order.payments.map((payment) => (
@@ -1180,19 +1348,19 @@ function OrderDetailsPanel({
                                                 <div className="flex flex-wrap items-start justify-between gap-3">
                                                     <div>
                                                         <p className="font-medium text-slate-950">
-                                                            {payment.provider || payment.paymentMethod || 'Payment'}
+                                                            {payment.provider || payment.paymentMethod || t('orders.management.details.payment')}
                                                         </p>
                                                         <p className="mt-1 text-sm text-slate-500">
-                                                            {payment.paymentReference || payment.providerReference || 'No reference'}
+                                                            {payment.paymentReference || payment.providerReference || t('orders.management.details.noReference')}
                                                         </p>
                                                     </div>
-                                                    <div className="text-right">
+                                                    <div className="text-end">
                                                         <StatusBadge
                                                             value={payment.status}
                                                             tone={resolvePaymentTone(payment.status)}
                                                         />
                                                         <p className="mt-2 text-sm font-semibold text-slate-950">
-                                                            {formatCurrency(payment.amount, payment.currency)}
+                                                            {formatCurrency(payment.amount, payment.currency, locale)}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -1200,38 +1368,38 @@ function OrderDetailsPanel({
                                         ))}
                                     </div>
                                 ) : (
-                                    <p className="text-sm text-slate-500">No payment records were returned for this order.</p>
+                                    <p className="text-sm text-slate-500">{t('orders.management.details.noPayments')}</p>
                                 )}
                             </SectionCard>
 
-                            <SectionCard title="Addresses and notes">
+                            <SectionCard title={t('orders.management.details.addressesAndNotes')}>
                                 <div className="space-y-4 text-sm text-slate-700">
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipping address</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.shippingAddress')}</p>
                                         <p className="mt-2">
                                             {[
                                                 order.shippingAddress?.address,
                                                 order.shippingAddress?.city,
                                                 order.shippingAddress?.state,
                                                 order.shippingAddress?.country,
-                                            ].filter(Boolean).join(', ') || 'Unavailable'}
+                                            ].filter(Boolean).join(', ') || t('common.unavailable')}
                                         </p>
                                     </div>
                                     {order.customerNotes ? (
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Customer notes</p>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.customerNotes')}</p>
                                             <p className="mt-2 whitespace-pre-wrap">{order.customerNotes}</p>
                                         </div>
                                     ) : null}
                                     {order.adminNotes ? (
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Admin notes</p>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.adminNotes')}</p>
                                             <p className="mt-2 whitespace-pre-wrap">{order.adminNotes}</p>
                                         </div>
                                     ) : null}
                                     {order.cancellationReason ? (
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Cancellation reason</p>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.cancellationReason')}</p>
                                             <p className="mt-2 whitespace-pre-wrap">{order.cancellationReason}</p>
                                         </div>
                                     ) : null}
@@ -1239,35 +1407,20 @@ function OrderDetailsPanel({
                             </SectionCard>
 
                             {checkoutFieldItems.length > 0 ? (
-                                <SectionCard title="Checkout details">
+                                <SectionCard title={t('orders.management.details.checkoutDetails')}>
                                     <dl className="space-y-4">
                                         {checkoutFieldItems.map((item) => (
                                             <div key={item.fieldId}>
                                                 <dt className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</dt>
                                                 <dd className="mt-2 whitespace-pre-wrap text-sm font-medium text-slate-900">{item.displayValue}</dd>
                                                 {item.attachments.map((attachment) => (
-                                                    <div key={attachment.attachmentId} className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                                                        <span>
-                                                            {attachment.contentType || 'File'}{attachment.sizeBytes > 0 ? `, ${attachment.sizeBytes} bytes` : ''}
-                                                        </span>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => downloadAttachmentMutation.mutate({
-                                                                attachmentId: attachment.attachmentId,
-                                                                fileName: attachment.fileName,
-                                                            })}
-                                                            disabled={downloadAttachmentMutation.isPending}
-                                                            className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
-                                                        >
-                                                            {t('checkoutFields.viewDownload', 'View / Download')}
-                                                        </button>
-                                                    </div>
+                                                    <OrderCheckoutAttachmentPreview
+                                                        key={attachment.attachmentId}
+                                                        orderId={order.orderId}
+                                                        fieldLabel={item.label}
+                                                        attachment={attachment}
+                                                    />
                                                 ))}
-                                                {downloadAttachmentMutation.isError ? (
-                                                    <p className="mt-2 text-xs text-rose-600">
-                                                        {downloadAttachmentMutation.error?.message || t('checkoutFields.downloadFailed', 'Unable to download this attachment right now.')}
-                                                    </p>
-                                                ) : null}
                                             </div>
                                         ))}
                                     </dl>
@@ -1282,6 +1435,8 @@ function OrderDetailsPanel({
 }
 
 export default function Orders() {
+    const { t, i18n } = useTranslation()
+    const locale = i18n.resolvedLanguage === 'ar' ? 'ar-EG' : 'en-US'
     const user = useAuthStore((state) => state.user)
     const { orderId: routeOrderId } = useParams()
     const location = useLocation()
@@ -1302,6 +1457,20 @@ export default function Orders() {
         queryKey: [...authorityScope, 'details', selectedOrderId],
         queryFn: ({ signal }) => getAdminOrderDetails(selectedOrderId, signal),
         enabled: Boolean(selectedOrderId),
+        staleTime: 30_000,
+    })
+
+    const customerTrustQuery = useQuery({
+        queryKey: [...authorityScope, 'customer-trust', selectedOrderId],
+        queryFn: ({ signal }) => getAdminOrderCustomerTrust(selectedOrderId, signal),
+        enabled: Boolean(selectedOrderId && detailsQuery.data && detailsQuery.data.isMarketplaceOrder !== true),
+        staleTime: 15_000,
+    })
+
+    const sessionIntelligenceQuery = useQuery({
+        queryKey: [...authorityScope, 'session-intelligence', selectedOrderId],
+        queryFn: ({ signal }) => getAdminOrderSessionIntelligence(selectedOrderId, signal),
+        enabled: Boolean(selectedOrderId && detailsQuery.data && detailsQuery.data.isMarketplaceOrder !== true),
         staleTime: 30_000,
     })
 
@@ -1354,6 +1523,8 @@ export default function Orders() {
             queryClient.invalidateQueries({ queryKey: [...authorityScope, 'details', selectedOrderId] }),
             queryClient.invalidateQueries({ queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId] }),
             queryClient.invalidateQueries({ queryKey: [...authorityScope, 'payment-actions', selectedOrderId] }),
+            queryClient.invalidateQueries({ queryKey: [...authorityScope, 'customer-trust', selectedOrderId] }),
+            queryClient.invalidateQueries({ queryKey: [...authorityScope, 'session-intelligence', selectedOrderId] }),
         ])
     }
 
@@ -1398,6 +1569,21 @@ export default function Orders() {
         onSuccess: refreshCanonicalState,
         onError: refreshAfterConflict,
     })
+
+    const customerPhoneActionMutation = useMutation({
+        mutationFn: ({ action, reason }) => runAdminOrderCustomerPhoneAction(selectedOrderId, action, reason),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: [...authorityScope, 'customer-trust', selectedOrderId] }),
+    })
+
+    function handleCustomerPhoneAction(action) {
+        if (action.action === 'unblock' && !globalThis.confirm(t('orders.unblockPhoneConfirm'))) {
+            return
+        }
+        if (action.action === 'reportSpam' && !globalThis.confirm(t('orders.reportSpamConfirm'))) {
+            return
+        }
+        customerPhoneActionMutation.mutate(action)
+    }
 
     useEffect(() => {
         const responsePage = ordersQuery.data?.page
@@ -1475,11 +1661,11 @@ export default function Orders() {
                     <div>
                         <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
                             <Package className="h-3.5 w-3.5" />
-                            Storefront order authority
+                            {t('orders.management.badge')}
                         </div>
-                        <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950">Orders</h1>
+                        <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950">{t('orders.title')}</h1>
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                            Tenant-scoped Storefront order authority. CommerceHub rows remain visible for compatibility and open in their dedicated vendor operations surface.
+                            {t('orders.management.subtitle')}
                         </p>
                     </div>
                     <button
@@ -1489,22 +1675,22 @@ export default function Orders() {
                         className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <RefreshCw className={`h-4 w-4 ${ordersQuery.isFetching ? 'animate-spin' : ''}`} />
-                        Refresh
+                        {t('common.refresh')}
                     </button>
                 </div>
 
                 <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-                    <FilterField label="Search">
+                    <FilterField label={t('common.search')}>
                         <input
                             type="search"
                             value={filters.search}
                             onChange={(event) => handleFilterChange('search', event.target.value)}
-                            placeholder="Order, customer, email, phone"
+                            placeholder={t('orders.management.searchPlaceholder')}
                             className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
                         />
                     </FilterField>
 
-                    <FilterField label="Order status">
+                    <FilterField label={t('orders.management.orderStatus')}>
                         <select
                             value={filters.status}
                             onChange={(event) => handleFilterChange('status', event.target.value)}
@@ -1512,13 +1698,13 @@ export default function Orders() {
                         >
                             {ORDER_STATUS_OPTIONS.map((option) => (
                                 <option key={option || 'all'} value={option}>
-                                    {option || 'All statuses'}
+                                    {option ? t(`orders.status.${option}`, option) : t('orders.management.allStatuses')}
                                 </option>
                             ))}
                         </select>
                     </FilterField>
 
-                    <FilterField label="Payment status">
+                    <FilterField label={t('orders.management.paymentStatus')}>
                         <select
                             value={filters.paymentStatus}
                             onChange={(event) => handleFilterChange('paymentStatus', event.target.value)}
@@ -1526,13 +1712,13 @@ export default function Orders() {
                         >
                             {PAYMENT_STATUS_OPTIONS.map((option) => (
                                 <option key={option || 'all'} value={option}>
-                                    {option || 'All payment states'}
+                                    {option ? t(`orders.payment.${option}`, option) : t('orders.management.allPaymentStates')}
                                 </option>
                             ))}
                         </select>
                     </FilterField>
 
-                    <FilterField label="From date">
+                    <FilterField label={t('common.startDate')}>
                         <input
                             type="date"
                             value={filters.fromDate}
@@ -1541,7 +1727,7 @@ export default function Orders() {
                         />
                     </FilterField>
 
-                    <FilterField label="To date">
+                    <FilterField label={t('common.endDate')}>
                         <input
                             type="date"
                             value={filters.toDate}
@@ -1550,7 +1736,7 @@ export default function Orders() {
                         />
                     </FilterField>
 
-                    <FilterField label="Page size">
+                    <FilterField label={t('orders.management.pageSize')}>
                         <select
                             value={String(filters.pageSize)}
                             onChange={(event) => handleFilterChange('pageSize', event.target.value)}
@@ -1558,13 +1744,13 @@ export default function Orders() {
                         >
                             {PAGE_SIZE_OPTIONS.map((option) => (
                                 <option key={option} value={option}>
-                                    {option} rows
+                                    {t('orders.management.rows', { count: option })}
                                 </option>
                             ))}
                         </select>
                     </FilterField>
 
-                    <FilterField label="Sort">
+                    <FilterField label={t('orders.management.sortLabel')}>
                         <select
                             value={`${filters.sortBy}:${filters.sortDirection}`}
                             onChange={(event) => handleSortChange(event.target.value)}
@@ -1572,7 +1758,7 @@ export default function Orders() {
                         >
                             {SORT_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
-                                    {option.label}
+                                    {t(option.labelKey)}
                                 </option>
                             ))}
                         </select>
@@ -1585,15 +1771,15 @@ export default function Orders() {
                     <div className="flex items-start gap-3">
                         <AlertCircle className="mt-0.5 h-5 w-5 text-rose-600" />
                         <div>
-                            <h2 className="text-lg font-semibold text-rose-900">Unable to load orders</h2>
+                            <h2 className="text-lg font-semibold text-rose-900">{t('orders.management.loadFailed')}</h2>
                             <p className="mt-2 text-sm text-rose-700">
-                                {orderListError?.message || 'Please retry after the latest session and tenant state are restored.'}
+                                {orderListError?.message || t('orders.management.retryAfterRestore')}
                             </p>
                             {orderListError?.code || orderListError?.traceId ? (
                                 <p className="mt-2 text-xs font-medium text-rose-700">
-                                    {orderListError.code ? `Code: ${orderListError.code}` : null}
+                                    {orderListError.code ? t('orders.management.code', { code: orderListError.code }) : null}
                                     {orderListError.code && orderListError.traceId ? ' | ' : null}
-                                    {orderListError.traceId ? `Trace: ${orderListError.traceId}` : null}
+                                    {orderListError.traceId ? t('orders.management.trace', { traceId: orderListError.traceId }) : null}
                                 </p>
                             ) : null}
                             <button
@@ -1603,7 +1789,7 @@ export default function Orders() {
                                 className="mt-4 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 <RefreshCw className={`h-4 w-4 ${ordersQuery.isFetching ? 'animate-spin' : ''}`} />
-                                Retry
+                                {t('common.retry')}
                             </button>
                         </div>
                     </div>
@@ -1612,12 +1798,12 @@ export default function Orders() {
                 <section className="rounded-[32px] border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-col gap-3 border-b border-slate-200 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                            <p className="text-sm font-semibold text-slate-950">{totalCount.toLocaleString()} orders</p>
+                            <p className="text-sm font-semibold text-slate-950">{t('orders.management.orderCount', { count: totalCount.toLocaleString(locale) })}</p>
                             <p className="mt-1 text-sm text-slate-500">
-                                SQL-backed Storefront orders with read-only CommerceHub compatibility links.
+                                {t('orders.management.listScope')}
                             </p>
                             {ordersQuery.isFetching && !ordersQuery.isLoading ? (
-                                <p className="mt-1 text-xs font-medium text-sky-700" role="status">Refreshing orders…</p>
+                                <p className="mt-1 text-xs font-medium text-sky-700" role="status">{t('orders.management.refreshing')}</p>
                             ) : null}
                         </div>
                         {selectedOrderId ? (
@@ -1625,23 +1811,23 @@ export default function Orders() {
                                 to={`/ecommerce/orders${location.search}`}
                                 className="inline-flex items-center gap-2 text-sm font-semibold text-sky-700 hover:text-sky-900"
                             >
-                                Clear selected order
+                                {t('orders.management.clearSelected')}
                             </Link>
                         ) : null}
                     </div>
 
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-slate-200" aria-busy={ordersQuery.isFetching}>
-                            <caption className="sr-only">Tenant-scoped orders returned by the admin Orders API</caption>
+                            <caption className="sr-only">{t('orders.management.tableCaption')}</caption>
                             <thead className="bg-slate-50">
                                 <tr className="text-start text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                    <th scope="col" className="px-6 py-4">Order</th>
-                                    <th scope="col" className="px-6 py-4">Customer</th>
-                                    <th scope="col" className="px-6 py-4">Source</th>
-                                    <th scope="col" className="px-6 py-4">Total</th>
-                                    <th scope="col" className="px-6 py-4">Order status</th>
-                                    <th scope="col" className="px-6 py-4">Payment</th>
-                                    <th scope="col" className="px-6 py-4">Created</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.order')}</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.customer')}</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.source')}</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.total')}</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.orderStatus')}</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.payment')}</th>
+                                    <th scope="col" className="px-6 py-4">{t('orders.management.created')}</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 bg-white">
@@ -1658,7 +1844,7 @@ export default function Orders() {
                                 {ordersQuery.isSuccess && !ordersQuery.isFetching && !orders.length ? (
                                     <tr>
                                         <td colSpan={7} className="px-6 py-14 text-center text-sm text-slate-500">
-                                            No orders matched the current tenant filters.
+                                            {t('orders.management.empty')}
                                         </td>
                                     </tr>
                                 ) : null}
@@ -1680,13 +1866,13 @@ export default function Orders() {
                                                         ? navigate(`/commercehub/orders/${order.orderId}`)
                                                         : handleOpenOrder(order.orderId)}
                                                     className="font-medium text-sky-700 underline-offset-4 hover:text-sky-900 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-                                                    aria-label={`Open order ${order.orderNumber}`}
+                                                    aria-label={t('orders.management.openOrder', { orderNumber: order.orderNumber })}
                                                 >
                                                     {order.orderNumber}
                                                 </button>
                                                 <div className="mt-1 text-xs text-slate-500">{order.orderId}</div>
                                             </td>
-                                            <td className="px-6 py-5 text-sm text-slate-700">{order.customerName || 'Guest checkout'}</td>
+                                            <td className="px-6 py-5 text-sm text-slate-700">{order.customerName || t('orders.management.guestCheckout')}</td>
                                             <td className="px-6 py-5">
                                                 <div className="flex flex-col gap-2">
                                                     <StatusBadge
@@ -1695,28 +1881,28 @@ export default function Orders() {
                                                     />
                                                     {affiliateAttribution ? (
                                                         <StatusBadge
-                                                            value={`Affiliate ${affiliateAttribution.referralCode}`}
+                                                            value={t('orders.management.affiliateCode', { code: affiliateAttribution.referralCode })}
                                                             tone="emerald"
                                                         />
                                                     ) : null}
                                                     {affiliateAttributionWarning ? (
                                                         <StatusBadge
-                                                            value="Affiliate attribution unavailable"
+                                                            value={t('orders.management.affiliateUnavailable')}
                                                             tone="amber"
                                                         />
                                                     ) : null}
                                                 </div>
                                             </td>
                                             <td className="px-6 py-5 text-sm font-semibold text-slate-950">
-                                                {formatCurrency(order.totalAmount, order.currency)}
+                                                {formatCurrency(order.totalAmount, order.currency, locale)}
                                             </td>
                                             <td className="px-6 py-5">
-                                                <StatusBadge value={order.status} tone={resolveOrderTone(order.status)} />
+                                                <StatusBadge value={order.status} label={t(`orders.status.${order.status}`, { defaultValue: order.status })} tone={resolveOrderTone(order.status)} />
                                             </td>
                                             <td className="px-6 py-5">
-                                                <StatusBadge value={order.paymentStatus} tone={resolvePaymentTone(order.paymentStatus)} />
+                                                <StatusBadge value={order.paymentStatus} label={t(`orders.payment.${order.paymentStatus}`, { defaultValue: order.paymentStatus })} tone={resolvePaymentTone(order.paymentStatus)} />
                                             </td>
-                                            <td className="px-6 py-5 text-sm text-slate-600">{formatDateTime(order.createdAtUtc)}</td>
+                                            <td className="px-6 py-5 text-sm text-slate-600">{formatDateTime(order.createdAtUtc, locale, t('common.unavailable'))}</td>
                                         </tr>
                                         )
                                     })
@@ -1727,7 +1913,7 @@ export default function Orders() {
 
                     <div className="flex flex-col gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-sm text-slate-500">
-                            Page {currentPage} of {Math.max(totalPages, 1)}
+                            {t('orders.management.pageSummary', { page: currentPage, pages: Math.max(totalPages, 1) })}
                         </p>
                         <div className="flex items-center gap-2">
                             <button
@@ -1736,7 +1922,7 @@ export default function Orders() {
                                 disabled={currentPage <= 1 || ordersQuery.isFetching}
                                 className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                Previous
+                                {t('common.previous')}
                             </button>
                             <button
                                 type="button"
@@ -1744,7 +1930,7 @@ export default function Orders() {
                                 disabled={!admittedOrderList?.hasNextPage || ordersQuery.isFetching}
                                 className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                Next
+                                {t('common.next')}
                             </button>
                         </div>
                     </div>
@@ -1764,29 +1950,42 @@ export default function Orders() {
                             detailsQuery.refetch()
                             fulfillmentAuthorityQuery.refetch()
                             paymentAuthorityQuery.refetch()
+                            customerTrustQuery.refetch()
+                            sessionIntelligenceQuery.refetch()
                         }}
-                        isRetrying={detailsQuery.isFetching || fulfillmentAuthorityQuery.isFetching || paymentAuthorityQuery.isFetching}
+                        isRetrying={detailsQuery.isFetching || fulfillmentAuthorityQuery.isFetching || paymentAuthorityQuery.isFetching || customerTrustQuery.isFetching || sessionIntelligenceQuery.isFetching}
                         onStatusChange={(candidate) => statusMutation.mutate(candidate)}
                         isStatusUpdating={statusMutation.isPending}
-                        statusUpdateError={statusMutation.error ? getLifecycleMutationErrorMessage(statusMutation.error) : null}
+                        statusUpdateError={statusMutation.error ? getLifecycleMutationErrorMessage(statusMutation.error, t) : null}
                         fulfillmentAuthority={fulfillmentAuthorityQuery.data}
                         fulfillmentAuthorityError={fulfillmentAuthorityQuery.error?.message || null}
                         isFulfillmentAuthorityLoading={fulfillmentAuthorityQuery.isLoading}
                         onFulfillmentAction={(actionCode) => fulfillmentActionMutation.mutate(actionCode)}
                         isFulfillmentActionUpdating={fulfillmentActionMutation.isPending}
-                        fulfillmentActionError={fulfillmentActionMutation.error ? getLifecycleMutationErrorMessage(fulfillmentActionMutation.error) : null}
+                        fulfillmentActionError={fulfillmentActionMutation.error ? getLifecycleMutationErrorMessage(fulfillmentActionMutation.error, t) : null}
                         paymentAuthority={paymentAuthorityQuery.data}
                         paymentAuthorityError={paymentAuthorityQuery.error?.message || null}
                         isPaymentAuthorityLoading={paymentAuthorityQuery.isLoading}
                         onPaymentAction={(action) => paymentActionMutation.mutate(action)}
                         isPaymentActionUpdating={paymentActionMutation.isPending}
-                        paymentActionError={paymentActionMutation.error ? getLifecycleMutationErrorMessage(paymentActionMutation.error) : null}
+                        paymentActionError={paymentActionMutation.error ? getLifecycleMutationErrorMessage(paymentActionMutation.error, t) : null}
                         onAdministrativeAction={(action) => administrativeActionMutation.mutate(action)}
                         isAdministrativeActionUpdating={administrativeActionMutation.isPending}
-                        administrativeActionError={administrativeActionMutation.error ? getLifecycleMutationErrorMessage(administrativeActionMutation.error) : null}
+                        administrativeActionError={administrativeActionMutation.error ? getLifecycleMutationErrorMessage(administrativeActionMutation.error, t) : null}
                         onConfirmReturnReceipt={(request) => returnReceiptMutation.mutate(request)}
                         isReturnReceiptUpdating={returnReceiptMutation.isPending}
-                        returnReceiptError={returnReceiptMutation.error ? getLifecycleMutationErrorMessage(returnReceiptMutation.error) : null}
+                        returnReceiptError={returnReceiptMutation.error ? getLifecycleMutationErrorMessage(returnReceiptMutation.error, t) : null}
+                        customerTrust={customerTrustQuery.data}
+                        isCustomerTrustLoading={customerTrustQuery.isLoading}
+                        customerTrustError={customerTrustQuery.error?.message || null}
+                        onRetryCustomerTrust={() => customerTrustQuery.refetch()}
+                        onCustomerPhoneAction={handleCustomerPhoneAction}
+                        isCustomerPhoneActionUpdating={customerPhoneActionMutation.isPending}
+                        customerPhoneActionError={customerPhoneActionMutation.error?.message || null}
+                        sessionIntelligence={sessionIntelligenceQuery.data}
+                        isSessionIntelligenceLoading={sessionIntelligenceQuery.isLoading}
+                        sessionIntelligenceError={sessionIntelligenceQuery.error?.message || null}
+                        onRetrySessionIntelligence={() => sessionIntelligenceQuery.refetch()}
                     />
                 </>
             ) : null}

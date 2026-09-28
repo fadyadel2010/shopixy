@@ -97,8 +97,8 @@ public class AnalyticsSessionJourneyService : IAnalyticsSessionJourneyService
             !string.Equals(effectiveSessionId, normalizedSessionId, StringComparison.Ordinal))
         {
             _logger.LogWarning(
-                "[Analytics Journey] Session mismatch | TenantId: {TenantId} | OrderId: {OrderId} | RequestedSessionId: {RequestedSessionId} | EffectiveSessionId: {EffectiveSessionId}",
-                tenantId, orderId, normalizedSessionId, effectiveSessionId);
+                "[Analytics Journey] Session mismatch | TenantId: {TenantId} | OrderId: {OrderId}",
+                tenantId, orderId);
             return null;
         }
 
@@ -116,8 +116,8 @@ public class AnalyticsSessionJourneyService : IAnalyticsSessionJourneyService
         if (purchaseEvent == null)
         {
             _logger.LogInformation(
-                "[Analytics Journey] Purchase event not found | TenantId: {TenantId} | OrderId: {OrderId} | SessionId: {SessionId}",
-                tenantId, orderId, normalizedSessionId);
+                "[Analytics Journey] Purchase event not found | TenantId: {TenantId} | OrderId: {OrderId}",
+                tenantId, orderId);
             return null;
         }
 
@@ -177,6 +177,47 @@ public class AnalyticsSessionJourneyService : IAnalyticsSessionJourneyService
         _cache.Set(cacheKey, response, JourneyCacheDuration);
 
         return response;
+    }
+
+    public async Task<AnalyticsSessionJourneyResponse?> GetOrderJourneyAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        var order = await _dbContext.Orders
+            .AsNoTracking()
+            .Where(o =>
+                o.Id == orderId &&
+                o.TenantId == tenantId &&
+                o.Source == OrderSource.Ecommerce &&
+                !o.IsDeleted &&
+                o.FinancialPostingStatus == FinancialPostingStatus.Posted &&
+                (o.PaymentStatus == PaymentStatus.Collected ||
+                 o.PaymentStatus == PaymentStatus.Settled ||
+                 o.PaymentStatus == PaymentStatus.PartiallyRefunded ||
+                 o.PaymentStatus == PaymentStatus.Refunded))
+            .Select(o => new { o.SessionId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (order == null)
+        {
+            return null;
+        }
+
+        var sessionId = order.SessionId?.Trim();
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            var attribution = await _orderAttributionStore.GetAttributionAsync(
+                tenantId,
+                orderId,
+                AttributionModel.LastTouch,
+                cancellationToken);
+            sessionId = attribution?.SessionId?.Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(sessionId)
+            ? null
+            : await GetJourneyAsync(tenantId, orderId, sessionId, cancellationToken);
     }
 
     private void EnsureIndexes()

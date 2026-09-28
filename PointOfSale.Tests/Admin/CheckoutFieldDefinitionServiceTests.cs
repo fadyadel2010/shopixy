@@ -190,7 +190,7 @@ public sealed class CheckoutFieldDefinitionServiceTests
     public async Task TenantIsolation_PreventsReadUpdateDeleteAndReorderAcrossTenants()
     {
         var databaseName = Guid.NewGuid().ToString("N");
-        var root = new InMemoryDatabaseRoot();
+        var root = SharedInMemoryDatabaseRoot.Instance;
         var tenantA = Guid.NewGuid();
         var tenantB = Guid.NewGuid();
 
@@ -589,7 +589,7 @@ public sealed class CheckoutFieldDefinitionServiceTests
 
     private static ApplicationDbContext CreateDbContext(Guid tenantId)
     {
-        return CreateDbContext(tenantId, Guid.NewGuid().ToString("N"), new InMemoryDatabaseRoot());
+        return CreateDbContext(tenantId, Guid.NewGuid().ToString("N"), SharedInMemoryDatabaseRoot.Instance);
     }
 
     private static ApplicationDbContext CreateDbContext(Guid tenantId, string databaseName, InMemoryDatabaseRoot root)

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Services.Storefront;
+using PointOfSale.API.Localization;
 
 namespace PointOfSale.API.Controllers;
 
@@ -93,7 +94,8 @@ public class SeoController : ControllerBase
                 query.Slug, 
                 query.BaseUrl,
                 traceId, 
-                cancellationToken);
+                cancellationToken,
+                StorefrontLanguageResolver.Resolve(query.Lang, Request.Headers.AcceptLanguage));
 
             if (metadata == null)
             {
@@ -111,6 +113,8 @@ public class SeoController : ControllerBase
                 "GetSeoMetadata success | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | TraceId: {TraceId}",
                 tenantId, query.Type, query.Slug, traceId);
 
+            Response.Headers.ContentLanguage = metadata.Language;
+            Response.Headers.Append("Vary", "Accept-Language");
             return Ok(metadata);
         }
         catch (Exception ex)

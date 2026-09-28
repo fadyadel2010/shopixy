@@ -43,6 +43,33 @@ describe('order checkout field presentation', () => {
         ])).toEqual([])
     })
 
+    it('retains safe preview metadata and infers legacy image media type', () => {
+        const [field] = presentOrderCheckoutFields([{
+            fieldId: 'photo',
+            fieldKind: 'CUSTOM',
+            fieldType: 'IMAGE',
+            label: 'Photo',
+            valueJson: JSON.stringify([{
+                attachmentId: 'image-1',
+                fileName: 'photo.webp',
+                contentType: 'image/webp',
+                sizeBytes: 128,
+                finalETag: 'private-etag',
+                finalChecksumSha256: 'private-checksum',
+            }]),
+        }])
+
+        expect(field.attachments).toEqual([{
+            attachmentId: 'image-1',
+            fileName: 'photo.webp',
+            contentType: 'image/webp',
+            sizeBytes: 128,
+            mediaType: 'image',
+        }])
+        expect(JSON.stringify(field)).not.toContain('private-etag')
+        expect(JSON.stringify(field)).not.toContain('private-checksum')
+    })
+
     it('prefers typed API presentation fields over raw snapshot json', () => {
         const result = presentOrderCheckoutFields([
             {
@@ -74,6 +101,7 @@ describe('order checkout field presentation', () => {
             fileName: 'typed-proof.pdf',
             contentType: 'application/pdf',
             sizeBytes: 42,
+            mediaType: 'file',
         })
         expect(JSON.stringify(result)).not.toContain('private/object/key')
         expect(JSON.stringify(result)).not.toContain('legacy.pdf')

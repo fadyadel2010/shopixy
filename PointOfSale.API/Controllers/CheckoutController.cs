@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PointOfSale.API.DTOs.Checkout;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.Http;
+using PointOfSale.API.Localization;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Checkout;
 using PointOfSale.API.Services.Payments;
@@ -387,7 +388,10 @@ public class CheckoutController : ControllerBase
                 traceId);
             return StatusCode(
                 StatusCodes.Status422UnprocessableEntity,
-                new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+                new ApiErrorResponse(
+                    ex.ErrorCode,
+                    PaymentErrorLocalization.GetFawryUnavailableMessage(Request.Headers.AcceptLanguage),
+                    traceId));
         }
         catch (PaymentException ex)
         {
@@ -559,7 +563,10 @@ public class CheckoutController : ControllerBase
             // T-09: Fawry preview is fail-closed with the stable authority code.
             return StatusCode(
                 StatusCodes.Status422UnprocessableEntity,
-                new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+                new ApiErrorResponse(
+                    ex.ErrorCode,
+                    PaymentErrorLocalization.GetFawryUnavailableMessage(Request.Headers.AcceptLanguage),
+                    traceId));
         }
         catch (CheckoutPromotionCalculationException ex)
         {

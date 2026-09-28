@@ -1,6 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace PointOfSale.API.Security;
 
@@ -57,20 +60,21 @@ public static class AuthCookieConfiguration
         ArgumentNullException.ThrowIfNull(httpContext);
 
         var response = httpContext.Response;
+        var useSecureCookies = ShouldUseSecureCookies(httpContext);
 
         response.Cookies.Append(
             scope.AccessTokenCookieName,
             accessToken,
-            CreateHttpOnlyOptions(accessTokenLifetime));
+            CreateRequestHttpOnlyOptions(accessTokenLifetime, useSecureCookies));
 
         response.Cookies.Append(
             scope.RefreshTokenCookieName,
             refreshToken,
-            CreateHttpOnlyOptions(refreshTokenLifetime));
+            CreateRequestHttpOnlyOptions(refreshTokenLifetime, useSecureCookies));
 
         if (scope == Pos)
         {
-            response.Cookies.Delete(LegacyPosAccessTokenCookieName, CreateExpiredOptions());
+            response.Cookies.Delete(LegacyPosAccessTokenCookieName, CreateRequestExpiredOptions(useSecureCookies));
         }
 
         EnsureCsrfCookie(httpContext);
@@ -81,7 +85,7 @@ public static class AuthCookieConfiguration
         ArgumentNullException.ThrowIfNull(httpContext);
 
         var response = httpContext.Response;
-        var expiredOptions = CreateExpiredOptions();
+        var expiredOptions = CreateRequestExpiredOptions(ShouldUseSecureCookies(httpContext));
 
         response.Cookies.Delete(scope.AccessTokenCookieName, expiredOptions);
         response.Cookies.Delete(scope.RefreshTokenCookieName, expiredOptions);
@@ -110,7 +114,7 @@ public static class AuthCookieConfiguration
             new CookieOptions
             {
                 HttpOnly = false,
-                Secure = true,
+                Secure = ShouldUseSecureCookies(httpContext),
                 SameSite = SameSiteMode.Strict,
                 MaxAge = TimeSpan.FromDays(30),
                 Path = "/",
@@ -200,4 +204,25 @@ public static class AuthCookieConfiguration
         IsEssential = true
     };
 
+    private static CookieOptions CreateRequestHttpOnlyOptions(TimeSpan lifetime, bool secure)
+    {
+        var options = CreateHttpOnlyOptions(lifetime);
+        options.Secure = secure;
+        return options;
+    }
+
+    private static CookieOptions CreateRequestExpiredOptions(bool secure)
+    {
+        var options = CreateExpiredOptions();
+        options.Secure = secure;
+        return options;
+    }
+
+    private static bool ShouldUseSecureCookies(HttpContext httpContext)
+    {
+        var services = httpContext.Features.Get<IServiceProvidersFeature>()?.RequestServices;
+        var environment = services?.GetService<IHostEnvironment>();
+
+        return httpContext.Request.IsHttps || environment?.IsDevelopment() != true;
+    }
 }

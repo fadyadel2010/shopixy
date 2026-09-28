@@ -26,11 +26,20 @@ vi.mock('../services/api', () => ({
 vi.mock('react-i18next', () => ({
     useTranslation: () => ({
         t: (_key: string, fallback?: string, values?: Record<string, string>) => {
+            const translations: Record<string, string> = {
+                'paymentMethods.fields.apiKey': 'API Key',
+                'paymentMethods.fields.publicKey': 'Public Key',
+                'paymentMethods.fields.secretKey': 'Secret Key',
+                'paymentMethods.fields.integrationIds': 'Integration IDs',
+                'paymentMethods.fields.hmacSecret': 'HMAC Secret',
+                'paymentMethods.help.paymobApiKey': 'Stored encrypted. Leave blank to keep the existing API Key.',
+            }
+
             if (fallback && values?.name) {
                 return fallback.replace('{{name}}', values.name)
             }
 
-            return fallback ?? _key
+            return translations[_key] ?? fallback ?? _key
         },
         i18n: { language: 'en' },
     }),
@@ -47,7 +56,6 @@ const providerCatalog = [
     { code: 'COD', displayName: 'Cash on Delivery', sortOrder: 1, supportsOnline: false, supportsOffline: true, requiresConfiguration: false, fee: 0, feeType: 'fixed' },
     { code: 'STRIPE', displayName: 'Credit/Debit Card', sortOrder: 2, supportsOnline: true, supportsOffline: false, requiresConfiguration: true, fee: 0, feeType: 'fixed' },
     { code: 'PAYMOB', displayName: 'Online Payment', sortOrder: 3, supportsOnline: true, supportsOffline: false, requiresConfiguration: true, fee: 0, feeType: 'fixed' },
-    { code: 'FAWRY', displayName: 'Fawry Pay', sortOrder: 4, supportsOnline: true, supportsOffline: false, requiresConfiguration: true, fee: 0, feeType: 'fixed' },
     { code: 'MANUALWALLET', displayName: 'Manual Wallet', sortOrder: 5, supportsOnline: false, supportsOffline: true, requiresConfiguration: true, fee: 0, feeType: 'fixed' },
 ]
 
@@ -91,7 +99,7 @@ describe('PaymentMethods provider catalog', () => {
     it('merges a backend provider catalog with zero tenant rows as not configured providers', () => {
         const methods = mergePaymentMethodCatalog(providerCatalog, [])
 
-        expect(methods.map((method) => method.code)).toEqual(['COD', 'STRIPE', 'PAYMOB', 'FAWRY', 'MANUALWALLET'])
+        expect(methods.map((method) => method.code)).toEqual(['COD', 'STRIPE', 'PAYMOB', 'MANUALWALLET'])
         expect(methods.every((method) => method.hasTenantPaymentMethod === false)).toBe(true)
         expect(methods.every((method) => method.isEnabled === false)).toBe(true)
     })
@@ -111,30 +119,29 @@ describe('PaymentMethods provider catalog', () => {
         expect(screen.getByText('Cash on Delivery')).toBeInTheDocument()
         expect(screen.getByText('Credit/Debit Card')).toBeInTheDocument()
         expect(screen.getByText('Online Payment')).toBeInTheDocument()
-        expect(screen.getByText('Fawry Pay')).toBeInTheDocument()
+        expect(screen.queryByText('Fawry Pay')).not.toBeInTheDocument()
         expect(screen.getByText('Manual Wallet')).toBeInTheDocument()
         expect(screen.queryByText('No payment methods available')).not.toBeInTheDocument()
-        // T-09: Fawry renders as unsupported instead of "Not configured".
-        expect(screen.getAllByText('Not configured')).toHaveLength(9)
-        expect(screen.getByText('Unsupported')).toBeInTheDocument()
-        expect(screen.getByText('FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE')).toBeInTheDocument()
+        expect(screen.getAllByText('Not configured')).toHaveLength(8)
     })
 
-    it('marks Fawry unsupported even when a stale tenant row says enabled', () => {
+    it('suppresses Fawry even when a stale tenant row says enabled', () => {
         const methods = mergePaymentMethodCatalog(providerCatalog, [
             { code: 'FAWRY', displayName: 'Fawry Pay', isEnabled: true, isSupported: true },
         ])
 
         const fawry = methods.find((method) => method.code === 'FAWRY')
-        expect(fawry).toBeDefined()
-        expect(isUnsupportedMethod(fawry)).toBe(true)
-        expect(fawry?.isSupported).toBe(false)
+        expect(fawry).toBeUndefined()
+        expect(isUnsupportedMethod(fawry)).toBe(false)
     })
 
-    it('exposes no configure or enable action for Fawry', async () => {
+    it('suppresses Fawry from a stale provider catalog response', async () => {
         apiMock.get.mockImplementation((url: string) => {
             if (url === '/admin/payment-methods/catalog') {
-                return Promise.resolve({ data: providerCatalog })
+                return Promise.resolve({ data: [
+                    ...providerCatalog,
+                    { code: 'FAWRY', displayName: 'Fawry Pay', sortOrder: 4 },
+                ] })
             }
 
             return Promise.resolve({ data: [] })
@@ -142,9 +149,8 @@ describe('PaymentMethods provider catalog', () => {
 
         render(<PaymentMethods />)
 
-        const fawryRow = (await screen.findByText('Fawry Pay')).closest('tr')
-        expect(fawryRow).not.toBeNull()
-        expect(within(fawryRow as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
+        expect(await screen.findByText('Available Payment Methods')).toBeInTheDocument()
+        expect(screen.queryByText('Fawry Pay')).not.toBeInTheDocument()
     })
 
     it('configures COD without credentials through the existing tenant payment method mutation', async () => {

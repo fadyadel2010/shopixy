@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,6 +17,15 @@ public sealed class ProductMediaUploadContractTests
     private static readonly byte[] Jpeg = [0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0];
     private static readonly byte[] Png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0];
     private static readonly byte[] Webp = [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0];
+
+    [Fact]
+    public void ProductMediaContent_AllowsAnonymousStorefrontReads()
+    {
+        var action = typeof(UploadController).GetMethod(nameof(UploadController.GetProductMediaContent));
+
+        Assert.NotNull(action);
+        Assert.NotNull(action.GetCustomAttributes(typeof(AllowAnonymousAttribute), inherit: true).SingleOrDefault());
+    }
 
     [Theory]
     [InlineData("photo.jpg", "image/jpeg")]

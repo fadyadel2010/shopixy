@@ -16,6 +16,11 @@ vi.mock('react-i18next', () => ({
         i18n: { language: 'en' },
         t: (key: string, options?: { defaultValue?: string }) => ({
             'storefront.homepageEditor.keepEditing': 'Keep editing',
+            'storefront.cms.pageList.title': 'Pages',
+            'storefront.cms.pageList.edit': 'Edit',
+            'storefront.cms.pageList.delete': 'Delete',
+            'storefront.cms.pageList.deleteConfirmTitle': 'Delete page?',
+            'storefront.cms.pageList.deletePage': 'Delete page',
         }[key] || options?.defaultValue || key),
     }),
 }))
@@ -67,8 +72,8 @@ describe('CmsPagesList authoring boundaries', () => {
         render(<CmsPagesList />)
         await screen.findByText('About')
         fireEvent.click(screen.getByTitle('Delete'))
-        expect(screen.getByRole('dialog', { name: 'Delete Page?' })).toBeInTheDocument()
-        fireEvent.click(screen.getByRole('button', { name: 'Delete Page' }))
+        expect(screen.getByRole('dialog', { name: 'Delete page?' })).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Delete page' }))
         expect(cmsService.deletePage).toHaveBeenCalledWith(listPage.id, 3)
     })
 })

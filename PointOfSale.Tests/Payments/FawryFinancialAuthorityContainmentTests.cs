@@ -7,10 +7,12 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 using Moq;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Payments;
+using PointOfSale.API.Localization;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Checkout;
 using PointOfSale.API.Services.Payments;
@@ -58,21 +60,28 @@ public sealed class FawryFinancialAuthorityContainmentTests
     // ── Admin catalog ────────────────────────────────────────────────
 
     [Fact]
-    public void AdminCatalog_MarksFawryUnsupportedWithStableCode()
+    public void AdminCatalog_HidesFawryFromNewPaymentConfiguration()
     {
         var controller = CreateAdminController(Guid.NewGuid(), out _);
 
         var result = Assert.IsType<OkObjectResult>(controller.GetProviderCatalog());
         var catalog = Assert.IsAssignableFrom<List<PaymentMethodCatalogProviderDto>>(result.Value);
 
-        var fawry = Assert.Single(catalog, item => item.Code == "FAWRY");
-        Assert.False(fawry.IsSupported);
-        Assert.Equal(AuthorityCode, fawry.UnsupportedReasonCode);
-        Assert.False(string.IsNullOrWhiteSpace(fawry.UnsupportedMessage));
+        Assert.DoesNotContain(catalog, item => item.Code == "FAWRY");
 
         Assert.All(
             catalog.Where(item => item.Code is "STRIPE" or "PAYMOB" or "COD" or "MANUALWALLET"),
             item => Assert.True(item.IsSupported));
+    }
+
+    [Fact]
+    public void CustomerAuthorityMessage_IsLocalizedFromAcceptLanguage()
+    {
+        var english = PaymentErrorLocalization.GetFawryUnavailableMessage(new StringValues("en-US"));
+        var arabic = PaymentErrorLocalization.GetFawryUnavailableMessage(new StringValues("ar-EG"));
+
+        Assert.Contains("current configuration", english, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("إعدادات هذا المتجر الحالية", arabic, StringComparison.Ordinal);
     }
 
     [Theory]

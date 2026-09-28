@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using System.Text.Json;
 using MassTransit;
@@ -21,8 +20,6 @@ namespace PointOfSale.Tests.Admin;
 
 public sealed class AdminStoreConfigPublishReliabilityTests
 {
-    private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
-
     [Fact]
     public async Task FirstHomepageDraft_CreatesStoreConfigFromReadOnlyVersionZero_WithoutPublishing()
     {
@@ -141,9 +138,8 @@ public sealed class AdminStoreConfigPublishReliabilityTests
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
-        var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .UseInMemoryDatabase(databaseName, SharedInMemoryDatabaseRoot.Instance)
             .Options;
 
         return new ApplicationDbContext(options, new TestTenantContext(tenantId));

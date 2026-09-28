@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -20,8 +19,6 @@ namespace PointOfSale.Tests.Admin;
 
 public sealed class AdminStoreConfigRollbackSafetyTests
 {
-    private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
-
     [Fact]
     public async Task RollbackStoreConfigAsync_PreservesCurrentDraftsWhileRestoringSnapshotLiveState()
     {
@@ -437,9 +434,8 @@ public sealed class AdminStoreConfigRollbackSafetyTests
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
-        var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .UseInMemoryDatabase(databaseName, SharedInMemoryDatabaseRoot.Instance)
             .Options;
 
         return new ApplicationDbContext(options, new TestTenantContext(tenantId));

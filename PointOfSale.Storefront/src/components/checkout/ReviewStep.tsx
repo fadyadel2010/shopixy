@@ -180,6 +180,13 @@ const ErrorHelper: React.FC<ErrorHelperProps> = ({ errorCode, error, onDismiss }
                     help: t('checkout.errors.phoneBlocked.help'),
                     variant: 'error' as const,
                 };
+            case 'FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE':
+                return {
+                    title: t('checkout.errors.fawryUnavailable.title'),
+                    message: t('checkout.errors.fawryUnavailable.message'),
+                    help: t('checkout.errors.fawryUnavailable.help'),
+                    variant: 'warning' as const,
+                };
             case 'RECOVERY_REVIEW_REQUIRED':
                 return {
                     title: t('checkout.errors.recoveryReviewRequired.title'),

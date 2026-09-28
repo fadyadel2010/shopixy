@@ -17,6 +17,7 @@
 
 import type { AnalyticsEvent, AnalyticsEventResponse, AnalyticsEventBatchResponse } from './eventTypes';
 import { getRequestHeaders, isRequestContextReady } from '@/bootstrap';
+import { appendCsrfHeader } from '@/services/api/csrf';
 
 const ANALYTICS_BASE_URL = import.meta.env.VITE_API_URL || '';
 const ANALYTICS_ENDPOINT = '/api/storefront/analytics';
@@ -54,12 +55,12 @@ export async function sendAnalyticsEvent(event: AnalyticsEvent): Promise<Analyti
     try {
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
+            headers: appendCsrfHeader({
                 'Content-Type': 'application/json',
                 'X-Tenant-Id': headers['X-Tenant-Id'],
                 'X-Session-Id': headers['X-Session-Id'],
                 ...(headers['X-Customer-Id'] ? { 'X-Customer-Id': headers['X-Customer-Id'] } : {}),
-            },
+            }, 'post'),
             body: JSON.stringify(event),
             signal: controller.signal,
             credentials: 'include',
@@ -125,12 +126,12 @@ export async function sendAnalyticsBatch(events: AnalyticsEvent[]): Promise<Anal
     try {
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
+            headers: appendCsrfHeader({
                 'Content-Type': 'application/json',
                 'X-Tenant-Id': headers['X-Tenant-Id'],
                 'X-Session-Id': headers['X-Session-Id'],
                 ...(headers['X-Customer-Id'] ? { 'X-Customer-Id': headers['X-Customer-Id'] } : {}),
-            },
+            }, 'post'),
             body: JSON.stringify({ events }),
             signal: controller.signal,
             credentials: 'include',

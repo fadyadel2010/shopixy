@@ -18,7 +18,7 @@ namespace PointOfSale.Tests.Admin;
 public sealed class AdminOrderCrossChannelConvergenceTests
 {
     [Fact]
-    public async Task ListAndDetails_ConvergeStorefrontAffiliateAndCommerceHubWithoutLosingCanonicalIdentity()
+    public async Task StorefrontAndCommerceHubRoutes_RemainIsolatedWithoutLosingCanonicalIdentity()
     {
         var tenantId = Guid.NewGuid();
         var foreignTenantId = Guid.NewGuid();
@@ -56,8 +56,8 @@ public sealed class AdminOrderCrossChannelConvergenceTests
             new AdminOrderListQuery { Page = 1, PageSize = 20, SortBy = "orderNumber", SortDirection = "asc" },
             "o3-cross-channel-list");
 
-        Assert.Equal(3, result.TotalCount);
-        Assert.Equal(3, result.Items.Count);
+        Assert.Equal(2, result.TotalCount);
+        Assert.Equal(2, result.Items.Count);
 
         var directRow = Assert.Single(result.Items, item => item.OrderId == storefrontOrder.Id);
         Assert.Equal(OrderSource.Ecommerce, directRow.Source);
@@ -70,12 +70,7 @@ public sealed class AdminOrderCrossChannelConvergenceTests
         Assert.Equal(attribution.Id, affiliateRow.AffiliateAttribution?.AttributionId);
         Assert.False(affiliateRow.IsMarketplaceOrder);
 
-        var marketplaceRow = Assert.Single(result.Items, item => item.OrderId == subOrderId);
-        Assert.Equal(OrderSource.Marketplace, marketplaceRow.Source);
-        Assert.Equal(marketplaceOrderId.ToString(), marketplaceRow.SourceOrderId);
-        Assert.Equal(subOrderId, marketplaceRow.MarketplaceLineage?.OrderId);
-        Assert.Equal(marketplaceOrderId, marketplaceRow.MarketplaceLineage?.MarketplaceOrderId);
-        Assert.True(marketplaceRow.IsMarketplaceOrder);
+        Assert.DoesNotContain(result.Items, item => item.OrderId == subOrderId);
 
         var marketplaceOnly = await service.ListOrdersAsync(
             tenantId,
@@ -83,6 +78,11 @@ public sealed class AdminOrderCrossChannelConvergenceTests
             "o3-marketplace-only");
         Assert.Equal(subOrderId, Assert.Single(marketplaceOnly.Items).OrderId);
         Assert.All(marketplaceOnly.Items, item => Assert.True(item.IsMarketplaceOrder));
+        var marketplaceRow = Assert.Single(marketplaceOnly.Items);
+        Assert.Equal(OrderSource.Marketplace, marketplaceRow.Source);
+        Assert.Equal(marketplaceOrderId.ToString(), marketplaceRow.SourceOrderId);
+        Assert.Equal(subOrderId, marketplaceRow.MarketplaceLineage?.OrderId);
+        Assert.Equal(marketplaceOrderId, marketplaceRow.MarketplaceLineage?.MarketplaceOrderId);
 
         var storefrontOnly = await service.ListOrdersAsync(
             tenantId,
@@ -100,7 +100,11 @@ public sealed class AdminOrderCrossChannelConvergenceTests
         Assert.Equal(80m, affiliateDetails.Totals.Total);
         Assert.Equal(80m, Assert.Single(affiliateDetails.Items).UnitPrice);
 
-        var marketplaceDetails = await service.GetOrderDetailsAsync(
+        Assert.Null(await service.GetOrderDetailsAsync(
+            tenantId,
+            subOrderId,
+            "o3-marketplace-storefront-details"));
+        var marketplaceDetails = await service.GetCommerceHubVendorOrderDetailsAsync(
             tenantId,
             subOrderId,
             "o3-marketplace-details");
@@ -112,7 +116,13 @@ public sealed class AdminOrderCrossChannelConvergenceTests
 
         var marketplaceSearch = await service.ListOrdersAsync(
             tenantId,
-            new AdminOrderListQuery { Page = 1, PageSize = 20, Search = "CH-SUB-O3" },
+            new AdminOrderListQuery
+            {
+                Page = 1,
+                PageSize = 20,
+                Source = OrderSource.Marketplace,
+                Search = "CH-SUB-O3"
+            },
             "o3-marketplace-search");
         Assert.Equal(subOrderId, Assert.Single(marketplaceSearch.Items).OrderId);
 
@@ -124,7 +134,7 @@ public sealed class AdminOrderCrossChannelConvergenceTests
             foreignTenantId,
             affiliateOrder.Id,
             "o3-affiliate-foreign-tenant"));
-        Assert.Null(await service.GetOrderDetailsAsync(
+        Assert.Null(await service.GetCommerceHubVendorOrderDetailsAsync(
             foreignTenantId,
             subOrderId,
             "o3-marketplace-foreign-tenant"));

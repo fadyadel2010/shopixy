@@ -85,7 +85,7 @@ const smoothScrollTo = (element: HTMLElement | null, offset = 0) => {
     }
 };
 
-const formatAutosaveTime = (value: string | null): string | null => {
+const formatAutosaveTime = (value: string | null, locale: string): string | null => {
     if (!value) {
         return null;
     }
@@ -95,7 +95,7 @@ const formatAutosaveTime = (value: string | null): string | null => {
         return null;
     }
 
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat(locale, {
         hour: 'numeric',
         minute: '2-digit',
     }).format(date);
@@ -114,27 +114,29 @@ const CheckoutAutosaveBanner: React.FC<CheckoutAutosaveBannerProps> = ({
     lastSavedAt,
     onRetry,
 }) => {
+    const { t, language } = useTranslation();
+
     if (status === 'idle') {
         return null;
     }
 
-    const savedAtLabel = formatAutosaveTime(lastSavedAt);
+    const savedAtLabel = formatAutosaveTime(lastSavedAt, language === 'ar' ? 'ar-EG' : 'en');
 
     if (status === 'error') {
         return (
             <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3" role="alert">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                        <p className="font-semibold text-red-900">Checkout changes are not saved</p>
+                        <p className="font-semibold text-red-900">{t('checkout.autosave.errorTitle')}</p>
                         <p className="mt-1 text-sm text-red-700">
-                            {error || "We couldn't save your checkout changes. Retry to keep this checkout recoverable."}
+                            {error || t('checkout.autosave.errorDescription')}
                         </p>
                     </div>
                     <button
                         onClick={() => void onRetry()}
                         className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
                     >
-                        Retry save
+                        {t('checkout.autosave.retry')}
                     </button>
                 </div>
             </div>
@@ -144,7 +146,7 @@ const CheckoutAutosaveBanner: React.FC<CheckoutAutosaveBannerProps> = ({
     if (status === 'saving') {
         return (
             <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800" role="status">
-                Saving checkout details...
+                {t('checkout.autosave.saving')}
             </div>
         );
     }
@@ -152,7 +154,7 @@ const CheckoutAutosaveBanner: React.FC<CheckoutAutosaveBannerProps> = ({
     if (status === 'unsaved') {
         return (
             <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status">
-                Unsaved changes. We will keep trying to save this checkout.
+                {t('checkout.autosave.unsaved')}
             </div>
         );
     }
@@ -160,8 +162,8 @@ const CheckoutAutosaveBanner: React.FC<CheckoutAutosaveBannerProps> = ({
     return (
         <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">
             {savedAtLabel
-                ? `Checkout details saved at ${savedAtLabel}.`
-                : 'Checkout details saved.'}
+                ? t('checkout.autosave.savedAt', { time: savedAtLabel })
+                : t('checkout.autosave.saved')}
         </div>
     );
 };
@@ -202,6 +204,9 @@ export const CheckoutPage: React.FC = () => {
     const lastAutosavedAt = useCheckoutStore(selectCheckoutLastAutosavedAt);
     const checkoutError = useCheckoutStore(selectCheckoutError);
     const checkoutErrorCode = useCheckoutStore(selectErrorCode);
+    const checkoutErrorMessage = checkoutError?.startsWith('checkout.')
+        ? t(checkoutError)
+        : checkoutError;
     const shippingMethodId = useCheckoutStore(selectShippingMethodId);
     const selectedPaymentMethodCode = useCheckoutStore(selectSelectedPaymentMethodCode);
     const shippingAddress = useCheckoutStore(selectShippingAddress);
@@ -584,7 +589,7 @@ export const CheckoutPage: React.FC = () => {
                         role="alert"
                     >
                         <div className="flex items-start justify-between gap-4">
-                            <p className="text-sm font-medium">{checkoutError}</p>
+                            <p className="text-sm font-medium">{checkoutErrorMessage}</p>
                             <button
                                 type="button"
                                 onClick={resetCheckoutError}

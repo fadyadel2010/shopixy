@@ -398,17 +398,16 @@ import type { CmsPage, CmsPageListItem, Navigation, StorefrontFooter } from '@/t
 export const fetchCmsPage = async (
     slug: string,
     preview: boolean = false,
-    previewToken?: string | null
+    previewToken?: string | null,
+    language?: 'en' | 'ar'
 ): Promise<CmsPage> => {
+    const params: Record<string, string | boolean> = {};
+    if (language) params.lang = language;
+    if (preview) params.preview = true;
+    if (previewToken) params.previewToken = previewToken;
     const response = await httpClient.get<CmsPage>(
         ENDPOINTS.CMS_PAGE(slug),
-        preview
-            ? {
-                params: previewToken
-                    ? { preview: true, previewToken }
-                    : { preview: true }
-            }
-            : undefined
+        { params }
     );
     return response.data;
 };

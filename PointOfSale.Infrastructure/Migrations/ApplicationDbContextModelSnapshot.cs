@@ -3814,25 +3814,41 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PageGroupId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_CmsPages_PageGroupId")
-                        .HasFilter("\"IsPublished\" AND NOT \"IsDeleted\"");
+                    b.HasAlternateKey("Id", "TenantId")
+                        .HasName("AK_CmsPages_Id_TenantId");
 
                     b.HasIndex("PageGroupId", "Version")
                         .IsUnique()
                         .HasDatabaseName("UQ_CmsPages_PageGroupId_Version");
-
-                    b.HasIndex("TenantId", "Slug")
-                        .IsUnique()
-                        .HasDatabaseName("UQ_CmsPages_Tenant_Published_Slug")
-                        .HasFilter("\"IsPublished\" AND NOT \"IsDeleted\"");
 
                     b.HasIndex("TenantId", "IsDraft", "Slug")
                         .HasDatabaseName("IX_CmsPages_TenantId_IsDraft_Slug");
 
                     b.HasIndex("TenantId", "IsPublished", "Slug")
                         .HasDatabaseName("IX_CmsPages_TenantId_IsPublished_Slug");
+
+                    b.HasIndex(new[] { "PageGroupId" }, "IX_CmsPages_PageGroupId")
+                        .HasDatabaseName("IX_CmsPages_PageGroupId");
+
+                    b.HasIndex(new[] { "PageGroupId" }, "UQ_CmsPages_PageGroupId_Draft")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_CmsPages_PageGroupId_Draft")
+                        .HasFilter("\"IsDraft\" AND NOT \"IsDeleted\"");
+
+                    b.HasIndex(new[] { "PageGroupId" }, "UQ_CmsPages_PageGroupId_Published")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_CmsPages_PageGroupId_Published")
+                        .HasFilter("\"IsPublished\" AND NOT \"IsDeleted\"");
+
+                    b.HasIndex(new[] { "TenantId", "Slug" }, "UQ_CmsPages_Tenant_Draft_Slug")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_CmsPages_Tenant_Draft_Slug")
+                        .HasFilter("\"IsDraft\" AND NOT \"IsDeleted\"");
+
+                    b.HasIndex(new[] { "TenantId", "Slug" }, "UQ_CmsPages_Tenant_Published_Slug")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_CmsPages_Tenant_Published_Slug")
+                        .HasFilter("\"IsPublished\" AND NOT \"IsDeleted\"");
 
                     b.ToTable("CmsPages", null, t =>
                         {
@@ -3845,6 +3861,68 @@ namespace PointOfSale.Infrastructure.Migrations
                             t.HasCheckConstraint("CK_CmsPages_State", "NOT (\"IsDraft\" AND \"IsPublished\")");
 
                             t.HasCheckConstraint("CK_CmsPages_Version", "\"Version\" > 0");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CmsPageTranslation", b =>
+                {
+                    b.Property<Guid>("CmsPageVersionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Locale")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("MetaDescription")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("MetaKeywords")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("MetaTitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("OpenGraphImageUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("CmsPageVersionId", "Locale");
+
+                    b.HasIndex("CmsPageVersionId", "TenantId");
+
+                    b.HasIndex("TenantId", "Locale", "CmsPageVersionId")
+                        .HasDatabaseName("IX_CmsPageTranslations_TenantId_Locale_CmsPageVersionId");
+
+                    b.ToTable("CmsPageTranslations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CmsPageTranslations_ContentType", "\"ContentType\" IN ('RichText', 'Blocks')");
+
+                            t.HasCheckConstraint("CK_CmsPageTranslations_Locale", "\"Locale\" IN ('en', 'ar')");
+
+                            t.HasCheckConstraint("CK_CmsPageTranslations_SchemaVersion", "\"SchemaVersion\" > 0");
                         });
                 });
 
@@ -23197,6 +23275,18 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("Tenant");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.CmsPageTranslation", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.CmsPage", "PageVersion")
+                        .WithMany("Translations")
+                        .HasForeignKey("CmsPageVersionId", "TenantId")
+                        .HasPrincipalKey("Id", "TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PageVersion");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.CommerceHubCategory", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.CommerceHubCategory", "Parent")
@@ -25735,6 +25825,11 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("Products");
 
                     b.Navigation("SubCategories");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CmsPage", b =>
+                {
+                    b.Navigation("Translations");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.CommerceHubCategory", b =>

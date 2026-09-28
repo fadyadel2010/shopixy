@@ -364,8 +364,6 @@ public sealed class AdminOrderCheckoutAttachmentPresentationDto
     public string? MediaType { get; set; }
     public DateTime? UploadedAtUtc { get; set; }
     public DateTime? FinalizedAtUtc { get; set; }
-    public string? FinalETag { get; set; }
-    public string? FinalChecksumSha256 { get; set; }
 }
 
 public sealed class AdminOrderAttachmentDownloadDto
@@ -516,10 +514,27 @@ public class AdminOrderTotalsDto
 public class AdminOrderCustomerDto
 {
     public Guid? CustomerId { get; set; }
+    public Guid? OnlineCustomerId { get; set; }
+    public string IdentityType { get; set; } = "Guest";
     public string? Name { get; set; }
     public string? Email { get; set; }
     public string? Phone { get; set; }
     public bool IsGuest { get; set; }
+}
+
+public class AdminOrderSessionIntelligenceDto
+{
+    public Guid OrderId { get; set; }
+    public string Source { get; set; } = "direct";
+    public string? Medium { get; set; }
+    public string Device { get; set; } = "unknown";
+    public List<string> VisitedPages { get; set; } = new();
+    public int DurationSeconds { get; set; }
+    public DateTime FirstVisitAtUtc { get; set; }
+    public DateTime? CheckoutVisitAtUtc { get; set; }
+    public DateTime PurchaseCompletedAtUtc { get; set; }
+    public int SessionsCount { get; set; }
+    public int EventCount { get; set; }
 }
 
 /// <summary>

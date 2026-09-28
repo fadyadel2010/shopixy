@@ -47,6 +47,8 @@ public class StorefrontPageDocument
 
     public string Content { get; set; } = string.Empty;
 
+    public Dictionary<string, StorefrontPageTranslationDocument> Translations { get; set; } = new();
+
     /// <summary>
     /// SEO metadata for the page.
     /// </summary>
@@ -89,6 +91,15 @@ public class StorefrontPageDocument
     public DateTime? LastEventOccurredAtUtc { get; set; }
 
     public int LastEventVersion { get; set; }
+}
+
+public sealed class StorefrontPageTranslationDocument
+{
+    public string Title { get; set; } = string.Empty;
+    public CmsPageContentType ContentType { get; set; } = CmsPageContentType.RichText;
+    public string Content { get; set; } = string.Empty;
+    public int SchemaVersion { get; set; } = 1;
+    public CmsPageSeo Seo { get; set; } = new();
 }
 
 /// <summary>

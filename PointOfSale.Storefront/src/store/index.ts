@@ -60,6 +60,7 @@ export {
 
 export {
     useCheckoutStore,
+    hydrateCheckoutStateStorage,
     selectCheckoutStep,
     selectShippingAddress,
     selectShippingMethodId,

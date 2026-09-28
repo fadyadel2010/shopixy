@@ -29,6 +29,7 @@ export function presentOrderCheckoutFields(snapshots = []) {
                             fileName: item.fileName,
                             contentType: item.contentType || '',
                             sizeBytes: Number(item.sizeBytes || 0),
+                            mediaType: item.mediaType || (fieldType === 'IMAGE' || fieldType === 'MULTI_IMAGE' ? 'image' : 'file'),
                         }))
                     : []
                 displayValue = typedValue.displayValue || attachments.map((item) => item.fileName).join(', ')
@@ -41,6 +42,7 @@ export function presentOrderCheckoutFields(snapshots = []) {
                             fileName: item.fileName,
                             contentType: item.contentType || '',
                             sizeBytes: Number(item.sizeBytes || 0),
+                            mediaType: item.mediaType || (fieldType === 'IMAGE' || fieldType === 'MULTI_IMAGE' ? 'image' : 'file'),
                         }))
                     : []
                 displayValue = attachments.map((item) => item.fileName).join(', ')

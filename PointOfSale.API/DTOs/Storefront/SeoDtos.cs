@@ -66,6 +66,10 @@ public class SeoMetadataDto
     /// For debugging purposes
     /// </summary>
     public string? Source { get; set; }
+    public string RequestedLanguage { get; set; } = "en";
+    public string Language { get; set; } = "en";
+    public bool FallbackApplied { get; set; }
+    public Dictionary<string, string> AlternateUrls { get; set; } = new();
 }
 
 /// <summary>
@@ -181,6 +185,7 @@ public class SitemapUrlDto
     /// Priority (0.0 to 1.0)
     /// </summary>
     public decimal Priority { get; set; } = 0.5m;
+    public Dictionary<string, string> Alternates { get; set; } = new();
 }
 
 /// <summary>
@@ -223,6 +228,7 @@ public class SeoMetadataQuery
     /// Base URL for canonical URL generation (optional).
     /// </summary>
     public string? BaseUrl { get; set; }
+    public string? Lang { get; set; }
 
     /// <summary>
     /// Validates the query parameters.

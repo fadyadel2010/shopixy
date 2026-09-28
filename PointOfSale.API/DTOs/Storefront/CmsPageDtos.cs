@@ -10,7 +10,14 @@ public sealed class CmsPageDto
     public string Title { get; set; } = string.Empty;
     public CmsPageContentType ContentType { get; set; } = CmsPageContentType.RichText;
     public JsonElement Content { get; set; }
+    public int SchemaVersion { get; set; }
     public CmsPageSeoDto Seo { get; set; } = new();
+    public string RequestedLanguage { get; set; } = "en";
+    public string Language { get; set; } = "en";
+    public bool FallbackApplied { get; set; }
+    public List<string> AvailableLanguages { get; set; } = new();
+    public string CanonicalPath { get; set; } = string.Empty;
+    public Dictionary<string, string> AlternatePaths { get; set; } = new();
     public DateTime UpdatedAtUtc { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
 }
@@ -27,6 +34,10 @@ public sealed class CmsPageListItemDto
 {
     public string Slug { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+    public string RequestedLanguage { get; set; } = "en";
+    public string Language { get; set; } = "en";
+    public bool FallbackApplied { get; set; }
+    public List<string> AvailableLanguages { get; set; } = new();
     public DateTime UpdatedAtUtc { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
 }

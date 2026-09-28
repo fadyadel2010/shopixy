@@ -92,7 +92,8 @@ describe('CommerceHub vendor orders API authority', () => {
 
     it('refetches backend actions and preserves expectedVersion before mutation', () => {
         const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'commerceHubVendorOrdersApi.js'), 'utf8')
-        expect(source).toContain("source: 'Marketplace'")
+        expect(source).toContain('`/commercehub/vendor-orders?${buildOrderQueryParams(filters).toString()}`')
+        expect(source).toContain('`/commercehub/vendor-orders/${subOrderId}`')
         expect(source).toContain('await getCommerceHubVendorOrderActions(subOrderId)')
         expect(source).toContain('expectedVersion: authority.lifecycleVersion')
         expect(source).toContain('status: action.targetStatus')

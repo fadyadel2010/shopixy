@@ -111,7 +111,8 @@ public class SeoService : ISeoService
         string slug,
         string? baseUrl,
         string correlationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en")
     {
         const string operationName = "GetSeoMetadata";
         baseUrl = await _storefrontUrlResolver.ResolveByTenantIdAsync(tenantId);
@@ -123,7 +124,7 @@ public class SeoService : ISeoService
         var normalizedType = type.ToLowerInvariant();
         if (normalizedType == "cms")
         {
-            return await BuildCmsSeoMetadataAsync(tenantId, slug, baseUrl, cancellationToken);
+            return await BuildCmsSeoMetadataAsync(tenantId, slug, baseUrl, requestedLanguage, cancellationToken);
         }
 
         _logger.LogDebug(
@@ -807,13 +808,41 @@ public class SeoService : ISeoService
             var cmsPages = await LoadCurrentPublishedCmsPagesAsync(tenantId, cancellationToken);
             foreach (var cmsPage in cmsPages)
             {
+                var englishUrl = BuildCanonicalUrl(baseUrl, "cms", cmsPage.Slug);
+                var arabicTranslation = cmsPage.Translations.FirstOrDefault(translation =>
+                    translation.Locale == "ar" &&
+                    !string.IsNullOrWhiteSpace(translation.Title) &&
+                    !string.IsNullOrWhiteSpace(translation.Content));
+                var alternates = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["en"] = englishUrl,
+                    ["x-default"] = englishUrl
+                };
+                if (arabicTranslation != null)
+                {
+                    alternates["ar"] = $"{baseUrl.TrimEnd('/')}/ar/pages/{cmsPage.Slug}";
+                }
+
                 urls.Add(new SitemapUrlDto
                 {
-                    Loc = BuildCanonicalUrl(baseUrl, "cms", cmsPage.Slug),
+                    Loc = englishUrl,
                     Lastmod = cmsPage.UpdatedAt.ToString("yyyy-MM-dd"),
                     ChangeFreq = "monthly",
-                    Priority = 0.4m
+                    Priority = 0.4m,
+                    Alternates = new Dictionary<string, string>(alternates, StringComparer.Ordinal)
                 });
+
+                if (arabicTranslation != null)
+                {
+                    urls.Add(new SitemapUrlDto
+                    {
+                        Loc = alternates["ar"],
+                        Lastmod = cmsPage.UpdatedAt.ToString("yyyy-MM-dd"),
+                        ChangeFreq = "monthly",
+                        Priority = 0.4m,
+                        Alternates = new Dictionary<string, string>(alternates, StringComparer.Ordinal)
+                    });
+                }
             }
         }
         catch (Exception ex)
@@ -1102,6 +1131,7 @@ public class SeoService : ISeoService
         Guid tenantId,
         string slug,
         string? baseUrl,
+        string requestedLanguage,
         CancellationToken cancellationToken)
     {
         var page = await LoadCurrentPublishedCmsPageBySlugAsync(tenantId, slug, cancellationToken);
@@ -1110,19 +1140,48 @@ public class SeoService : ISeoService
             return null;
         }
 
+        requestedLanguage = PointOfSale.API.Localization.StorefrontLanguageResolver.Normalize(requestedLanguage);
+        var english = page.Translations.FirstOrDefault(translation => translation.Locale == "en");
+        var arabic = page.Translations.FirstOrDefault(translation =>
+            translation.Locale == "ar" &&
+            !string.IsNullOrWhiteSpace(translation.Title) &&
+            !string.IsNullOrWhiteSpace(translation.Content));
+        var selected = requestedLanguage == "ar" && arabic != null ? arabic : english;
+        var language = selected?.Locale ?? "en";
+        var title = selected?.Title ?? page.Title;
+        var metaTitle = selected?.MetaTitle ?? (selected == null ? page.MetaTitle : null);
+        var metaDescription = selected?.MetaDescription ?? (selected == null ? page.MetaDescription : null);
+        var metaKeywords = selected?.MetaKeywords ?? (selected == null ? page.MetaKeywords : null);
+        var openGraphImageUrl = selected?.OpenGraphImageUrl ?? (selected == null ? page.OpenGraphImageUrl : null);
+        var englishUrl = BuildCanonicalUrl(baseUrl, "cms", page.Slug);
+        var canonicalUrl = language == "ar" ? $"{baseUrl?.TrimEnd('/')}/ar/pages/{page.Slug}" : englishUrl;
+        var alternateUrls = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["en"] = englishUrl,
+            ["x-default"] = englishUrl
+        };
+        if (arabic != null)
+        {
+            alternateUrls["ar"] = $"{baseUrl?.TrimEnd('/')}/ar/pages/{page.Slug}";
+        }
+
         return new SeoMetadataDto
         {
-            Title = page.MetaTitle ?? page.Title,
-            Description = page.MetaDescription ?? string.Empty,
-            CanonicalUrl = BuildCanonicalUrl(baseUrl, "cms", page.Slug),
-            OgImage = page.OpenGraphImageUrl,
+            Title = metaTitle ?? title,
+            Description = metaDescription ?? string.Empty,
+            CanonicalUrl = canonicalUrl,
+            OgImage = openGraphImageUrl,
             OgType = "article",
-            Keywords = page.MetaKeywords,
+            Keywords = metaKeywords,
             Index = true,
             Follow = true,
             ResourceType = "cms",
             ResourceId = page.PageGroupId,
-            Source = "cms-sql"
+            Source = "cms-sql",
+            RequestedLanguage = requestedLanguage,
+            Language = language,
+            FallbackApplied = requestedLanguage != language,
+            AlternateUrls = alternateUrls
         };
     }
 
@@ -1134,6 +1193,7 @@ public class SeoService : ISeoService
         return await _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
+            .Include(page => page.Translations)
             .Where(page => page.TenantId == tenantId)
             .Where(page => _dbContext.Tenants.IgnoreQueryFilters().Any(tenant =>
                 tenant.Id == page.TenantId && tenant.IsActive &&
@@ -1159,6 +1219,7 @@ public class SeoService : ISeoService
         var pages = await _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
+            .Include(page => page.Translations)
             .Where(page => page.TenantId == tenantId)
             .Where(page => !page.IsDeleted)
             .Where(page => page.IsPublished && !page.IsDraft)

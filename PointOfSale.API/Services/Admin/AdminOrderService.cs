@@ -78,6 +78,14 @@ public class AdminOrderService : IAdminOrderService
 
         query.Page = PaginationGuard.NormalizePage(query.Page);
         query.PageSize = PaginationGuard.NormalizePageSize(query.PageSize);
+        query.Source ??= OrderSource.Ecommerce;
+        if (query.Source is not OrderSource.Ecommerce and not OrderSource.Marketplace)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(query.Source),
+                query.Source,
+                "Admin order listing admits only Ecommerce or Marketplace scope.");
+        }
 
         var standardOrdersQuery = _context.Orders
             .Include(o => o.Customer)
@@ -337,25 +345,6 @@ public class AdminOrderService : IAdminOrderService
             "GetOrderDetails | TenantId: {TenantId} | OrderId: {OrderId} | CorrelationId: {CorrelationId} | Action: VIEW",
             tenantId, orderId, correlationId);
 
-        {
-            var marketplaceSubOrder = await _context.CommerceHubSubOrders
-                .AsNoTracking()
-                .Include(subOrder => subOrder.MarketplaceOrder)
-                .Include(subOrder => subOrder.Items)
-                .FirstOrDefaultAsync(
-                    subOrder =>
-                        subOrder.Id == orderId &&
-                        !subOrder.IsDeleted &&
-                        subOrder.StoreId == tenantId &&
-                        !subOrder.MarketplaceOrder.IsDeleted,
-                    cancellationToken);
-
-            if (marketplaceSubOrder != null)
-            {
-                return await MapMarketplaceSubOrderToDetailsDtoAsync(marketplaceSubOrder, cancellationToken);
-            }
-        }
-
         // First, verify ownership
         var orderExists = await VerifyOrderOwnershipAsync(tenantId, orderId, cancellationToken);
         if (!orderExists)
@@ -374,6 +363,7 @@ public class AdminOrderService : IAdminOrderService
             .AsNoTracking()
             .AsSplitQuery()
             .Include(o => o.Customer)
+            .Include(o => o.OnlineCustomer)
             .Include(o => o.Items)
             .Include(o => o.CheckoutFieldSnapshots)
             .Include(o => o.Coupon)
@@ -410,6 +400,33 @@ public class AdminOrderService : IAdminOrderService
             tenantId, orderId, order.OrderNumber, order.Status, correlationId);
 
         return orderDetails;
+    }
+
+    public async Task<AdminOrderDetailsDto?> GetCommerceHubVendorOrderDetailsAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "GetCommerceHubVendorOrderDetails | TenantId: {TenantId} | SubOrderId: {SubOrderId} | CorrelationId: {CorrelationId} | Action: VIEW",
+            tenantId, subOrderId, correlationId);
+
+        var marketplaceSubOrder = await _context.CommerceHubSubOrders
+            .AsNoTracking()
+            .Include(subOrder => subOrder.MarketplaceOrder)
+            .Include(subOrder => subOrder.Items)
+            .FirstOrDefaultAsync(
+                subOrder =>
+                    subOrder.Id == subOrderId &&
+                    !subOrder.IsDeleted &&
+                    subOrder.StoreId == tenantId &&
+                    !subOrder.MarketplaceOrder.IsDeleted,
+                cancellationToken);
+
+        return marketplaceSubOrder == null
+            ? null
+            : await MapMarketplaceSubOrderToDetailsDtoAsync(marketplaceSubOrder, cancellationToken);
     }
 
     public async Task<AdminOrderAttachmentDownloadResult> OpenCheckoutAttachmentDownloadAsync(
@@ -472,10 +489,21 @@ public class AdminOrderService : IAdminOrderService
                 attachment.FinalETag,
                 cancellationToken);
 
+            var downloadedContentType = NormalizeAttachmentContentType(download.ContentType);
+            var expectedContentType = NormalizeAttachmentContentType(attachment.ContentType);
+            if (download.ContentLength != attachment.SizeBytes ||
+                !string.Equals(downloadedContentType, expectedContentType, StringComparison.Ordinal))
+            {
+                await download.Content.DisposeAsync();
+                throw new AdminOrderAttachmentIntegrityException(
+                    attachmentId,
+                    new InvalidDataException("Stored attachment metadata does not match its authoritative order association."));
+            }
+
             return new AdminOrderAttachmentDownloadResult(
                 download.Content,
                 attachment.OriginalFileName,
-                string.IsNullOrWhiteSpace(download.ContentType) ? attachment.ContentType : download.ContentType,
+                expectedContentType,
                 attachment.SizeBytes);
         }
         catch (AmazonS3Exception ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.PreconditionFailed)
@@ -664,7 +692,10 @@ public class AdminOrderService : IAdminOrderService
 
         // Get order
         var order = await _context.Orders
-            .Where(o => o.Id == orderId && o.TenantId == tenantId)
+            .Where(o =>
+                o.Id == orderId &&
+                o.TenantId == tenantId &&
+                o.Source == OrderSource.Ecommerce)
             .Include(o => o.Items)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -997,7 +1028,10 @@ public class AdminOrderService : IAdminOrderService
     {
         return await _context.Orders
             .AnyAsync(
-                order => order.Id == orderId && order.TenantId == tenantId,
+                order =>
+                    order.Id == orderId &&
+                    order.TenantId == tenantId &&
+                    order.Source == OrderSource.Ecommerce,
                 cancellationToken);
     }
 
@@ -1224,6 +1258,7 @@ public class AdminOrderService : IAdminOrderService
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""TenantId"" = {tenantId}
+                      AND ""Source"" = {(int)OrderSource.Ecommerce}
                       AND ""IsDeleted"" = FALSE
                     FOR UPDATE")
                 .IgnoreQueryFilters()
@@ -1239,6 +1274,7 @@ public class AdminOrderService : IAdminOrderService
                     FROM [Orders] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
                     WHERE [Id] = {orderId}
                       AND [TenantId] = {tenantId}
+                      AND [Source] = {(int)OrderSource.Ecommerce}
                       AND [IsDeleted] = 0")
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(cancellationToken);
@@ -1248,6 +1284,7 @@ public class AdminOrderService : IAdminOrderService
             .FirstOrDefaultAsync(
                 order => order.Id == orderId &&
                          order.TenantId == tenantId &&
+                         order.Source == OrderSource.Ecommerce &&
                          !order.IsDeleted,
                 cancellationToken);
     }
@@ -1383,10 +1420,16 @@ public class AdminOrderService : IAdminOrderService
             Customer = new AdminOrderCustomerDto
             {
                 CustomerId = order.CustomerId,
-                Name = order.Customer?.Name ?? order.GuestName,
-                Email = order.Customer?.Email ?? order.GuestEmail,
-                Phone = order.Customer?.Phone ?? order.GuestPhone,
-                IsGuest = !order.CustomerId.HasValue
+                OnlineCustomerId = order.OnlineCustomerId,
+                IdentityType = order.CustomerId.HasValue
+                    ? "POS_CUSTOMER"
+                    : order.OnlineCustomerId.HasValue
+                        ? "STOREFRONT_ACCOUNT"
+                        : "GUEST",
+                Name = order.Customer?.Name ?? order.OnlineCustomer?.DisplayName ?? order.GuestName,
+                Email = order.Customer?.Email ?? order.OnlineCustomer?.Email ?? order.GuestEmail,
+                Phone = order.Customer?.Phone ?? order.OnlineCustomer?.Phone ?? order.GuestPhone,
+                IsGuest = !order.CustomerId.HasValue && !order.OnlineCustomerId.HasValue
             },
             CreatedAtUtc = order.CreatedAt,
             Source = order.Source,
@@ -1949,9 +1992,7 @@ public class AdminOrderService : IAdminOrderService
                         SizeBytes = ReadNullableInt64(item, "sizeBytes") ?? 0,
                         MediaType = ReadString(item, "mediaType"),
                         UploadedAtUtc = ReadNullableDateTime(item, "uploadedAtUtc"),
-                        FinalizedAtUtc = ReadNullableDateTime(item, "finalizedAtUtc"),
-                        FinalETag = ReadString(item, "finalETag"),
-                        FinalChecksumSha256 = ReadString(item, "finalChecksumSha256")
+                        FinalizedAtUtc = ReadNullableDateTime(item, "finalizedAtUtc")
                     })
                     .ToList()
                 : new List<AdminOrderCheckoutAttachmentPresentationDto>();
@@ -2058,11 +2099,12 @@ public class AdminOrderService : IAdminOrderService
             sizeBytes = attachment.SizeBytes,
             mediaType = attachment.MediaType,
             uploadedAtUtc = attachment.UploadedAtUtc,
-            finalizedAtUtc = attachment.FinalizedAtUtc,
-            finalETag = attachment.FinalETag,
-            finalChecksumSha256 = attachment.FinalChecksumSha256
+            finalizedAtUtc = attachment.FinalizedAtUtc
         }));
     }
+
+    private static string NormalizeAttachmentContentType(string? contentType) =>
+        (contentType ?? string.Empty).Split(';', 2)[0].Trim().ToLowerInvariant();
 
     private static bool IsUploadField(CheckoutFieldType fieldType) =>
         fieldType is CheckoutFieldType.Image or CheckoutFieldType.File or CheckoutFieldType.MultiImage;

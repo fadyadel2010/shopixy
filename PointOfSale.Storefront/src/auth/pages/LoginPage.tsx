@@ -6,11 +6,12 @@
  */
 
 import React, { useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { LoginForm } from '../components/LoginForm';
 import { useStoreConfigStore, selectStoreName } from '@/store';
+import { resolveStorefrontReturnPath } from '../returnPath';
 
 /**
  * Login page component
@@ -18,31 +19,28 @@ import { useStoreConfigStore, selectStoreName } from '@/store';
 export const LoginPage: React.FC = () => {
     const { t, direction } = useTranslation();
     const navigate = useNavigate();
+    const location = useLocation();
     const storeName = useStoreConfigStore(selectStoreName);
+    const returnTo = resolveStorefrontReturnPath(new URLSearchParams(location.search).get('return'));
 
     // Guard: redirect if already authenticated
     const { isLoading, showContent } = useAuthGuard({
         redirectIfAuthenticated: true,
-        authenticatedRedirectTo: '/',
+        authenticatedRedirectTo: returnTo,
     });
 
     // Handle successful login
     const handleSuccess = useCallback(() => {
-        // Get return URL from query params or go to home
-        const params = new URLSearchParams(window.location.search);
-        const returnTo = params.get('return') || '/';
         navigate(returnTo, { replace: true });
-    }, [navigate]);
+    }, [navigate, returnTo]);
 
     // Navigate to register
     const handleRegisterClick = useCallback(() => {
-        const params = new URLSearchParams(window.location.search);
-        const returnTo = params.get('return');
-        const registerUrl = returnTo
+        const registerUrl = returnTo !== '/'
             ? `/register?return=${encodeURIComponent(returnTo)}`
             : '/register';
         navigate(registerUrl);
-    }, [navigate]);
+    }, [navigate, returnTo]);
 
     // Navigate to forgot password
     const handleForgotPasswordClick = useCallback(() => {

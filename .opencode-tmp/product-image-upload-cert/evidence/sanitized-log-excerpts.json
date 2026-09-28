@@ -1,0 +1,45 @@
+{
+  "source": "/home/fady/.deploy-qa/logs/qa-api-20260927-023734.log",
+  "sanitized": true,
+  "excerpts": [
+    {
+      "timestampUtc": "2026-09-27T10:14:55.603Z",
+      "category": "PointOfSale.API.Services.R2StorageService",
+      "level": "Error",
+      "message": "R2 upload failed | ContentType: image/jpeg",
+      "exception": "System.InvalidOperationException: Cloudflare R2 is not configured.",
+      "stack": [
+        "R2StorageService.EnsureConfigured() at R2StorageService.cs:441",
+        "R2StorageService.UploadFileAsync(...) at R2StorageService.cs:107"
+      ]
+    },
+    {
+      "timestampUtc": "2026-09-27T10:14:55.604Z",
+      "category": "PointOfSale.API.Controllers.UploadController",
+      "level": "Error",
+      "message": "R2 upload rejected due to configuration | TenantId: <redacted>",
+      "stack": [
+        "UploadController.Upload(...) at UploadController.cs:105",
+        "UploadController.Upload(...) at UploadController.cs:111"
+      ]
+    },
+    {
+      "timestampUtc": "2026-09-27T10:14:55.606Z",
+      "category": "PointOfSale.API.Middleware.RequestContextLoggingMiddleware",
+      "level": "Information",
+      "message": "POST /api/upload completed with 500 in 14.116 ms; correlation, tenant, and user identifiers redacted."
+    },
+    {
+      "timestampUtc": "2026-09-27T10:15:15.193Z",
+      "category": "PointOfSale.API.Middleware.RequestContextLoggingMiddleware",
+      "level": "Information",
+      "message": "POST /api/upload for validated image/webp completed with 500 in 8.9276 ms; identifiers redacted."
+    },
+    {
+      "timestampUtc": "2026-09-27T10:15:54.186Z",
+      "category": "PointOfSale.API.Middleware.RequestContextLoggingMiddleware",
+      "level": "Information",
+      "message": "Repeated POST /api/upload for validated image/webp completed with 500 in 16.9229 ms; identifiers redacted."
+    }
+  ]
+}

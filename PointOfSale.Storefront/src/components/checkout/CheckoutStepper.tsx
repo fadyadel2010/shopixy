@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from '@/i18n';
 import type { CheckoutStep } from '@/types/checkout';
 
 interface CheckoutStepperProps {
@@ -19,14 +20,14 @@ interface CheckoutStepperProps {
 
 interface StepConfig {
     id: CheckoutStep;
-    label: string;
+    labelKey: string;
     number: number;
 }
 
 const STEPS: StepConfig[] = [
-    { id: 'shipping', label: 'Shipping', number: 1 },
-    { id: 'payment', label: 'Payment', number: 2 },
-    { id: 'review', label: 'Review', number: 3 },
+    { id: 'shipping', labelKey: 'checkout.steps.shipping', number: 1 },
+    { id: 'payment', labelKey: 'checkout.steps.payment', number: 2 },
+    { id: 'review', labelKey: 'checkout.steps.review', number: 3 },
 ];
 
 /**
@@ -52,8 +53,10 @@ export const CheckoutStepper: React.FC<CheckoutStepperProps> = ({
     onStepClick,
     disabled = false,
 }) => {
+    const { t } = useTranslation();
+
     return (
-        <nav aria-label="Checkout steps" className="mb-8">
+        <nav aria-label={t('checkout.steps.label')} className="mb-8">
             <ol className="flex items-center justify-center gap-2 sm:gap-4">
                 {STEPS.map((step, index) => {
                     const status = getStepStatus(step.id, currentStep);
@@ -108,7 +111,7 @@ export const CheckoutStepper: React.FC<CheckoutStepperProps> = ({
 
                                 {/* Step label */}
                                 <span className="hidden sm:inline font-medium text-sm">
-                                    {step.label}
+                                    {t(step.labelKey)}
                                 </span>
                             </button>
 

@@ -139,6 +139,7 @@ public class UploadController : ControllerBase
     // When object storage has no public URL (including the development storage),
     // serve only registered media belonging to a product in the current tenant.
     // The bytes still come from the canonical IR2StorageService implementation.
+    [AllowAnonymous]
     [HttpGet("product-media/{productId:guid}/{fileName}")]
     public async Task<IActionResult> GetProductMediaContent(
         Guid productId, string fileName, CancellationToken cancellationToken)

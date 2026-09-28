@@ -52,6 +52,8 @@ interface PaymentMethodCardProps {
     onSelect: () => void;
     isRtl: boolean;
     formatPrice: (amount: number) => string;
+    payOnDeliveryLabel: string;
+    feeLabel: string;
 }
 
 /**
@@ -64,12 +66,6 @@ const getPaymentIcon = (code: string): React.ReactNode => {
             return (
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-            );
-        case 'FAWRY':
-            return (
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m-6 4h6m-6 4h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" />
                 </svg>
             );
         case 'MANUALWALLET':
@@ -97,6 +93,8 @@ const PaymentMethodCard: React.FC<PaymentMethodCardProps> = ({
     onSelect,
     isRtl,
     formatPrice,
+    payOnDeliveryLabel,
+    feeLabel,
 }) => {
     // Localized display name and description
     const displayName = isRtl ? (method.displayNameAr || method.displayName) : method.displayName;
@@ -174,12 +172,12 @@ const PaymentMethodCard: React.FC<PaymentMethodCardProps> = ({
                     </span>
                     {method.supportsOffline && (
                         <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded-full">
-                            {isRtl ? 'الدفع عند الاستلام' : 'Pay on Delivery'}
+                            {payOnDeliveryLabel}
                         </span>
                     )}
                     {feeDisplay && (
                         <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">
-                            {isRtl ? 'رسوم' : 'Fee'}: {feeDisplay}
+                            {feeLabel}: {feeDisplay}
                         </span>
                     )}
                 </div>
@@ -262,26 +260,24 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
         if (!method.isAvailable) {
             return {
                 isDisabled: true,
-                reason: isRTL
-                    ? 'طريقة الدفع غير متاحة'
-                    : 'Payment method unavailable'
+                reason: t('checkout.payment.unavailable')
             };
         }
 
         if (method.minOrderAmount && orderAmountForValidation < method.minOrderAmount) {
             return {
                 isDisabled: true,
-                reason: isRTL
-                    ? `الحد الأدنى للطلب: ${formatPrice(method.minOrderAmount)}`
-                    : `Minimum order: ${formatPrice(method.minOrderAmount)}`
+                reason: t('checkout.payment.minOrderWithAmount', {
+                    amount: formatPrice(method.minOrderAmount),
+                })
             };
         }
         if (method.maxOrderAmount && orderAmountForValidation > method.maxOrderAmount) {
             return {
                 isDisabled: true,
-                reason: isRTL
-                    ? `الحد الأقصى للطلب: ${formatPrice(method.maxOrderAmount)}`
-                    : `Maximum order: ${formatPrice(method.maxOrderAmount)}`
+                reason: t('checkout.payment.maxOrderWithAmount', {
+                    amount: formatPrice(method.maxOrderAmount),
+                })
             };
         }
         return { isDisabled: false };
@@ -311,7 +307,7 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                 {/* Error State */}
                 {(paymentMethodsStatus === 'UNAVAILABLE' || paymentMethodsStatus === 'ERROR') && !isLoading && (
                     <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
-                        <p>{error || (isRTL ? 'تعذر تحميل طرق الدفع' : 'Payment methods could not be loaded.')}</p>
+                        <p>{error || t('checkout.payment.loadFailed')}</p>
                         <button
                             onClick={() => fetchPaymentMethods()}
                             className="mt-2 text-sm underline hover:no-underline"
@@ -324,10 +320,10 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                 {paymentMethodsStatus === 'VALIDATION_REQUIRED' && !isLoading && (
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
                         <p className="font-medium">
-                            {isRTL ? 'تحتاج طرق الدفع إلى بيانات الدفع أولاً' : 'Payment options need checkout context before they can load.'}
+                            {t('checkout.payment.contextRequired')}
                         </p>
                         <p className="mt-1 text-sm text-amber-700">
-                            {error || (isRTL ? 'راجع بيانات الطلب وحاول مرة أخرى.' : 'Review your checkout details and try again.')}
+                            {error || t('checkout.payment.contextRequiredHelp')}
                         </p>
                     </div>
                 )}
@@ -339,10 +335,10 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                         </svg>
                         <p className="text-muted">
-                            {isRTL ? 'لا توجد طرق دفع مفعلة لهذا المتجر' : 'No payment methods are currently enabled for this store.'}
+                            {t('checkout.payment.noEnabledMethods')}
                         </p>
                         <p className="mt-2 text-sm text-muted">
-                            {isRTL ? 'لا يمكن إكمال الدفع حتى يفعّل المتجر طريقة دفع.' : 'Checkout cannot continue until the store enables a payment method.'}
+                            {t('checkout.payment.noEnabledMethodsHelp')}
                         </p>
                     </div>
                 )}
@@ -352,7 +348,7 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                     <div className="space-y-3">
                         {paymentSelectionStatus === 'stale' && stalePaymentSelection && (
                             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                                <p className="font-medium">{stalePaymentSelection.message}</p>
+                                <p className="font-medium">{t(stalePaymentSelection.message)}</p>
                                 <p className="mt-1 text-amber-700">
                                     {t('checkout.previousSelection')}: {stalePaymentSelection.label}
                                 </p>
@@ -370,6 +366,8 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                                         onSelect={() => !isDisabled && selectPaymentMethod(method.code)}
                                         isRtl={isRTL}
                                         formatPrice={formatPrice}
+                                        payOnDeliveryLabel={t('checkout.payment.payOnDelivery')}
+                                        feeLabel={t('checkout.payment.fee')}
                                     />
                                     {/* Render Manual Wallet Fields if this method is selected and is MANUALWALLET */}
                                     {selectedCode === method.code && method.code === 'MANUALWALLET' && (
@@ -389,10 +387,7 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <p className="text-sm">
-                        {isRTL
-                            ? `سيتم إضافة رسوم بقيمة ${formatPrice(paymentFee)} إلى طلبك.`
-                            : `A fee of ${formatPrice(paymentFee)} will be added to your order.`
-                        }
+                        {t('checkout.payment.feeNotice', { amount: formatPrice(paymentFee) })}
                     </p>
                 </div>
             )}

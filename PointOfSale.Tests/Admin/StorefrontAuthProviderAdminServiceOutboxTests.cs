@@ -21,7 +21,7 @@ public sealed class StorefrontAuthProviderAdminServiceOutboxTests
     {
         var tenantId = Guid.NewGuid();
         var databaseName = Guid.NewGuid().ToString("N");
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
         var publisher = new Mock<IEventPublisher>();
         publisher
             .Setup(service => service.PublishAsync(
@@ -56,7 +56,7 @@ public sealed class StorefrontAuthProviderAdminServiceOutboxTests
     {
         var tenantId = Guid.NewGuid();
         var databaseName = Guid.NewGuid().ToString("N");
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
 
         await using (var seedContext = CreateContext(databaseName, databaseRoot, tenantId))
         {
@@ -94,7 +94,7 @@ public sealed class StorefrontAuthProviderAdminServiceOutboxTests
     {
         var tenantId = Guid.NewGuid();
         var databaseName = Guid.NewGuid().ToString("N");
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
 
         await using (var seedContext = CreateContext(databaseName, databaseRoot, tenantId))
         {
@@ -133,7 +133,7 @@ public sealed class StorefrontAuthProviderAdminServiceOutboxTests
     {
         var tenantId = Guid.NewGuid();
         var databaseName = Guid.NewGuid().ToString("N");
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
         const string originalSecret = "original-encrypted-secret";
 
         await using (var seedContext = CreateContext(databaseName, databaseRoot, tenantId))

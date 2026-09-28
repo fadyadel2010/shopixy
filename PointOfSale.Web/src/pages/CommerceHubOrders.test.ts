@@ -8,6 +8,8 @@ const page = readFileSync(join(currentDir, 'CommerceHubOrders.jsx'), 'utf8')
 const app = readFileSync(join(currentDir, '..', 'App.jsx'), 'utf8')
 const sidebar = readFileSync(join(currentDir, '..', 'components', 'Sidebar.jsx'), 'utf8')
 const genericOrders = readFileSync(join(currentDir, 'Orders.jsx'), 'utf8')
+const english = JSON.parse(readFileSync(join(currentDir, '..', 'i18n', 'locales', 'en.json'), 'utf8'))
+const arabic = JSON.parse(readFileSync(join(currentDir, '..', 'i18n', 'locales', 'ar.json'), 'utf8'))
 
 describe('CommerceHub vendor orders surface', () => {
     it('registers dedicated capability-guarded list/detail routes and navigation', () => {
@@ -19,13 +21,13 @@ describe('CommerceHub vendor orders surface', () => {
     })
 
     it('renders parent/suborder, authoritative readiness, vendor return logistics and receipt gating', () => {
-        expect(page).toContain('CommerceHub Marketplace Orders')
-        expect(page).toContain('Your CommerceHub order')
-        expect(page).toContain('Parent order')
-        expect(page).toContain('Payment readiness')
-        expect(page).toContain('Inventory readiness')
+        expect(page).toContain("t('commerceHub.vendorOrders.badge')")
+        expect(page).toContain("t('commerceHub.vendorOrders.yourOrder')")
+        expect(page).toContain("t('commerceHub.vendorOrders.parentOrder')")
+        expect(page).toContain("t('commerceHub.vendorOrders.paymentReadiness')")
+        expect(page).toContain("t('commerceHub.vendorOrders.inventoryReadiness')")
         expect(page).toContain('refund.returnRequest?.canConfirmReceipt')
-        expect(page).toContain('Vendor return logistics')
+        expect(page).toContain("t('commerceHub.vendorOrders.returnLogistics')")
         expect(page).toContain('getCommerceHubVendorReturnActions(returnRequest)')
         expect(page).toContain('runCommerceHubVendorReturnAction')
         expect(page).toContain('returnActionMutation')
@@ -34,11 +36,13 @@ describe('CommerceHub vendor orders surface', () => {
         expect(page).toContain('refund.nextAction')
         expect(page).toContain('commerceHubLifecycleHistory')
         expect(page).not.toContain('Request status change')
+        expect(english.commerceHub.vendorOrders.badge).toBe('CommerceHub marketplace orders')
+        expect(arabic.commerceHub.vendorOrders.badge).toBe('طلبات سوق CommerceHub')
     })
 
     it('keeps marketplace lifecycle controls out of generic Storefront orders', () => {
-        expect(genericOrders).toContain('Marketplace fulfillment is isolated from Storefront order authority.')
+        expect(genericOrders).toContain("t('orders.management.details.commerceHubTitle')")
         expect(genericOrders).toContain('navigate(`/commercehub/orders/${order.orderId}`)')
-        expect(genericOrders).toContain('!order.isMarketplaceOrder ? <SectionCard title="Lifecycle">')
+        expect(genericOrders).toContain("!order.isMarketplaceOrder ? <SectionCard title={t('orders.management.details.lifecycle')}>")
     })
 })

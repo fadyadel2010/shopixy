@@ -73,7 +73,7 @@ public static class CacheKeyBuilder
     /// <param name="queryHash">Deterministic hash of query parameters</param>
     public static string ProductsListKey(string instanceName, Guid tenantId, string queryHash)
     {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:products:list:{queryHash}");
+        return $"{instanceName}:tenant:{tenantId:N}:products:list:v2:{queryHash}";
     }
 
     // =============================================================================

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Localization;
 using PointOfSale.API.Services.Cms;
 
 namespace PointOfSale.API.Controllers;
@@ -32,6 +33,7 @@ public sealed class StorefrontPagesController : ControllerBase
     public async Task<IActionResult> GetPage(
         string slug,
         [FromQuery] bool preview = false,
+        [FromQuery] string? lang = null,
         CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
@@ -52,6 +54,7 @@ public sealed class StorefrontPagesController : ControllerBase
         try
         {
             var normalizedSlug = CmsPageReadService.NormalizeSlug(slug);
+            var requestedLanguage = StorefrontLanguageResolver.Resolve(lang, Request.Headers.AcceptLanguage);
 
             if (preview)
             {
@@ -68,7 +71,8 @@ public sealed class StorefrontPagesController : ControllerBase
                     tenantId.Value,
                     pageGroupId,
                     pageVersion,
-                    cancellationToken);
+                    cancellationToken,
+                    requestedLanguage);
 
                 if (previewPage != null &&
                     !string.Equals(previewPage.Slug, normalizedSlug, StringComparison.OrdinalIgnoreCase))
@@ -87,10 +91,21 @@ public sealed class StorefrontPagesController : ControllerBase
                 }
 
                 Response.Headers["X-Preview-Mode"] = "true";
+                Response.Headers.CacheControl = "private, no-store";
+                Response.Headers.Pragma = "no-cache";
+                ApplyLanguageHeaders(previewPage.Language);
                 return Ok(previewPage);
             }
 
-            var page = await _cmsPageReadService.GetPublishedPageAsync(tenantId!.Value, normalizedSlug, cancellationToken);
+            var page = await _cmsPageReadService.GetPublishedPageAsync(
+                tenantId!.Value,
+                normalizedSlug,
+                cancellationToken,
+                requestedLanguage);
+            if (page != null)
+            {
+                ApplyLanguageHeaders(page.Language);
+            }
             return page == null
                 ? NotFound(CmsApiErrorResponse.PageNotFound(traceId))
                 : Ok(page);
@@ -115,7 +130,7 @@ public sealed class StorefrontPagesController : ControllerBase
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<CmsPageListItemDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> ListPages(CancellationToken cancellationToken)
+    public async Task<IActionResult> ListPages([FromQuery] string? lang, CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
         var tenantValidation = await ValidateTenantHeaderAsync(traceId, cancellationToken);
@@ -126,7 +141,20 @@ public sealed class StorefrontPagesController : ControllerBase
 
         try
         {
-            var pages = await _cmsPageReadService.ListPublishedPagesAsync(tenantValidation.TenantId!.Value, cancellationToken);
+            var requestedLanguage = StorefrontLanguageResolver.Resolve(lang, Request.Headers.AcceptLanguage);
+            var pages = await _cmsPageReadService.ListPublishedPagesAsync(
+                tenantValidation.TenantId!.Value,
+                cancellationToken,
+                requestedLanguage);
+            var actualLanguages = pages
+                .Select(page => page.Language)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (actualLanguages.Length == 1)
+            {
+                Response.Headers.ContentLanguage = actualLanguages[0];
+            }
+            Response.Headers.Append("Vary", "Accept-Language");
             return Ok(pages);
         }
         catch (Exception ex)
@@ -141,7 +169,7 @@ public sealed class StorefrontPagesController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     public Task<IActionResult> GetContactPage(CancellationToken cancellationToken)
     {
-        return GetPage("contact", false, cancellationToken);
+        return GetPage("contact", false, null, cancellationToken);
     }
 
     private async Task<(Guid? TenantId, IActionResult? Error)> ValidateTenantHeaderAsync(
@@ -178,6 +206,12 @@ public sealed class StorefrontPagesController : ControllerBase
             slug,
             out pageGroupId,
             out pageVersion);
+    }
+
+    private void ApplyLanguageHeaders(string language)
+    {
+        Response.Headers.ContentLanguage = language;
+        Response.Headers.Append("Vary", "Accept-Language");
     }
 
 }

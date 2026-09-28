@@ -22,11 +22,12 @@ public sealed class AdminPaymentMethodReadAuthorityCertificationTests
         Assert.Contains("[Authorize(Roles = \"Owner,Admin,Manager\")]", adminController, StringComparison.Ordinal);
         Assert.Contains("SetNoStoreHeaders();", adminController, StringComparison.Ordinal);
         Assert.Contains("var tenantId = TenantId;", adminController, StringComparison.Ordinal);
-        Assert.Contains(".Where(m => m.TenantId == tenantId)", adminController, StringComparison.Ordinal);
+        Assert.Contains(".Where(m => m.TenantId == tenantId && m.Code != \"FAWRY\")", adminController, StringComparison.Ordinal);
+        Assert.Contains(".Where(code => !FawryFinancialAuthorityPolicy.IsFawry(code))", adminController, StringComparison.Ordinal);
         Assert.Contains(".OrderBy(m => m.SortOrder)", adminController, StringComparison.Ordinal);
         Assert.Contains(".ThenBy(m => m.Code)", adminController, StringComparison.Ordinal);
         Assert.Contains("IsValidCode(string code)", adminController, StringComparison.Ordinal);
-        foreach (var code in new[] { "COD", "STRIPE", "PAYMOB", "FAWRY", "MANUALWALLET" })
+        foreach (var code in new[] { "COD", "STRIPE", "PAYMOB", "MANUALWALLET" })
         {
             Assert.Contains($"\"{code}\"", adminController, StringComparison.Ordinal);
         }

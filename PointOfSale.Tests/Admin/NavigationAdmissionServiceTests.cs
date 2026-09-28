@@ -59,7 +59,7 @@ public sealed class NavigationAdmissionServiceTests
     }
 
     [Fact]
-    public async Task GetNavigationAsync_WhenStoreConfigHasNoNavigation_ReturnsDefaultDraftWithPersistedRowVersion()
+    public async Task GetNavigationAsync_WhenStoreConfigHasNoNavigation_ReturnsValidEmptyFooterWithPersistedRowVersion()
     {
         var tenantId = Guid.NewGuid();
         await using var context = CreateDbContext(tenantId);
@@ -87,7 +87,8 @@ public sealed class NavigationAdmissionServiceTests
         Assert.Equal("17", loaded.RowVersion);
         Assert.Equal("Home", loaded.Draft.Header[0].Label);
         Assert.Equal("collection", loaded.Draft.Header[1].Type);
-        Assert.All(loaded.Draft.Footer, link => Assert.NotEqual(Guid.Empty, link.TargetId.GetValueOrDefault()));
+        Assert.Empty(loaded.Draft.Footer);
+        Assert.Empty(loaded.ValidationWarnings);
     }
 
     [Fact]

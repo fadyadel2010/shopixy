@@ -167,7 +167,16 @@ describe('canonical Navigation authoring contract', () => {
             validationStatus: 'invalid',
             validationCode: 'NAVIGATION_CMS_PAGE_NOT_FOUND',
         })
-        expect(() => mapNavigationDraftToRequest(admitted)).toThrow('requires a selected cms target')
+        try {
+            mapNavigationDraftToRequest(admitted)
+            expect.unreachable('Expected unresolved CMS target validation to fail')
+        } catch (error) {
+            expect(error).toMatchObject({
+                code: 'NAVIGATION_CLIENT_INVALID',
+                details: { menu: 'footer', index: 3, field: 'targetId', linkType: 'cms' },
+            })
+            expect((error as Error).message).toContain('requires a selected cms target')
+        }
 
         response.validationWarnings[0].index = 2
         expect(() => admitNavigationSnapshot(response)).toThrow('backend-issued target identity')

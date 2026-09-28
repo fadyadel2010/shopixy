@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PointOfSale.API.SuperAdmin.Services;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.SuperAdmin;
 
@@ -15,7 +16,7 @@ public class SuperAdminAuditServiceTests
     public async Task LogActionAsync_Persists_Audit_Item_With_RequestId_Correlation()
     {
         var services = new ServiceCollection();
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
         var databaseName = Guid.NewGuid().ToString("N");
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseInMemoryDatabase(databaseName, databaseRoot));

@@ -8,6 +8,7 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from '@/i18n';
 import { formatMoney, resolveProductImage } from '@/utils';
 import { OptimizedImage } from '@/components/media';
 import { CouponInput } from '@/components/cart';
@@ -45,6 +46,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
     className = '',
 }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    const { t } = useTranslation();
 
     // Cart state - READ-ONLY from cart store
     const items = useCartStore(selectCartItems);
@@ -62,10 +64,10 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
     const totalDisplay = pricing
         ? formatMoney(pricing.total, currency)
         : !hasRequestedPricing
-        ? 'Calculating...'
+        ? t('checkout.summary.calculating')
         : (pricingError || (!pricingLoading && pricing === null))
-        ? 'Unavailable'
-        : 'Calculating...';
+        ? t('checkout.summary.unavailable')
+        : t('checkout.summary.calculating');
 
     return (
         <div className={`bg-background border border-muted/10 rounded-xl overflow-hidden ${className}`}>
@@ -77,7 +79,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                     aria-expanded={isExpanded}
                     aria-controls="order-summary-content"
                 >
-                    <span className="font-medium text-text">Order Summary</span>
+                    <span className="font-medium text-text">{t('checkout.orderSummary')}</span>
                     <div className="flex items-center gap-2">
                         <span className="font-semibold text-text">
                             {totalDisplay}
@@ -105,14 +107,14 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
             >
                 {/* Header (desktop only) */}
                 <div className="hidden lg:block p-4 border-b border-muted/10">
-                    <h2 className="font-semibold text-text">Order Summary</h2>
+                    <h2 className="font-semibold text-text">{t('checkout.orderSummary')}</h2>
                 </div>
 
                 {/* Items list */}
                 <div className="p-4 space-y-3 max-h-60 overflow-y-auto">
                     {items.map((item) => {
                         const imageSrc = resolveProductImage(item);
-                        const productName = item.productName?.trim() || 'Product unavailable';
+                        const productName = item.productName?.trim() || t('checkout.summary.productUnavailable');
                         const sku = item.sku?.trim();
                         const variantLabel = item.variantAttributes
                             ?.map((attribute) => attribute.value?.trim())
@@ -142,14 +144,16 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                                 )}
                                 {sku && (
                                     <p className="text-xs text-muted truncate">
-                                        SKU: {sku}
+                                        {t('checkout.summary.sku')}: {sku}
                                     </p>
                                 )}
                                 <p className="text-xs text-muted">
-                                    Qty: {item.quantity}
+                                    {t('checkout.summary.quantity', { count: item.quantity })}
                                 </p>
                                 <p className="text-xs text-muted">
-                                    {formatMoney(item.unitPrice, currency)} each
+                                    {t('checkout.summary.unitPrice', {
+                                        amount: formatMoney(item.unitPrice, currency),
+                                    })}
                                 </p>
                                 {/* PHASE: Promotions - Show promotion badge if active */}
                                 {item.hasActivePromotion && item.promotionBadge && (
@@ -160,7 +164,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                             </div>
 
                             {/* Price - Show discounted price if promotion is active */}
-                            <div className="text-right">
+                            <div className="text-end">
                                 {item.hasActivePromotion && item.discountedLineTotal !== undefined && item.discountedLineTotal < item.lineTotal ? (
                                     <>
                                         <p className="text-sm font-medium text-red-500">
@@ -189,12 +193,12 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
 
                     {(pricingLoading && !pricing) || !hasRequestedPricing ? (
                         <div className="rounded-lg bg-muted/5 px-3 py-4 text-sm text-muted">
-                            Calculating server-side totals...
+                            {t('checkout.summary.calculatingTotals')}
                         </div>
                     ) : pricing ? (
                         <>
                             <div className="flex justify-between text-sm">
-                                <span className="text-muted">Subtotal</span>
+                                <span className="text-muted">{t('cart.subtotal')}</span>
                                 <span className="text-text">{formatMoney(pricing.subtotal, currency)}</span>
                             </div>
 
@@ -204,7 +208,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
                                         </svg>
-                                        Promotion Savings
+                                        {t('checkout.summary.promotionSavings')}
                                     </span>
                                     <span className="text-red-500 font-medium">
                                         -{formatMoney(pricing.promotionDiscount, currency)}
@@ -214,7 +218,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
 
                             {pricing.cartPromotionDiscount > 0 && (
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-orange-600">Cart Promotion</span>
+                                    <span className="text-orange-600">{t('checkout.summary.cartPromotion')}</span>
                                     <span className="text-orange-600 font-medium">
                                         -{formatMoney(pricing.cartPromotionDiscount, currency)}
                                     </span>
@@ -224,9 +228,9 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                             {pricing.couponDiscount > 0 && (
                                 <div className="flex justify-between text-sm">
                                     <span className="text-green-600">
-                                        Coupon
+                                        {t('checkout.summary.coupon')}
                                         {appliedCoupon && (
-                                            <span className="text-xs ml-1">({appliedCoupon.code})</span>
+                                            <span className="text-xs ms-1">({appliedCoupon.code})</span>
                                         )}
                                     </span>
                                     <span className="text-green-600">
@@ -237,37 +241,37 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
 
                             <div className="flex justify-between text-sm">
                                 <span className="text-muted">
-                                    Shipping
+                                    {t('cart.shipping')}
                                     {shippingMethod && (
-                                        <span className="text-xs ml-1">({shippingMethod.name})</span>
+                                        <span className="text-xs ms-1">({shippingMethod.name})</span>
                                     )}
                                 </span>
                                 <span className="text-text">
-                                    {pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : 'Free'}
+                                    {pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : t('cart.freeShipping')}
                                 </span>
                             </div>
 
                             <div className="flex justify-between text-sm">
-                                <span className="text-muted">Tax</span>
+                                <span className="text-muted">{t('cart.tax')}</span>
                                 <span className="text-text">{formatMoney(pricing.tax, currency)}</span>
                             </div>
 
                             {pricing.paymentFee > 0 && (
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-muted">Payment Fee</span>
+                                    <span className="text-muted">{t('checkout.summary.paymentFee')}</span>
                                     <span className="text-text">{formatMoney(pricing.paymentFee, currency)}</span>
                                 </div>
                             )}
                         </>
                     ) : (
                         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-4 text-sm text-amber-800">
-                            <p>{pricingError || 'Unable to load the latest checkout pricing.'}</p>
+                            <p>{pricingError || t('checkout.summary.pricingUnavailable')}</p>
                             <button
                                 type="button"
                                 onClick={() => void refreshPricingPreview()}
                                 className="mt-3 inline-flex items-center rounded-lg border border-amber-300 px-3 py-2 font-medium text-amber-900 hover:bg-amber-100"
                             >
-                                Retry totals
+                                {t('checkout.summary.retryTotals')}
                             </button>
                         </div>
                     )}
@@ -277,7 +281,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
 
                     {/* Total */}
                     <div className="flex justify-between">
-                        <span className="font-semibold text-text">Total</span>
+                        <span className="font-semibold text-text">{t('cart.total')}</span>
                         <span className="font-bold text-lg text-text">
                             {totalDisplay}
                         </span>

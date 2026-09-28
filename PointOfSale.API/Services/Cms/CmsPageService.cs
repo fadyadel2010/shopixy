@@ -120,6 +120,7 @@ public sealed class CmsPageService : ICmsPageService
     {
         var pages = await _dbContext.CmsPages
             .AsNoTracking()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => !item.IsDeleted)
             .Where(item => item.IsDraft || item.IsPublished)
@@ -154,31 +155,36 @@ public sealed class CmsPageService : ICmsPageService
         var normalizedSlug = CmsPageReadService.NormalizeSlug(request.Slug);
         await EnsureSlugAvailableAsync(tenantId, normalizedSlug, excludedPageGroupId: null, cancellationToken);
 
-        var validation = _contentValidator.ValidateAndNormalize(request.ContentType, request.Content, request.SchemaVersion);
+        var translations = ResolveRequestedTranslations(request, currentPage: null);
+        var english = translations["en"];
         var now = DateTime.UtcNow;
         var pageGroupId = Guid.NewGuid();
+        var pageVersionId = Guid.NewGuid();
 
         var draftPage = new CmsPage
         {
-            Id = Guid.NewGuid(),
+            Id = pageVersionId,
             PageGroupId = pageGroupId,
             TenantId = tenantId,
             Slug = normalizedSlug,
-            Title = request.Title.Trim(),
-            Content = validation.NormalizedContent,
-            ContentType = validation.ContentType,
+            Title = english.Title,
+            Content = english.Content,
+            ContentType = english.ContentType,
             Version = 1,
-            SchemaVersion = validation.SchemaVersion,
+            SchemaVersion = english.SchemaVersion,
             IsDeleted = false,
             IsDraft = true,
             IsPublished = false,
             PublishedAt = null,
-            MetaTitle = NormalizeOptionalSeoText(request.Seo.MetaTitle, "Meta title", 200),
-            MetaDescription = NormalizeOptionalSeoText(request.Seo.MetaDescription, "Meta description", 320),
-            MetaKeywords = NormalizeOptionalSeoText(request.Seo.MetaKeywords, "Meta keywords", 500),
-            OpenGraphImageUrl = NormalizeOptionalUrl(request.Seo.OpenGraphImageUrl, "OpenGraph image URL", 1000),
+            MetaTitle = english.MetaTitle,
+            MetaDescription = english.MetaDescription,
+            MetaKeywords = english.MetaKeywords,
+            OpenGraphImageUrl = english.OpenGraphImageUrl,
             CreatedAt = now,
-            UpdatedAt = now
+            UpdatedAt = now,
+            Translations = translations.Values
+                .Select(translation => CreateTranslation(pageVersionId, tenantId, translation))
+                .ToList()
         };
 
         _dbContext.CmsPages.Add(draftPage);
@@ -218,7 +224,8 @@ public sealed class CmsPageService : ICmsPageService
         var normalizedSlug = CmsPageReadService.NormalizeSlug(request.Slug);
         await EnsureSlugAvailableAsync(tenantId, normalizedSlug, pageId, cancellationToken);
 
-        var validation = _contentValidator.ValidateAndNormalize(request.ContentType, request.Content, request.SchemaVersion);
+        var translations = ResolveRequestedTranslations(request, currentPage);
+        var english = translations["en"];
         var now = DateTime.UtcNow;
         var existingDraft = pages
             .Where(item => item.IsDraft && !item.IsDeleted)
@@ -237,27 +244,31 @@ public sealed class CmsPageService : ICmsPageService
             }
         }
 
+        var pageVersionId = Guid.NewGuid();
         var draftPage = new CmsPage
         {
-            Id = Guid.NewGuid(),
+            Id = pageVersionId,
             PageGroupId = pageId,
             TenantId = tenantId,
             Slug = normalizedSlug,
-            Title = request.Title.Trim(),
-            Content = validation.NormalizedContent,
-            ContentType = validation.ContentType,
+            Title = english.Title,
+            Content = english.Content,
+            ContentType = english.ContentType,
             Version = pages.Max(item => item.Version) + 1,
-            SchemaVersion = validation.SchemaVersion,
+            SchemaVersion = english.SchemaVersion,
             IsDeleted = false,
             IsDraft = true,
             IsPublished = false,
             PublishedAt = null,
-            MetaTitle = NormalizeOptionalSeoText(request.Seo.MetaTitle, "Meta title", 200),
-            MetaDescription = NormalizeOptionalSeoText(request.Seo.MetaDescription, "Meta description", 320),
-            MetaKeywords = NormalizeOptionalSeoText(request.Seo.MetaKeywords, "Meta keywords", 500),
-            OpenGraphImageUrl = NormalizeOptionalUrl(request.Seo.OpenGraphImageUrl, "OpenGraph image URL", 1000),
+            MetaTitle = english.MetaTitle,
+            MetaDescription = english.MetaDescription,
+            MetaKeywords = english.MetaKeywords,
+            OpenGraphImageUrl = english.OpenGraphImageUrl,
             CreatedAt = now,
-            UpdatedAt = now
+            UpdatedAt = now,
+            Translations = translations.Values
+                .Select(translation => CreateTranslation(pageVersionId, tenantId, translation))
+                .ToList()
         };
         _dbContext.CmsPages.Add(draftPage);
 
@@ -297,6 +308,7 @@ public sealed class CmsPageService : ICmsPageService
 
         EnsureExpectedVersion(pageId, expectedVersion, draftPage.Version);
         await EnsureSlugAvailableAsync(tenantId, draftPage.Slug, pageId, cancellationToken);
+        EnsurePublishableTranslations(draftPage);
 
         var now = DateTime.UtcNow;
         var publishedPages = pages
@@ -394,27 +406,34 @@ public sealed class CmsPageService : ICmsPageService
             await SaveChangesAsync(cancellationToken);
         }
 
+        var rollbackTranslations = GetNormalizedTranslations(snapshot);
+        EnsurePublishableTranslations(rollbackTranslations);
+        var english = rollbackTranslations["en"];
+        var rollbackVersionId = Guid.NewGuid();
         var rollbackPage = new CmsPage
         {
-            Id = Guid.NewGuid(),
+            Id = rollbackVersionId,
             PageGroupId = pageId,
             TenantId = tenantId,
             Slug = snapshot.Slug,
-            Title = snapshot.Title,
-            Content = snapshot.Content,
-            ContentType = snapshot.ContentType,
+            Title = english.Title,
+            Content = english.Content,
+            ContentType = english.ContentType,
             Version = pages.Max(item => item.Version) + 1,
-            SchemaVersion = snapshot.SchemaVersion,
+            SchemaVersion = english.SchemaVersion,
             IsDeleted = false,
             IsDraft = false,
             IsPublished = true,
             PublishedAt = now,
-            MetaTitle = snapshot.MetaTitle,
-            MetaDescription = snapshot.MetaDescription,
-            MetaKeywords = snapshot.MetaKeywords,
-            OpenGraphImageUrl = snapshot.OpenGraphImageUrl,
+            MetaTitle = english.MetaTitle,
+            MetaDescription = english.MetaDescription,
+            MetaKeywords = english.MetaKeywords,
+            OpenGraphImageUrl = english.OpenGraphImageUrl,
             CreatedAt = now,
-            UpdatedAt = now
+            UpdatedAt = now,
+            Translations = rollbackTranslations.Values
+                .Select(translation => CreateTranslation(rollbackVersionId, tenantId, translation))
+                .ToList()
         };
 
         _dbContext.CmsPages.Add(rollbackPage);
@@ -519,6 +538,7 @@ public sealed class CmsPageService : ICmsPageService
         CancellationToken cancellationToken)
     {
         return await _dbContext.CmsPages
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => item.PageGroupId == pageId)
             .Where(item => !item.IsDeleted)
@@ -534,6 +554,7 @@ public sealed class CmsPageService : ICmsPageService
     {
         return await _dbContext.CmsPages
             .AsNoTracking()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => item.PageGroupId == pageId)
             .Where(item => !item.IsDeleted)
@@ -558,6 +579,7 @@ public sealed class CmsPageService : ICmsPageService
                       AND ("IsDraft" OR "IsPublished")
                     FOR UPDATE
                     """)
+                .Include(item => item.Translations)
                 .OrderBy(item => item.Version)
                 .ToListAsync(cancellationToken);
         }
@@ -581,11 +603,13 @@ public sealed class CmsPageService : ICmsPageService
                       AND NOT "IsDeleted"
                     FOR UPDATE
                     """)
+                .Include(item => item.Translations)
                 .OrderBy(item => item.Version)
                 .ToListAsync(cancellationToken);
         }
 
         return await _dbContext.CmsPages
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => item.PageGroupId == pageId)
             .Where(item => !item.IsDeleted)
@@ -749,7 +773,8 @@ public sealed class CmsPageService : ICmsPageService
             DraftVersion = draft?.Version,
             PublishedVersion = published?.Version,
             UpdatedAtUtc = current.UpdatedAt,
-            PublishedAtUtc = published?.PublishedAt
+            PublishedAtUtc = published?.PublishedAt,
+            AvailableLanguages = GetNormalizedTranslations(current).Keys.OrderBy(locale => locale).ToList()
         };
     }
 
@@ -777,7 +802,8 @@ public sealed class CmsPageService : ICmsPageService
             UpdatedAtUtc = current.UpdatedAt,
             PublishedAtUtc = published?.PublishedAt,
             Draft = draft == null ? null : MapVersion(draft),
-            Published = published == null ? null : MapVersion(published)
+            Published = published == null ? null : MapVersion(published),
+            AvailableLanguages = GetNormalizedTranslations(current).Keys.OrderBy(locale => locale).ToList()
         };
     }
 
@@ -819,27 +845,261 @@ public sealed class CmsPageService : ICmsPageService
 
     private static AdminCmsPageVersionResponse MapVersion(CmsPage page)
     {
+        var translations = GetNormalizedTranslations(page);
+        var english = translations["en"];
         return new AdminCmsPageVersionResponse
         {
             RecordId = page.Id,
             Slug = page.Slug,
-            Title = page.Title,
-            ContentType = page.ContentType,
-            Content = CmsPageReadService.ParseContent(page.ContentType, page.Content),
+            Title = english.Title,
+            ContentType = english.ContentType,
+            Content = CmsPageReadService.ParseContent(english.ContentType, english.Content),
             Version = page.Version,
-            SchemaVersion = page.SchemaVersion,
+            SchemaVersion = english.SchemaVersion,
             CreatedAtUtc = page.CreatedAt,
             UpdatedAtUtc = page.UpdatedAt,
             PublishedAtUtc = page.PublishedAt,
             Seo = new AdminCmsPageSeoRequest
             {
-                MetaTitle = page.MetaTitle,
-                MetaDescription = page.MetaDescription,
-                MetaKeywords = page.MetaKeywords,
-                OpenGraphImageUrl = page.OpenGraphImageUrl
+                MetaTitle = english.MetaTitle,
+                MetaDescription = english.MetaDescription,
+                MetaKeywords = english.MetaKeywords,
+                OpenGraphImageUrl = english.OpenGraphImageUrl
+            },
+            Translations = translations.ToDictionary(
+                item => item.Key,
+                item => MapTranslation(item.Value),
+                StringComparer.Ordinal)
+        };
+    }
+
+    private Dictionary<string, NormalizedTranslation> ResolveRequestedTranslations(
+        AdminCmsPageRequest request,
+        CmsPage? currentPage)
+    {
+        var requestError = request.Validate();
+        if (requestError != null)
+        {
+            throw new InvalidOperationException(requestError);
+        }
+
+        var resolved = new Dictionary<string, NormalizedTranslation>(StringComparer.Ordinal);
+        var existing = currentPage == null
+            ? new Dictionary<string, NormalizedTranslation>(StringComparer.Ordinal)
+            : GetNormalizedTranslations(currentPage);
+
+        if (request.Translations == null)
+        {
+            resolved["en"] = NormalizeTranslation(
+                "en",
+                request.Title,
+                request.ContentType,
+                request.Content,
+                request.SchemaVersion,
+                request.Seo);
+
+            if (existing.TryGetValue("ar", out var existingArabic))
+            {
+                resolved["ar"] = existingArabic;
+            }
+
+            return resolved;
+        }
+
+        var normalizedRequests = request.Translations.ToDictionary(
+            item => item.Key.Trim().ToLowerInvariant(),
+            item => item.Value,
+            StringComparer.Ordinal);
+        var englishRequest = normalizedRequests["en"]
+            ?? throw new InvalidOperationException("English translation is required.");
+        resolved["en"] = NormalizeTranslation("en", englishRequest);
+
+        if (normalizedRequests.TryGetValue("ar", out var arabicRequest))
+        {
+            if (arabicRequest != null)
+            {
+                resolved["ar"] = NormalizeTranslation("ar", arabicRequest);
+            }
+        }
+        else if (existing.TryGetValue("ar", out var existingArabic))
+        {
+            // Omission preserves Arabic; only an explicit `ar: null` removes it.
+            resolved["ar"] = existingArabic;
+        }
+
+        return resolved;
+    }
+
+    private NormalizedTranslation NormalizeTranslation(string locale, AdminCmsPageTranslationRequest request)
+    {
+        return NormalizeTranslation(
+            locale,
+            request.Title,
+            request.ContentType,
+            request.Content,
+            request.SchemaVersion,
+            request.Seo);
+    }
+
+    private NormalizedTranslation NormalizeTranslation(
+        string locale,
+        string title,
+        CmsPageContentType contentType,
+        System.Text.Json.JsonElement content,
+        int schemaVersion,
+        AdminCmsPageSeoRequest? seo)
+    {
+        var validationError = AdminCmsPageRequest.ValidateLegacyTranslation(
+            title,
+            content,
+            schemaVersion,
+            locale == "ar" ? "Arabic" : "English");
+        if (validationError != null)
+        {
+            throw new InvalidOperationException(validationError);
+        }
+
+        var validation = _contentValidator.ValidateAndNormalize(contentType, content, schemaVersion);
+        if (string.IsNullOrWhiteSpace(validation.NormalizedContent) ||
+            (validation.ContentType == CmsPageContentType.Blocks && validation.NormalizedContent == "[]"))
+        {
+            throw new InvalidOperationException($"{(locale == "ar" ? "Arabic" : "English")} content is required.");
+        }
+
+        seo ??= new AdminCmsPageSeoRequest();
+        return new NormalizedTranslation(
+            locale,
+            title.Trim(),
+            validation.NormalizedContent,
+            validation.ContentType,
+            validation.SchemaVersion,
+            NormalizeOptionalSeoText(seo.MetaTitle, "Meta title", 200),
+            NormalizeOptionalSeoText(seo.MetaDescription, "Meta description", 320),
+            NormalizeOptionalSeoText(seo.MetaKeywords, "Meta keywords", 500),
+            NormalizeOptionalUrl(seo.OpenGraphImageUrl, "OpenGraph image URL", 1000));
+    }
+
+    private void EnsurePublishableTranslations(CmsPage page)
+    {
+        EnsurePublishableTranslations(GetNormalizedTranslations(page));
+    }
+
+    private void EnsurePublishableTranslations(IReadOnlyDictionary<string, NormalizedTranslation> translations)
+    {
+        if (!translations.TryGetValue("en", out var english))
+        {
+            throw new InvalidOperationException("English translation is required for publication.");
+        }
+
+        ValidateStoredTranslation(english);
+        if (translations.TryGetValue("ar", out var arabic))
+        {
+            ValidateStoredTranslation(arabic);
+        }
+    }
+
+    private void ValidateStoredTranslation(NormalizedTranslation translation)
+    {
+        var content = CmsPageReadService.ParseContent(translation.ContentType, translation.Content);
+        _ = NormalizeTranslation(
+            translation.Locale,
+            translation.Title,
+            translation.ContentType,
+            content,
+            translation.SchemaVersion,
+            new AdminCmsPageSeoRequest
+            {
+                MetaTitle = translation.MetaTitle,
+                MetaDescription = translation.MetaDescription,
+                MetaKeywords = translation.MetaKeywords,
+                OpenGraphImageUrl = translation.OpenGraphImageUrl
+            });
+    }
+
+    private static Dictionary<string, NormalizedTranslation> GetNormalizedTranslations(CmsPage page)
+    {
+        var translations = page.Translations
+            .Where(item => item.Locale is "en" or "ar")
+            .ToDictionary(
+                item => item.Locale,
+                item => new NormalizedTranslation(
+                    item.Locale,
+                    item.Title,
+                    item.Content,
+                    item.ContentType,
+                    item.SchemaVersion,
+                    item.MetaTitle,
+                    item.MetaDescription,
+                    item.MetaKeywords,
+                    item.OpenGraphImageUrl),
+                StringComparer.Ordinal);
+
+        if (!translations.ContainsKey("en"))
+        {
+            translations["en"] = new NormalizedTranslation(
+                "en",
+                page.Title,
+                page.Content,
+                page.ContentType,
+                page.SchemaVersion,
+                page.MetaTitle,
+                page.MetaDescription,
+                page.MetaKeywords,
+                page.OpenGraphImageUrl);
+        }
+
+        return translations;
+    }
+
+    private static CmsPageTranslation CreateTranslation(
+        Guid pageVersionId,
+        Guid tenantId,
+        NormalizedTranslation translation)
+    {
+        return new CmsPageTranslation
+        {
+            CmsPageVersionId = pageVersionId,
+            TenantId = tenantId,
+            Locale = translation.Locale,
+            Title = translation.Title,
+            Content = translation.Content,
+            ContentType = translation.ContentType,
+            SchemaVersion = translation.SchemaVersion,
+            MetaTitle = translation.MetaTitle,
+            MetaDescription = translation.MetaDescription,
+            MetaKeywords = translation.MetaKeywords,
+            OpenGraphImageUrl = translation.OpenGraphImageUrl
+        };
+    }
+
+    private static AdminCmsPageTranslationResponse MapTranslation(NormalizedTranslation translation)
+    {
+        return new AdminCmsPageTranslationResponse
+        {
+            Title = translation.Title,
+            ContentType = translation.ContentType,
+            Content = CmsPageReadService.ParseContent(translation.ContentType, translation.Content),
+            SchemaVersion = translation.SchemaVersion,
+            Seo = new AdminCmsPageSeoRequest
+            {
+                MetaTitle = translation.MetaTitle,
+                MetaDescription = translation.MetaDescription,
+                MetaKeywords = translation.MetaKeywords,
+                OpenGraphImageUrl = translation.OpenGraphImageUrl
             }
         };
     }
+
+    private sealed record NormalizedTranslation(
+        string Locale,
+        string Title,
+        string Content,
+        CmsPageContentType ContentType,
+        int SchemaVersion,
+        string? MetaTitle,
+        string? MetaDescription,
+        string? MetaKeywords,
+        string? OpenGraphImageUrl);
 
     private static string? NormalizeOptionalSeoText(string? value, string fieldName, int maxLength)
     {

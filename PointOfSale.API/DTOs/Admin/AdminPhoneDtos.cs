@@ -13,8 +13,14 @@ public class AdminUnblockPhoneRequest
 
 public class AdminReportSpamPhoneRequest
 {
-    public string PhoneNumber { get; set; } = string.Empty;
+    // Retained for request compatibility; the backend always resolves the phone from OrderId.
+    public string? PhoneNumber { get; set; }
     public Guid OrderId { get; set; }
+}
+
+public class AdminBlockOrderPhoneRequest
+{
+    public string? Reason { get; set; }
 }
 
 public class AdminBlockedPhoneQuery
@@ -54,4 +60,17 @@ public class AdminPhoneRiskStatusDto
 public class AdminBlockedPhoneListItemDto : AdminPhoneRiskStatusDto
 {
     public Guid Id { get; set; }
+}
+
+public class AdminOrderCustomerTrustDto
+{
+    public Guid OrderId { get; set; }
+    public string? PhoneNumber { get; set; }
+    public bool HasPhone => !string.IsNullOrWhiteSpace(PhoneNumber);
+    public int PreviousOrdersCount { get; set; }
+    public int CancelledOrdersCount { get; set; }
+    public bool HasReportedSpam { get; set; }
+    public string RiskLevel { get; set; } = "UNAVAILABLE";
+    public List<string> RiskSignals { get; set; } = new();
+    public AdminPhoneRiskStatusDto? PhoneRisk { get; set; }
 }

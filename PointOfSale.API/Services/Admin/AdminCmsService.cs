@@ -795,13 +795,7 @@ public sealed class AdminCmsService : IAdminCmsService
                     new AdminNavigationLinkRequest { Label = "Home", Type = "custom", Path = "/", Order = 0, Enabled = true },
                     new AdminNavigationLinkRequest { Label = "Shop", Type = "collection", CollectionKey = NavigationAdmissionService.AllProductsCollectionKey, Path = "/products", Order = 1, Enabled = true }
                 ],
-                Footer =
-                [
-                    new AdminNavigationLinkRequest { Label = "About Us", Type = "cms", Slug = "about", Order = 0, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Contact", Type = "cms", Slug = "contact", Order = 1, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Privacy Policy", Type = "cms", Slug = "privacy", Order = 2, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Terms & Conditions", Type = "cms", Slug = "terms", Order = 3, Enabled = true }
-                ]
+                Footer = []
             }
         };
     }

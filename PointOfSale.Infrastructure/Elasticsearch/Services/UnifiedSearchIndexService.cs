@@ -255,6 +255,23 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
 
             if (response.IsValid)
             {
+                var legacyDocumentId = $"{document.TenantId}_{document.Slug}";
+                if (!string.Equals(legacyDocumentId, documentId, StringComparison.Ordinal))
+                {
+                    var legacyDelete = await _client.DeleteAsync(
+                        new DocumentPath<CmsPageSearchDocument>(legacyDocumentId),
+                        descriptor => descriptor.Index(CmsPagesIndexName),
+                        cancellationToken);
+                    if (!legacyDelete.IsValid && legacyDelete.Result != Result.NotFound)
+                    {
+                        _logger.LogWarning(
+                            "CMS page indexed but legacy slug-keyed document cleanup failed | PageGroupId: {PageGroupId} | Slug: {Slug} | TenantId: {TenantId}",
+                            document.PageId,
+                            document.Slug,
+                            document.TenantId);
+                    }
+                }
+
                 _logger.LogInformation(
                     "CMS page indexed successfully | Slug: {Slug} | TenantId: {TenantId}",
                     document.Slug, document.TenantId);
@@ -274,7 +291,11 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
     }
 
     /// <inheritdoc />
-    public async Task<bool> DeleteCmsPageAsync(Guid tenantId, string slug, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteCmsPageAsync(
+        Guid tenantId,
+        Guid pageGroupId,
+        string? legacySlug = null,
+        CancellationToken cancellationToken = default)
     {
         if (!_settings.Enabled)
         {
@@ -284,28 +305,38 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
 
         try
         {
-            var documentId = $"{tenantId}_{slug}";
+            var documentId = $"{tenantId}_{pageGroupId}";
             var response = await _client.DeleteAsync(
                 new DocumentPath<CmsPageSearchDocument>(documentId),
                 d => d.Index(CmsPagesIndexName),
                 cancellationToken);
 
-            if (response.IsValid || response.Result == Result.NotFound)
+            var legacyDeleted = true;
+            if (!string.IsNullOrWhiteSpace(legacySlug))
+            {
+                var legacyResponse = await _client.DeleteAsync(
+                    new DocumentPath<CmsPageSearchDocument>($"{tenantId}_{legacySlug}"),
+                    descriptor => descriptor.Index(CmsPagesIndexName),
+                    cancellationToken);
+                legacyDeleted = legacyResponse.IsValid || legacyResponse.Result == Result.NotFound;
+            }
+
+            if ((response.IsValid || response.Result == Result.NotFound) && legacyDeleted)
             {
                 _logger.LogInformation(
-                    "CMS page deleted from index | Slug: {Slug} | TenantId: {TenantId}",
-                    slug, tenantId);
+                    "CMS page deleted from index | PageGroupId: {PageGroupId} | TenantId: {TenantId}",
+                    pageGroupId, tenantId);
                 return true;
             }
 
             _logger.LogError(
-                "Failed to delete CMS page | Slug: {Slug} | Error: {Error}",
-                slug, response.ServerError?.Error?.Reason ?? "Unknown");
+                "Failed to delete CMS page | PageGroupId: {PageGroupId} | Error: {Error}",
+                pageGroupId, response.ServerError?.Error?.Reason ?? "Unknown");
             return false;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Exception deleting CMS page | Slug: {Slug}", slug);
+            _logger.LogError(ex, "Exception deleting CMS page | PageGroupId: {PageGroupId}", pageGroupId);
             return false;
         }
     }
@@ -1071,7 +1102,7 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
     /// <inheritdoc />
     public async Task<long> DeleteStaleCmsPagesAsync(
         Guid tenantId,
-        IReadOnlyCollection<string> authoritativeSlugs,
+        IReadOnlyCollection<Guid> authoritativePageGroupIds,
         CancellationToken cancellationToken = default)
     {
         if (!_settings.Enabled)
@@ -1082,10 +1113,9 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
 
         try
         {
-            var normalizedSlugs = authoritativeSlugs
-                .Where(slug => !string.IsNullOrWhiteSpace(slug))
-                .Select(slug => slug.Trim().ToLowerInvariant())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+            var normalizedPageGroupIds = authoritativePageGroupIds
+                .Where(pageGroupId => pageGroupId != Guid.Empty)
+                .Distinct()
                 .ToArray();
 
             QueryContainer BuildStaleCmsPageQuery(QueryContainerDescriptor<CmsPageSearchDocument> query)
@@ -1095,11 +1125,11 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
                     filter => filter.Term(term => term.Field(document => document.TenantId).Value(tenantId))
                 };
 
-                if (normalizedSlugs.Length > 0)
+                if (normalizedPageGroupIds.Length > 0)
                 {
                     filters.Add(filter => filter.Bool(boolean => boolean.MustNot(mustNot => mustNot.Terms(terms => terms
-                        .Field(document => document.Slug)
-                        .Terms(normalizedSlugs)))));
+                        .Field(document => document.PageId)
+                        .Terms(normalizedPageGroupIds)))));
                 }
 
                 return query.Bool(boolean => boolean.Filter(filters.ToArray()));
@@ -1118,7 +1148,7 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
                     "Deleted stale tenant-scoped CMS page documents from search | TenantId: {TenantId} | Deleted: {Deleted} | AuthoritativeCount: {AuthoritativeCount}",
                     tenantId,
                     response.Deleted,
-                    normalizedSlugs.Length);
+                    normalizedPageGroupIds.Length);
                 return response.Deleted;
             }
 

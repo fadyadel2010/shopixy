@@ -115,6 +115,30 @@ function admitCmsPageSeo(seo) {
     }
 }
 
+function admitCmsPageTranslation(translation) {
+    if (!translation || typeof translation !== 'object' || Array.isArray(translation)) {
+        return null
+    }
+
+    const title = typeof translation.title === 'string' ? translation.title.trim() : ''
+    const seo = admitCmsPageSeo(translation.seo)
+    const contentIsValid = translation.contentType === 'RichText'
+        ? typeof translation.content === 'string' && translation.content.trim().length > 0
+        : translation.contentType === 'Blocks'
+            ? Array.isArray(translation.content) && translation.content.length > 0
+            : false
+
+    if (!title || title.length > 200 || !contentIsValid || !isPositiveVersion(translation.schemaVersion) || !seo) {
+        return null
+    }
+
+    return {
+        ...translation,
+        title,
+        seo,
+    }
+}
+
 function admitCmsPageVersion(version) {
     if (!version || typeof version !== 'object') {
         return null
@@ -127,11 +151,32 @@ function admitCmsPageVersion(version) {
         return null
     }
 
+    let translations = version.translations
+    if (translations != null) {
+        if (!translations || typeof translations !== 'object' || Array.isArray(translations)) {
+            return null
+        }
+
+        const locales = Object.keys(translations)
+        if (!locales.includes('en') || locales.some((locale) => locale !== 'en' && locale !== 'ar')) {
+            return null
+        }
+
+        const english = admitCmsPageTranslation(translations.en)
+        const arabic = translations.ar == null ? null : admitCmsPageTranslation(translations.ar)
+        if (!english || (translations.ar != null && !arabic)) {
+            return null
+        }
+
+        translations = arabic ? { en: english, ar: arabic } : { en: english }
+    }
+
     return {
         ...version,
         recordId,
         slug,
         seo,
+        ...(translations == null ? {} : { translations }),
     }
 }
 

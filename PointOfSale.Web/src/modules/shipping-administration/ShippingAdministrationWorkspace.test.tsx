@@ -227,7 +227,7 @@ describe('ShippingAdministrationWorkspace', () => {
         expect(await screen.findByText('Shipping Administration')).toBeInTheDocument()
         expect(screen.getByText('Configured Carriers')).toBeInTheDocument()
 
-        fireEvent.click(screen.getByRole('button', { name: 'Carrier Accounts' }))
+        fireEvent.click(screen.getByRole('tab', { name: 'Carrier Accounts' }))
 
         await waitFor(() => expect(screen.getAllByText('FedEx')).toHaveLength(2))
         expect(screen.getByRole('option', { name: 'Bosta' })).toBeInTheDocument()
@@ -298,7 +298,7 @@ describe('ShippingAdministrationWorkspace', () => {
         expect(await screen.findByText('Provider Readiness States')).toBeInTheDocument()
         expect(screen.getByText('Credential availability: Available')).toBeInTheDocument()
 
-        fireEvent.click(screen.getByRole('button', { name: 'Audit' }))
+        fireEvent.click(screen.getByRole('tab', { name: 'Audit' }))
 
         expect(await screen.findByText('Backend audit reason')).toBeInTheDocument()
         expect(screen.queryByText('Delete')).not.toBeInTheDocument()
@@ -444,7 +444,7 @@ describe('ShippingAdministrationWorkspace', () => {
 
         expect(workspace).toContain('accountRequired !== false')
         expect(card).toContain('accountRequired')
-        expect(card).toContain('does not require credentials')
+        expect(card).toContain("t('shippingAdministration.account.manualExplanation')")
         expect(admitSupportedCarriers([
             {
                 carrierCode: 'manual',

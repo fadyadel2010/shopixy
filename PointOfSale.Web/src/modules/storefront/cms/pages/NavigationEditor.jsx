@@ -59,12 +59,12 @@ import {
 } from '../../authoringPlatform'
 
 const LINK_TYPES = [
-    { type: 'custom', label: 'Custom Page', labelAr: 'صفحة مخصصة', icon: Home },
-    { type: 'cms', label: 'Page', labelAr: 'صفحة محتوى', icon: FileText },
-    { type: 'category', label: 'Category', labelAr: 'فئة', icon: Link2 },
-    { type: 'product', label: 'Product', labelAr: 'منتج', icon: Package },
-    { type: 'collection', label: 'Collection', labelAr: 'مجموعة', icon: Layers3 },
-    { type: 'external', label: 'External URL', labelAr: 'رابط خارجي', icon: ExternalLink },
+    { type: 'custom', labelKey: 'storefront.cms.navigationEditor.linkTypes.custom', icon: Home },
+    { type: 'cms', labelKey: 'storefront.cms.navigationEditor.linkTypes.cms', icon: FileText },
+    { type: 'category', labelKey: 'storefront.cms.navigationEditor.linkTypes.category', icon: Link2 },
+    { type: 'product', labelKey: 'storefront.cms.navigationEditor.linkTypes.product', icon: Package },
+    { type: 'collection', labelKey: 'storefront.cms.navigationEditor.linkTypes.collection', icon: Layers3 },
+    { type: 'external', labelKey: 'storefront.cms.navigationEditor.linkTypes.external', icon: ExternalLink },
 ]
 
 const formatSavedAt = (value) => {
@@ -119,6 +119,9 @@ export function NavigationEditor() {
     const [showAddModal, setShowAddModal] = useState(false)
     const [deleteLinkIndex, setDeleteLinkIndex] = useState(null)
     const [targets, setTargets] = useState({ categories: [], products: [], cmsPages: [], collections: [] })
+    const [targetsStatus, setTargetsStatus] = useState('loading')
+    const [targetsError, setTargetsError] = useState(false)
+    const [preferredCmsTargetId, setPreferredCmsTargetId] = useState('')
 
     // Refs for debounced save
     const saveTimeoutRef = useRef(null)
@@ -155,38 +158,61 @@ export function NavigationEditor() {
         }
     }, [])
 
-    // Load navigation and categories
+    const loadTargets = useCallback(async () => {
+        targetsLoadAbortRef.current?.abort()
+        const controller = new AbortController()
+        targetsLoadAbortRef.current = controller
+        setTargetsStatus('loading')
+        setTargetsError(false)
+
+        try {
+            const admittedTargets = await cmsService.getNavigationTargets({ signal: controller.signal })
+            setTargets(admittedTargets)
+            setTargetsStatus('ready')
+            return admittedTargets
+        } catch (err) {
+            if (isRequestCanceled(err)) {
+                return null
+            }
+            console.error('Failed to load navigation targets:', err)
+            setTargetsStatus('error')
+            setTargetsError(true)
+            return null
+        } finally {
+            if (targetsLoadAbortRef.current === controller) {
+                targetsLoadAbortRef.current = null
+            }
+        }
+    }, [])
+
+    useEffect(() => {
+        const handleCreatedPage = async (event) => {
+            if (event.origin !== window.location.origin || event.data?.type !== 'shopixy:cms-page-created') {
+                return
+            }
+
+            const pageId = typeof event.data.pageId === 'string' ? event.data.pageId : ''
+            const refreshedTargets = await loadTargets()
+            if (pageId && refreshedTargets?.cmsPages.some((page) => page.targetId === pageId)) {
+                setPreferredCmsTargetId(pageId)
+            }
+        }
+
+        window.addEventListener('message', handleCreatedPage)
+        return () => window.removeEventListener('message', handleCreatedPage)
+    }, [loadTargets])
+
+    // Load navigation and selectable targets independently so one failure cannot hide the other.
     useEffect(() => {
         loadNavigation()
-        loadTargets()
+        void loadTargets()
         return () => {
             reset()
             clearScheduledSave(true)
             navigationLoadAbortRef.current?.abort()
             targetsLoadAbortRef.current?.abort()
         }
-    }, [clearScheduledSave, reset])
-
-    const loadTargets = async () => {
-        targetsLoadAbortRef.current?.abort()
-        const controller = new AbortController()
-        targetsLoadAbortRef.current = controller
-
-        try {
-            const admittedTargets = await cmsService.getNavigationTargets({ signal: controller.signal })
-            setTargets(admittedTargets)
-        } catch (err) {
-            if (isRequestCanceled(err)) {
-                return
-            }
-            console.error('Failed to load navigation targets:', err)
-            setTargets({ categories: [], products: [], cmsPages: [], collections: [] })
-        } finally {
-            if (targetsLoadAbortRef.current === controller) {
-                targetsLoadAbortRef.current = null
-            }
-        }
-    }
+    }, [clearScheduledSave, loadTargets, reset])
 
     useEffect(() => {
         if (isNavigationDirty) {
@@ -213,7 +239,7 @@ export function NavigationEditor() {
             }
             console.error('Failed to load navigation:', err)
             const admission = extractNavigationAdmissionError(err)
-            setError(admission?.message || (isRTL ? 'فشل تحميل القائمة' : 'Failed to load navigation'))
+            setError(admission?.message || t('storefront.cms.navigationEditor.loadFailed'))
             setNavigation(null)
         } finally {
             if (navigationLoadAbortRef.current === controller) {
@@ -292,9 +318,15 @@ export function NavigationEditor() {
                 } else {
                     const message = err?.response?.data?.message
                         || err?.message
-                        || (isRTL ? 'فشل حفظ تغييرات التنقل. حاول مرة أخرى.' : 'Failed to save navigation changes. Please try again.')
+                        || t('storefront.cms.navigationEditor.saveFailedMessage')
                     setSaveStatus('error')
                     setSaveErrorBanner(message)
+                }
+
+                if (err?.code === 'NAVIGATION_CLIENT_INVALID' && err?.details) {
+                    const menu = err.details.menu === 'footer' ? 'footer' : 'header'
+                    setActiveTab(menu)
+                    setEditingLink(Number.isInteger(err.details.index) ? err.details.index : null)
                 }
 
                 if (!silent) {
@@ -321,7 +353,7 @@ export function NavigationEditor() {
         })
         savePromiseRef.current = trackedSave
         return trackedSave
-    }, [clearScheduledSave, isRTL, setNavigation, setNavigationDirty])
+    }, [clearScheduledSave, setNavigation, setNavigationDirty, t])
 
     // Debounced auto-save
     const debouncedSave = useCallback(() => {
@@ -378,7 +410,7 @@ export function NavigationEditor() {
                 // Generic error - show retry banner
                 const message = err?.response?.data?.message
                     || err?.message
-                    || (isRTL ? 'فشل نشر القوائم. حاول مرة أخرى.' : 'Failed to publish navigation. Please try again.')
+                    || t('storefront.cms.navigationEditor.publishFailedMessage')
                 setPublishStatus('error')
                 setPublishErrorBanner(message)
             }
@@ -499,11 +531,11 @@ export function NavigationEditor() {
     const lastSavedLabel = formatSavedAt(lastSavedAt)
 
     if (isLoading) {
-        return <AuthoringLoadingState label="Loading Navigation draft…" />
+        return <AuthoringLoadingState label={t('storefront.cms.navigationEditor.loading')} />
     }
 
     if (!navigation) {
-        return <AuthoringFeedback kind="error" title="Navigation authoring unavailable" message={error || (isRTL ? 'تعذر تحميل التنقل' : 'Navigation authoring is unavailable.')} action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry load', onClick: () => void loadNavigation(), icon: RefreshCcw }} />
+        return <AuthoringFeedback kind="error" title={t('storefront.cms.navigationEditor.unavailable')} message={error || t('storefront.cms.navigationEditor.unavailableMessage')} action={{ label: t('storefront.cms.navigationEditor.retryLoad'), onClick: () => void loadNavigation(), icon: RefreshCcw }} />
     }
 
     const draftValidationWarnings = (navigation.validationWarnings || [])
@@ -512,30 +544,30 @@ export function NavigationEditor() {
     return (
         <div className="space-y-6">
             <AuthoringActionBar
-                title="Navigation"
-                subtitle={lastSavedLabel && !isNavigationDirty ? `Draft last saved ${lastSavedLabel}. Header and Footer publish together.` : 'Header and Footer publish together as one Navigation scope.'}
-                backAction={{ label: 'Back', onClick: handleExit }}
+                title={t('storefront.cms.navigationEditor.title')}
+                subtitle={lastSavedLabel && !isNavigationDirty ? t('storefront.cms.navigationEditor.lastSaved', { time: lastSavedLabel }) : t('storefront.cms.navigationEditor.subtitle')}
+                backAction={{ label: t('storefront.cms.navigationEditor.back'), onClick: handleExit }}
                 status={<AuthoringStatusBadge state={isPublishing ? 'publishing' : isSaving ? 'saving' : isNavigationDirty ? 'dirty' : publishStatus === 'published' ? 'published' : 'draft'} />}
-                historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
-                discardAction={{ label: 'Discard', onClick: handleDiscard, disabled: !isNavigationDirty || isSaving || isPublishing }}
-                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => void handleSave(false), disabled: !isNavigationDirty || isPublishing, busy: isSaving }}
-                publishAction={{ label: 'Publish Header and Footer Navigation', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving || (!isNavigationDirty && !navigation.hasPendingChanges), busy: isPublishing }}
+                historyAction={{ label: t('storefront.cms.navigationEditor.history'), onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
+                discardAction={{ label: t('storefront.cms.navigationEditor.discard'), onClick: handleDiscard, disabled: !isNavigationDirty || isSaving || isPublishing }}
+                saveAction={{ label: t('storefront.cms.navigationEditor.saveDraft'), busyLabel: t('storefront.cms.navigationEditor.saving'), onClick: () => void handleSave(false), disabled: !isNavigationDirty || isPublishing, busy: isSaving }}
+                publishAction={{ label: t('storefront.cms.navigationEditor.publish'), busyLabel: t('storefront.cms.navigationEditor.publishing'), onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving || (!isNavigationDirty && !navigation.hasPendingChanges), busy: isPublishing }}
             />
 
-            {publishStatus === 'published' ? <AuthoringFeedback kind="success" title="Navigation published" message="Header and Footer Navigation are now live." /> : null}
+            {publishStatus === 'published' ? <AuthoringFeedback kind="success" title={t('storefront.cms.navigationEditor.publishedTitle')} message={t('storefront.cms.navigationEditor.publishedMessage')} /> : null}
 
             {/* Error */}
-            {error ? <AuthoringFeedback kind="error" title="Navigation action failed" message={error} /> : null}
+            {error ? <AuthoringFeedback kind="error" title={t('storefront.cms.navigationEditor.actionFailed')} message={error} /> : null}
 
-            {saveErrorBanner ? <AuthoringFeedback kind="error" title={isRTL ? 'تعذر حفظ تغييرات التنقل' : 'Navigation changes are not saved'} message={saveErrorBanner} action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry save', onClick: () => void handleSave(false), icon: Save }} /> : null}
+            {saveErrorBanner ? <AuthoringFeedback kind="error" title={t('storefront.cms.navigationEditor.notSaved')} message={saveErrorBanner} action={{ label: t('storefront.cms.navigationEditor.retrySave'), onClick: () => void handleSave(false), icon: Save }} /> : null}
 
-            {publishErrorBanner ? <AuthoringFeedback kind="error" title={isRTL ? 'فشل نشر القوائم' : 'Failed to publish navigation'} message={publishErrorBanner} action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry publish', onClick: () => void handlePublish(), icon: Globe }} /> : null}
+            {publishErrorBanner ? <AuthoringFeedback kind="error" title={t('storefront.cms.navigationEditor.publishFailed')} message={publishErrorBanner} action={{ label: t('storefront.cms.navigationEditor.retryPublish'), onClick: () => void handlePublish(), icon: Globe }} /> : null}
 
-            {draftValidationWarnings.length > 0 ? <AuthoringFeedback kind="warning" title={draftValidationWarnings.length === 1 ? 'One navigation link needs attention' : `${draftValidationWarnings.length} navigation links need attention`} message="Invalid links remain editable. Repair or remove the highlighted rows before saving or publishing." /> : null}
+            {draftValidationWarnings.length > 0 ? <AuthoringFeedback kind="warning" title={t('storefront.cms.navigationEditor.invalidCount', { count: draftValidationWarnings.length })} message={t('storefront.cms.navigationEditor.invalidHelp')} /> : null}
 
             {/* Tabs */}
             <div className="border-b border-gray-200">
-                <nav aria-label={isRTL ? 'طرق عرض التنقل' : 'Navigation views'} className="flex gap-4" role="tablist">
+                <nav aria-label={t('storefront.cms.navigationEditor.views')} className="flex gap-4" role="tablist">
                     <button
                         type="button"
                         role="tab"
@@ -546,7 +578,7 @@ export function NavigationEditor() {
                             : 'border-transparent text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        {isRTL ? 'رأس الصفحة' : 'Header'}
+                        {t('storefront.cms.navigationEditor.header')}
                         <span className="ms-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {navigation?.draft?.header?.length || 0}
                         </span>
@@ -561,7 +593,7 @@ export function NavigationEditor() {
                             : 'border-transparent text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        {isRTL ? 'روابط التذييل' : 'Footer Links'}
+                        {t('storefront.cms.navigationEditor.footer')}
                         <span className="ms-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {navigation?.draft?.footer?.length || 0}
                         </span>
@@ -574,24 +606,24 @@ export function NavigationEditor() {
                 <div className="flex items-center justify-between mb-6">
                     <h2 className="text-lg font-semibold text-gray-900">
                         {activeTab === 'header'
-                            ? (isRTL ? 'روابط الهيدر' : 'Header Links')
-                            : (isRTL ? 'روابط الفوتر' : 'Footer Links')}
+                            ? t('storefront.cms.navigationEditor.headerLinks')
+                            : t('storefront.cms.navigationEditor.footerLinks')}
                     </h2>
                     <button
                         onClick={() => setShowAddModal(true)}
                         className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
                     >
                         <Plus size={16} />
-                        {isRTL ? 'إضافة رابط' : 'Add Link'}
+                        {t('storefront.cms.navigationEditor.addLink')}
                     </button>
                 </div>
 
                 {/* Links List */}
                 {getCurrentLinks().length === 0 ? (
                     <AuthoringEmptyState
-                        title={isRTL ? 'لا توجد روابط' : 'No Navigation links'}
-                        description={isRTL ? 'أضف رابط للبدء.' : 'Add a link to this shared Navigation draft.'}
-                        action={{ label: isRTL ? 'إضافة رابط' : 'Add Link', onClick: () => setShowAddModal(true), icon: Plus }}
+                        title={t('storefront.cms.navigationEditor.emptyTitle')}
+                        description={t('storefront.cms.navigationEditor.emptyDescription')}
+                        action={{ label: t('storefront.cms.navigationEditor.addLink'), onClick: () => setShowAddModal(true), icon: Plus }}
                     />
                 ) : (
                     <div className="space-y-2">
@@ -626,7 +658,7 @@ export function NavigationEditor() {
                                                 setEditingLink(null)
                                             }}
                                             onCancel={() => setEditingLink(null)}
-                                            isRTL={isRTL}
+                                            t={t}
                                         />
                                     ) : (
                                         <>
@@ -640,26 +672,36 @@ export function NavigationEditor() {
                                                 </span>
                                                 {isInvalid && (
                                                     <p className="mt-1 text-xs font-medium text-amber-800">
-                                                        {link.validationMessage || 'This navigation target is no longer valid.'}
+                                                        {t(`storefront.cms.navigationEditor.validation.${link.validationCode}`, { defaultValue: link.validationMessage || t('storefront.cms.navigationEditor.validation.invalid') })}
                                                     </p>
                                                 )}
                                                 {!link.enabled && (
                                                     <p className="mt-1 text-xs font-medium text-gray-500">
-                                                        {isRTL ? 'معطل' : 'Disabled'}
+                                                        {t('storefront.cms.navigationEditor.disabled')}
                                                     </p>
                                                 )}
                                             </div>
                                             <div className="flex shrink-0 items-center gap-1">
-                                                <button
-                                                    onClick={() => setEditingLink(index)}
-                                                    aria-label={isRTL ? 'تعديل رابط التنقل' : 'Edit navigation link'}
-                                                    className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded transition-colors"
-                                                >
-                                                    <Edit2 size={14} />
-                                                </button>
+                                                {isInvalid ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setEditingLink(index)}
+                                                        className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+                                                    >
+                                                        {t('storefront.cms.navigationEditor.repair')}
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setEditingLink(index)}
+                                                        aria-label={t('storefront.cms.navigationEditor.editLink')}
+                                                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded transition-colors"
+                                                    >
+                                                        <Edit2 size={14} />
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={() => handleMoveLink(index, 'up')}
-                                                    aria-label={isRTL ? 'نقل الرابط لأعلى' : 'Move navigation link up'}
+                                                    aria-label={t('storefront.cms.navigationEditor.moveUp')}
                                                     disabled={index === 0}
                                                     className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30 transition-colors"
                                                 >
@@ -667,7 +709,7 @@ export function NavigationEditor() {
                                                 </button>
                                                 <button
                                                     onClick={() => handleMoveLink(index, 'down')}
-                                                    aria-label={isRTL ? 'نقل الرابط لأسفل' : 'Move navigation link down'}
+                                                    aria-label={t('storefront.cms.navigationEditor.moveDown')}
                                                     disabled={index === getCurrentLinks().length - 1}
                                                     className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30 transition-colors"
                                                 >
@@ -675,10 +717,12 @@ export function NavigationEditor() {
                                                 </button>
                                                 <button
                                                     onClick={() => setDeleteLinkIndex(index)}
-                                                    aria-label="Delete navigation link"
-                                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                                    aria-label={t('storefront.cms.navigationEditor.deleteLink')}
+                                                    className={isInvalid
+                                                        ? 'rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50'
+                                                        : 'p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors'}
                                                 >
-                                                    <Trash2 size={14} />
+                                                    {isInvalid ? t('storefront.cms.navigationEditor.remove') : <Trash2 size={14} />}
                                                 </button>
                                             </div>
                                         </>
@@ -695,15 +739,23 @@ export function NavigationEditor() {
                 <AddLinkModal
                     onAdd={handleAddLink}
                     onClose={() => setShowAddModal(false)}
-                    isRTL={isRTL}
+                    t={t}
                     targets={targets}
+                    targetsStatus={targetsStatus}
+                    targetsError={targetsError ? t('storefront.cms.navigationEditor.targets.loadFailed') : ''}
+                    onRetryTargets={() => void loadTargets()}
+                    preferredCmsTargetId={preferredCmsTargetId}
+                    onCreatePage={() => {
+                        const pageWindow = window.open('/storefront/content/pages/new?returnTo=navigation', '_blank')
+                        pageWindow?.focus()
+                    }}
                 />
             )}
             <AuthoringConfirmDialog
                 open={isPublishConfirmOpen}
-                title="Publish Header and Footer Navigation?"
-                description="Publishing replaces the live Header and Footer Navigation together. Other StoreConfig surfaces are not changed."
-                confirmLabel="Publish Header and Footer Navigation"
+                title={t('storefront.cms.navigationEditor.publishConfirmTitle')}
+                description={t('storefront.cms.navigationEditor.publishConfirmDescription')}
+                confirmLabel={t('storefront.cms.navigationEditor.publish')}
                 confirmTone="publish"
                 busy={isPublishing}
                 onClose={() => setIsPublishConfirmOpen(false)}
@@ -711,9 +763,9 @@ export function NavigationEditor() {
             />
             <AuthoringConfirmDialog
                 open={deleteLinkIndex != null}
-                title="Delete Navigation Link?"
-                description="The link is removed from this draft. Save or publish is still required to commit the change."
-                confirmLabel="Delete Link"
+                title={t('storefront.cms.navigationEditor.deleteConfirmTitle')}
+                description={t('storefront.cms.navigationEditor.deleteConfirmDescription')}
+                confirmLabel={t('storefront.cms.navigationEditor.deleteLink')}
                 confirmTone="danger"
                 onClose={() => setDeleteLinkIndex(null)}
                 onConfirm={() => {
@@ -737,8 +789,8 @@ export function NavigationEditor() {
 /**
  * Add Link Modal
  */
-function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
-    const [linkType, setLinkType] = useState('custom')
+function AddLinkModal({ onAdd, onClose, t, targets, targetsStatus, targetsError, onRetryTargets, onCreatePage, preferredCmsTargetId }) {
+    const [linkType, setLinkType] = useState('cms')
     const [label, setLabel] = useState('')
     const [labelAr, setLabelAr] = useState('')
     const [path, setPath] = useState('')
@@ -753,6 +805,14 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
             : linkType === 'cms'
                 ? targets.cmsPages
                 : []
+
+    useEffect(() => {
+        if (linkType !== 'cms' || !preferredCmsTargetId) return
+        const selected = targets.cmsPages.find((option) => option.targetId === preferredCmsTargetId)
+        if (!selected) return
+        setTargetId(selected.targetId)
+        setLabel(selected.label)
+    }, [linkType, preferredCmsTargetId, targets.cmsPages])
 
     const handleTargetSelect = (selectedId) => {
         setTargetId(selectedId)
@@ -789,116 +849,94 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
     return (
         <AuthoringDialog
             open
-            title={isRTL ? 'إضافة رابط' : 'Add Link'}
+            title={t('storefront.cms.navigationEditor.addLink')}
             onClose={onClose}
             panelClassName="!max-w-md"
         >
                 <form onSubmit={handleSubmit} className="mt-4 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            {isRTL ? 'نوع الرابط' : 'Link Type'}
+                        <label htmlFor="navigation-link-type" className="block text-sm font-medium text-gray-700 mb-1">
+                            {t('storefront.cms.navigationEditor.linkType')}
                         </label>
                         <select
+                            id="navigation-link-type"
                             value={linkType}
                             onChange={(e) => handleTypeChange(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                         >
                             {LINK_TYPES.map((lt) => (
                                 <option key={lt.type} value={lt.type}>
-                                    {isRTL ? lt.labelAr : lt.label}
+                                    {t(lt.labelKey)}
                                 </option>
                             ))}
                         </select>
                     </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            {isRTL ? 'نص الرابط بالعربية (اختياري)' : 'Arabic Label (optional)'}
-                        </label>
-                        <input
-                            type="text"
-                            dir="rtl"
-                            value={labelAr}
-                            onChange={(e) => setLabelAr(e.target.value)}
-                            placeholder="مثال: من نحن"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            {isRTL ? 'نص الرابط بالإنجليزية' : 'Link Label'} *
-                        </label>
-                        <input
-                            type="text"
-                            value={label}
-                            onChange={(e) => setLabel(e.target.value)}
-                            placeholder={isRTL ? 'مثال: من نحن' : 'e.g. About Us'}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                            required
-                        />
-                    </div>
-
-                    {(linkType === 'custom' || linkType === 'external') && (
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                {linkType === 'external'
-                                    ? (isRTL ? 'الرابط الخارجي' : 'External URL')
-                                    : (isRTL ? 'المسار' : 'Path')} *
-                            </label>
-                            <input
-                                type={linkType === 'external' ? 'url' : 'text'}
-                                value={path}
-                                onChange={(e) => setPath(e.target.value)}
-                                placeholder={linkType === 'external' ? 'https://...' : '/products'}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                                required
-                            />
-                        </div>
-                    )}
-
                     {['category', 'product', 'cms'].includes(linkType) && (
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label htmlFor="navigation-link-target" className="block text-sm font-medium text-gray-700 mb-1">
                                 {linkType === 'category'
-                                    ? (isRTL ? 'اختر الفئة' : 'Select Category')
+                                    ? t('storefront.cms.navigationEditor.selectCategory')
                                     : linkType === 'product'
-                                        ? (isRTL ? 'اختر المنتج' : 'Select Product')
-                                        : (isRTL ? 'اختر صفحة المحتوى' : 'Select Page')} *
+                                        ? t('storefront.cms.navigationEditor.selectProduct')
+                                        : t('storefront.cms.navigationEditor.selectPage')} *
                             </label>
-                            <select
-                                value={targetId}
-                                onChange={(e) => handleTargetSelect(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                                required
-                            >
-                                <option value="">
-                                    {linkType === 'category'
-                                        ? (isRTL ? '-- اختر فئة --' : '-- Select a category --')
-                                        : linkType === 'product'
-                                            ? (isRTL ? '-- اختر منتجًا --' : '-- Select a product --')
-                                            : (isRTL ? '-- اختر صفحة --' : '-- Select a page --')}
-                                </option>
-                                {targetOptions.map((option) => (
-                                    <option key={option.targetId} value={option.targetId}>
-                                        {option.label}{option.state === 'draft' ? ' (Draft)' : ''}
-                                    </option>
-                                ))}
-                            </select>
-                            {targetId && (
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Backend-issued identity: {targetId}
+                            {targetsStatus === 'loading' ? (
+                                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600" role="status">
+                                    {t('storefront.cms.navigationEditor.targets.loading')}
                                 </p>
+                            ) : targetsStatus === 'error' ? (
+                                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert">
+                                    <p>{targetsError}</p>
+                                    <button type="button" onClick={onRetryTargets} className="mt-2 font-semibold underline">
+                                        {t('storefront.cms.navigationEditor.retry')}
+                                    </button>
+                                </div>
+                            ) : linkType === 'cms' && targetOptions.length === 0 ? (
+                                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-700" role="status">
+                                    <p className="font-medium">{t('storefront.cms.navigationEditor.targets.noPages')}</p>
+                                    <p className="mt-1 text-slate-500">{t('storefront.cms.navigationEditor.targets.noPagesHelp')}</p>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        <button type="button" onClick={onCreatePage} className="rounded-lg bg-slate-900 px-3 py-2 font-medium text-white">
+                                            {t('storefront.cms.navigationEditor.targets.createPage')}
+                                        </button>
+                                        <button type="button" onClick={onRetryTargets} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium text-slate-700">
+                                            {t('storefront.cms.navigationEditor.targets.refreshPages')}
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <select
+                                    id="navigation-link-target"
+                                    value={targetId}
+                                    onChange={(e) => handleTargetSelect(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                    required
+                                >
+                                    <option value="">
+                                        {linkType === 'category'
+                                            ? t('storefront.cms.navigationEditor.targetPlaceholders.category')
+                                            : linkType === 'product'
+                                                ? t('storefront.cms.navigationEditor.targetPlaceholders.product')
+                                                : t('storefront.cms.navigationEditor.targetPlaceholders.cms')}
+                                    </option>
+                                    {targetOptions.map((option) => (
+                                        <option key={option.targetId} value={option.targetId}>
+                                            {option.label}{option.state === 'draft' ? ` (${t('storefront.cms.draft')})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
                             )}
                         </div>
                     )}
 
                     {linkType === 'collection' && (
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                {isRTL ? 'Collection' : 'Select Collection'} *
+                            <label htmlFor="navigation-link-collection" className="block text-sm font-medium text-gray-700 mb-1">
+                                {t('storefront.cms.navigationEditor.selectCollection')} *
                             </label>
                             <select
+                                id="navigation-link-collection"
                                 value={collectionKey}
                                 onChange={(event) => {
                                     const key = event.target.value
@@ -909,13 +947,64 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                 required
                             >
-                                <option value="">-- Select a collection --</option>
+                                <option value="">{t('storefront.cms.navigationEditor.targetPlaceholders.collection')}</option>
                                 {targets.collections.map((option) => (
                                     <option key={option.collectionKey} value={option.collectionKey}>
                                         {option.label}
                                     </option>
                                 ))}
                             </select>
+                        </div>
+                    )}
+
+                    <div>
+                        <label htmlFor="navigation-link-label-ar" className="block text-sm font-medium text-gray-700 mb-1">
+                            {t('storefront.cms.navigationEditor.arabicLabel')}
+                        </label>
+                        <input
+                            id="navigation-link-label-ar"
+                            type="text"
+                            dir="rtl"
+                            value={labelAr}
+                            onChange={(e) => setLabelAr(e.target.value)}
+                            placeholder={t('storefront.cms.navigationEditor.arabicLabelPlaceholder')}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="navigation-link-label" className="block text-sm font-medium text-gray-700 mb-1">
+                            {t('storefront.cms.navigationEditor.englishLabel')} *
+                        </label>
+                        <input
+                            id="navigation-link-label"
+                            type="text"
+                            value={label}
+                            onChange={(e) => setLabel(e.target.value)}
+                            placeholder={t('storefront.cms.navigationEditor.englishLabelPlaceholder')}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                            required
+                        />
+                    </div>
+
+                    {(linkType === 'custom' || linkType === 'external') && (
+                        <div>
+                            <label htmlFor="navigation-link-path" className="block text-sm font-medium text-gray-700 mb-1">
+                                {linkType === 'external'
+                                    ? t('storefront.cms.navigationEditor.externalUrl')
+                                    : t('storefront.cms.navigationEditor.path')} *
+                            </label>
+                            <input
+                                id="navigation-link-path"
+                                type={linkType === 'external' ? 'url' : 'text'}
+                                value={path}
+                                onChange={(e) => setPath(e.target.value)}
+                                placeholder={t(linkType === 'external'
+                                    ? 'storefront.cms.navigationEditor.externalUrlPlaceholder'
+                                    : 'storefront.cms.navigationEditor.pathPlaceholder')}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                required
+                            />
                         </div>
                     )}
 
@@ -928,7 +1017,7 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
                                 className="w-4 h-4 text-indigo-600 border-gray-300 rounded"
                             />
                             <span className="text-sm text-gray-700">
-                                {isRTL ? 'فتح في نافذة جديدة' : 'Open in new tab'}
+                                {t('storefront.cms.openNewTab')}
                             </span>
                         </label>
                     )}
@@ -939,13 +1028,17 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
                             onClick={onClose}
                             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
                         >
-                            {isRTL ? 'إلغاء' : 'Cancel'}
+                            {t('storefront.cms.navigationEditor.cancel')}
                         </button>
                         <button
                             type="submit"
-                            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                            disabled={
+                                (['category', 'product', 'cms'].includes(linkType) && (targetsStatus !== 'ready' || !targetId))
+                                || (linkType === 'collection' && !collectionKey)
+                            }
+                            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            {isRTL ? 'إضافة' : 'Add'}
+                            {t('storefront.cms.navigationEditor.add')}
                         </button>
                     </div>
                 </form>
@@ -956,7 +1049,7 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
 /**
  * Link Edit Form (inline)
  */
-function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
+function LinkEditForm({ link, onSave, onCancel, t, targets }) {
     const [label, setLabel] = useState(link.label || '')
     const [labelAr, setLabelAr] = useState(link.labelAr || '')
     const [path, setPath] = useState(link.path || '')
@@ -989,35 +1082,35 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
 
     return (
         <form onSubmit={submit} className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            <label className="sr-only" htmlFor="navigation-link-label">{isRTL ? 'نص الرابط' : 'Link label'}</label>
+            <label className="sr-only" htmlFor="navigation-link-label">{t('storefront.cms.navigationEditor.englishLabel')}</label>
             <input
                 id="navigation-link-label"
                 type="text"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder={isRTL ? 'نص الرابط' : 'Label'}
+                placeholder={t('storefront.cms.navigationEditor.englishLabelShort')}
                 className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
                 required
             />
-            <label className="sr-only" htmlFor="navigation-link-label-ar">{isRTL ? 'النص العربي' : 'Arabic label'}</label>
+            <label className="sr-only" htmlFor="navigation-link-label-ar">{t('storefront.cms.navigationEditor.arabicLabelShort')}</label>
             <input
                 id="navigation-link-label-ar"
                 type="text"
                 dir="rtl"
                 value={labelAr}
                 onChange={(e) => setLabelAr(e.target.value)}
-                placeholder={isRTL ? 'النص العربي' : 'Arabic label'}
+                placeholder={t('storefront.cms.navigationEditor.arabicLabelShort')}
                 className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
             />
             {(link.type === 'custom' || link.type === 'external') && (
                 <>
-                    <label className="sr-only" htmlFor="navigation-link-path">{isRTL ? 'المسار' : 'Path'}</label>
+                    <label className="sr-only" htmlFor="navigation-link-path">{t('storefront.cms.navigationEditor.path')}</label>
                     <input
                         id="navigation-link-path"
                         type={link.type === 'external' ? 'url' : 'text'}
                         value={path}
                         onChange={(e) => setPath(e.target.value)}
-                        placeholder={isRTL ? 'المسار' : 'Path'}
+                        placeholder={t('storefront.cms.navigationEditor.path')}
                         className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
                         required
                     />
@@ -1025,7 +1118,7 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
             )}
             {['category', 'product', 'cms'].includes(link.type) && (
                 <>
-                    <label className="sr-only" htmlFor="navigation-link-target">{isRTL ? 'الهدف' : 'Target'}</label>
+                    <label className="sr-only" htmlFor="navigation-link-target">{t('storefront.cms.navigationEditor.target')}</label>
                     <select
                         id="navigation-link-target"
                         value={targetId}
@@ -1033,10 +1126,10 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
                         className="min-w-48 flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
                         required
                     >
-                        <option value="">{isRTL ? '-- اختر هدفًا --' : '-- Select a target --'}</option>
+                        <option value="">{t('storefront.cms.navigationEditor.targetPlaceholders.target')}</option>
                         {targetOptions.map((option) => (
                             <option key={option.targetId} value={option.targetId}>
-                                {option.label}{option.state === 'draft' ? ' (Draft)' : ''}
+                                {option.label}{option.state === 'draft' ? ` (${t('storefront.cms.draft')})` : ''}
                             </option>
                         ))}
                     </select>
@@ -1044,7 +1137,7 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
             )}
             {link.type === 'collection' && (
                 <>
-                    <label className="sr-only" htmlFor="navigation-link-collection">{isRTL ? 'المجموعة' : 'Collection'}</label>
+                    <label className="sr-only" htmlFor="navigation-link-collection">{t('storefront.cms.navigationEditor.linkTypes.collection')}</label>
                     <select
                         id="navigation-link-collection"
                         value={collectionKey}
@@ -1052,7 +1145,7 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
                         className="min-w-48 flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
                         required
                     >
-                        <option value="">{isRTL ? '-- اختر مجموعة --' : '-- Select a collection --'}</option>
+                        <option value="">{t('storefront.cms.navigationEditor.targetPlaceholders.collection')}</option>
                         {targets.collections.map((option) => (
                             <option key={option.collectionKey} value={option.collectionKey}>{option.label}</option>
                         ))}
@@ -1065,7 +1158,7 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
                     checked={enabled}
                     onChange={(event) => setEnabled(event.target.checked)}
                 />
-                {isRTL ? 'مفعل' : 'Enabled'}
+                {t('storefront.cms.navigationEditor.enabled')}
             </label>
             {link.type === 'external' && (
                 <label className="inline-flex min-h-8 items-center gap-2 text-xs text-gray-700">
@@ -1074,12 +1167,12 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
                         checked={openInNewTab}
                         onChange={(event) => setOpenInNewTab(event.target.checked)}
                     />
-                    {isRTL ? 'فتح في نافذة جديدة' : 'Open in new tab'}
+                    {t('storefront.cms.openNewTab')}
                 </label>
             )}
             <button
                 type="submit"
-                aria-label={isRTL ? 'حفظ تعديلات الرابط' : 'Save navigation link edits'}
+                aria-label={t('storefront.cms.navigationEditor.saveLinkEdits')}
                 className="p-1.5 text-green-600 hover:bg-green-50 rounded"
             >
                 <Check size={14} />
@@ -1087,7 +1180,7 @@ function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
             <button
                 type="button"
                 onClick={onCancel}
-                aria-label={isRTL ? 'إلغاء تعديل الرابط' : 'Cancel navigation link edits'}
+                aria-label={t('storefront.cms.navigationEditor.cancelLinkEdits')}
                 className="p-1.5 text-gray-400 hover:text-gray-600"
             >
                 <X size={14} />

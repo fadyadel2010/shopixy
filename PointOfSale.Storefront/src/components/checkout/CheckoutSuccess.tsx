@@ -80,7 +80,7 @@ export const CheckoutSuccess: React.FC<CheckoutSuccessProps> = ({
     order,
     onContinueShopping,
 }) => {
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
 
     // Focus management for accessibility
     useEffect(() => {
@@ -101,7 +101,9 @@ export const CheckoutSuccess: React.FC<CheckoutSuccessProps> = ({
         } else if (method === 'PAYMOB') {
             return t('checkoutSuccess.paymentMethods.paymob');
         } else if (method === 'FAWRY') {
-            return 'Fawry';
+            return t('checkoutSuccess.paymentMethods.fawry');
+        } else if (method === 'MANUALWALLET') {
+            return t('checkoutSuccess.paymentMethods.manualWallet');
         }
         return t('checkoutSuccess.paymentMethods.online');
     };
@@ -200,18 +202,20 @@ export const CheckoutSuccess: React.FC<CheckoutSuccessProps> = ({
             {(order.paymentMethod?.toUpperCase() === 'FAWRY' && order.referenceCode) && (
                 <div className="max-w-md mx-auto mb-8 p-6 bg-yellow-50 border-2 border-yellow-400 rounded-xl text-center animate-pulse-once">
                     <p className="text-lg font-bold text-yellow-800 mb-3">
-                        Fawry Reference Code / كود فوري
+                        {t('checkoutSuccess.fawryReference.title')}
                     </p>
                     <div className="text-4xl font-mono font-bold tracking-widest text-black bg-white py-4 px-6 rounded-lg inline-block border border-gray-200 shadow-sm mb-3">
                         {order.referenceCode}
                     </div>
                     {order.expiresAtUtc && (
                         <p className="text-sm text-yellow-700 font-medium">
-                            Expires: {new Date(order.expiresAtUtc).toLocaleString()}
+                            {t('checkoutSuccess.fawryReference.expires', {
+                                date: new Date(order.expiresAtUtc).toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US'),
+                            })}
                         </p>
                     )}
                     <p className="text-xs text-yellow-600 mt-2">
-                        Use this code to pay at any Fawry machine.
+                        {t('checkoutSuccess.fawryReference.instructions')}
                     </p>
                 </div>
             )}
@@ -223,14 +227,14 @@ export const CheckoutSuccess: React.FC<CheckoutSuccessProps> = ({
                         i
                     </div>
                     <h3 className="text-lg font-bold text-blue-900 mb-2">
-                        Payment Under Review
+                        {t('checkoutSuccess.manualWalletReview.title')}
                     </h3>
                     <p className="text-sm text-blue-800 mb-4">
-                        We have received your payment proof. Your order will be confirmed shortly after verification.
+                        {t('checkoutSuccess.manualWalletReview.description')}
                     </p>
                     <div className="text-xs bg-white/50 p-2 rounded text-blue-700">
-                        Method: {order.walletType}<br />
-                        Merchant Number: {order.merchantWalletNumber}
+                        {t('checkoutSuccess.manualWalletReview.method')}: {order.walletType}<br />
+                        {t('checkoutSuccess.manualWalletReview.merchantNumber')}: {order.merchantWalletNumber}
                     </div>
                 </div>
             )}

@@ -159,10 +159,12 @@ public class AffiliatePortalController : ControllerBase
             Builders<AffiliateOrderDocument>.Filter.Eq(d => d.AffiliateAccountId, affiliateAccountId.Value)
         };
 
+        IReadOnlyCollection<Guid>? statusOrderIds = null;
+
         // Optional status filter — exact match on settlement status string
         if (!string.IsNullOrWhiteSpace(status))
         {
-            var statusOrderIds = await BuildAffiliateOrderIdsForLedgerStatusAsync(
+            statusOrderIds = await BuildAffiliateOrderIdsForLedgerStatusAsync(
                 affiliateAccountId.Value,
                 storeTenantId: null,
                 status,
@@ -178,9 +180,40 @@ public class AffiliatePortalController : ControllerBase
                     TotalPages = 0
                 });
             }
-
-            filters.Add(Builders<AffiliateOrderDocument>.Filter.In(d => d.OrderId, statusOrderIds));
         }
+
+        var canonicalOrderQuery =
+            from order in _dbContext.Orders.IgnoreQueryFilters().AsNoTracking()
+            join attribution in _dbContext.AffiliateAttributions.IgnoreQueryFilters().AsNoTracking()
+                on new { order.TenantId, OrderId = order.Id }
+                equals new { attribution.TenantId, attribution.OrderId }
+            where !order.IsDeleted &&
+                  !attribution.IsDeleted &&
+                  order.Source == OrderSource.Ecommerce &&
+                  order.AffiliateAccountId == affiliateAccountId.Value &&
+                  attribution.AffiliateAccountId == affiliateAccountId.Value &&
+                  order.AffiliateReferralCode == attribution.ReferralCode &&
+                  order.PromotionLinkId == attribution.PromotionLinkId
+            select order.Id;
+
+        if (statusOrderIds != null)
+        {
+            canonicalOrderQuery = canonicalOrderQuery.Where(orderId => statusOrderIds.Contains(orderId));
+        }
+
+        var canonicalOrderIds = await canonicalOrderQuery.Distinct().ToListAsync(ct);
+        if (canonicalOrderIds.Count == 0)
+        {
+            return Ok(new AffiliateOrdersResponse
+            {
+                Page = page,
+                PageSize = pageSize,
+                TotalCount = 0,
+                TotalPages = 0
+            });
+        }
+
+        filters.Add(Builders<AffiliateOrderDocument>.Filter.In(d => d.OrderId, canonicalOrderIds));
 
         var filter = Builders<AffiliateOrderDocument>.Filter.And(filters);
 

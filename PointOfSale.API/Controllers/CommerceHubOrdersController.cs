@@ -7,9 +7,12 @@ using Microsoft.Extensions.Options;
 using PointOfSale.API.Attributes;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.DTOs.CommerceHub;
+using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.API.Services.Admin;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Financial;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
@@ -28,6 +31,7 @@ public class CommerceHubOrdersController : ControllerBase
     private readonly ICommerceHubOrderManagementService _orderManagementService;
     private readonly ICommerceHubEarningsService _earningsService;
     private readonly ICommerceHubOrderAccessService _orderAccessService;
+    private readonly IAdminOrderService _adminOrderService;
     private readonly ICommerceHubPaymentRecoveryAuthorityService _paymentRecoveryAuthorityService;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<CommerceHubOrdersController> _logger;
@@ -41,6 +45,7 @@ public class CommerceHubOrdersController : ControllerBase
         ICommerceHubOrderManagementService orderManagementService,
         ICommerceHubEarningsService earningsService,
         ICommerceHubOrderAccessService orderAccessService,
+        IAdminOrderService adminOrderService,
         ICommerceHubPaymentRecoveryAuthorityService paymentRecoveryAuthorityService,
         ITenantContext tenantContext,
         ILogger<CommerceHubOrdersController> logger,
@@ -53,11 +58,88 @@ public class CommerceHubOrdersController : ControllerBase
         _orderManagementService = orderManagementService;
         _earningsService = earningsService;
         _orderAccessService = orderAccessService;
+        _adminOrderService = adminOrderService;
         _paymentRecoveryAuthorityService = paymentRecoveryAuthorityService;
         _tenantContext = tenantContext;
         _logger = logger;
         _checkoutSessionSecurityOptions = checkoutSessionSecurityOptions.Value;
         _environment = environment;
+    }
+
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    [HttpGet("api/commercehub/vendor-orders")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(AdminPagedResult<AdminOrderListItemDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ListVendorOrders(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] OrderStatus? status = null,
+        [FromQuery] PaymentStatus? paymentStatus = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
+        [FromQuery] string? search = null,
+        [FromQuery] string sortBy = AdminOrderListQuery.DefaultSortBy,
+        [FromQuery] string sortDirection = AdminOrderListQuery.DefaultSortDirection,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+        var storeId = _tenantContext.TenantId;
+        if (!storeId.HasValue)
+        {
+            return BadRequest(new ApiErrorResponse("TENANT_REQUIRED", "Store tenant context is required.", traceId));
+        }
+
+        var query = new AdminOrderListQuery
+        {
+            Page = page,
+            PageSize = pageSize,
+            Status = status,
+            PaymentStatus = paymentStatus,
+            Source = OrderSource.Marketplace,
+            FromDate = fromDate,
+            ToDate = toDate,
+            Search = search,
+            SortBy = sortBy,
+            SortDirection = sortDirection
+        };
+        var queryError = query.Validate();
+        if (queryError != null)
+        {
+            return BadRequest(new ApiErrorResponse("INVALID_QUERY", queryError, traceId));
+        }
+
+        return Ok(await _adminOrderService.ListOrdersAsync(
+            storeId.Value,
+            query,
+            traceId,
+            cancellationToken));
+    }
+
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    [HttpGet("api/commercehub/vendor-orders/{subOrderId:guid}")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(AdminOrderDetailsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetVendorOrder(
+        Guid subOrderId,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+        var storeId = _tenantContext.TenantId;
+        if (!storeId.HasValue)
+        {
+            return BadRequest(new ApiErrorResponse("TENANT_REQUIRED", "Store tenant context is required.", traceId));
+        }
+
+        var order = await _adminOrderService.GetCommerceHubVendorOrderDetailsAsync(
+            storeId.Value,
+            subOrderId,
+            traceId,
+            cancellationToken);
+
+        return order == null
+            ? NotFound(new ApiErrorResponse("ORDER_NOT_FOUND", "CommerceHub vendor order not found.", traceId))
+            : Ok(order);
     }
 
     [AllowAnonymous]

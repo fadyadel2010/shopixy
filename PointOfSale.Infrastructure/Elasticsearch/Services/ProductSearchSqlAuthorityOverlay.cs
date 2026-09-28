@@ -105,6 +105,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         var projectedLastStockEventId = product.LastStockEventId;
         var projectedLastStockUpdatedAtUtc = product.LastStockUpdatedAtUtc;
         var projectedLastStockEventVersion = product.LastStockEventVersion;
+        var projectedSyncedAtUtc = product.SyncedAtUtc;
         var projectedVariantStock = preserveProjectedStock
             ? product.Variants.ToDictionary(
                 variant => variant.VariantId,
@@ -177,7 +178,9 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         product.IsFeatured = sqlProduct.IsFeatured;
         product.Weight = sqlProduct.Weight;
         product.CreatedAtUtc = sqlProduct.CreatedAt;
-        product.SyncedAtUtc = DateTime.UtcNow;
+        // SyncedAtUtc belongs to projection ingestion. A read-side SQL overlay must
+        // not manufacture newer ingestion evidence by stamping the current time.
+        product.SyncedAtUtc = projectedSyncedAtUtc;
 
         product.IsActive = sqlProduct.IsActive;
         product.IsOnlineVisible = sqlProduct.IsOnlineVisible &&
@@ -1242,6 +1245,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         var projectedLastStockEventId = product.LastStockEventId;
         var projectedLastStockUpdatedAtUtc = product.LastStockUpdatedAtUtc;
         var projectedLastStockEventVersion = product.LastStockEventVersion;
+        var projectedSyncedAtUtc = product.SyncedAtUtc;
         Dictionary<Guid, (decimal TotalStock, DateTime? StockUpdatedAtUtc, Guid? LastStockEventId, DateTime? LastStockUpdatedAtUtc, int LastStockEventVersion)>? projectedVariantStock = null;
         if (preserveProjectedStock)
         {
@@ -1290,7 +1294,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         product.IsFeatured = sqlProduct.IsFeatured;
         product.Weight = sqlProduct.Weight;
         product.CreatedAtUtc = sqlProduct.CreatedAt;
-        product.SyncedAtUtc = nowUtc;
+        product.SyncedAtUtc = projectedSyncedAtUtc;
 
         product.IsActive = sqlProduct.IsActive;
         product.IsOnlineVisible = sqlProduct.IsOnlineVisible &&

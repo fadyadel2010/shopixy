@@ -8,7 +8,6 @@ using Microsoft.Extensions.Options;
 using Moq;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Services.Storefront;
-using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Enums;
@@ -24,6 +23,47 @@ namespace PointOfSale.Tests.Infrastructure;
 
 public sealed class ProductSearchSqlAuthorityBatchTests
 {
+    [Fact]
+    public async Task ReadOverlays_PreserveProjectionIngestionTime()
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, "overlay-ingestion-time");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var productId = SeedProduct(db, tenantId, categoryId, "Projection timestamp");
+        SeedUnit(db, tenantId, productId, 12m);
+        await db.SaveChangesAsync();
+
+        var projectedSyncedAtUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(-30), DateTimeKind.Utc);
+        var singleCandidate = new ProductDocument
+        {
+            TenantId = tenantId,
+            ProductId = productId,
+            SyncedAtUtc = projectedSyncedAtUtc
+        };
+        var batchCandidate = new ProductDocument
+        {
+            TenantId = tenantId,
+            ProductId = productId,
+            SyncedAtUtc = projectedSyncedAtUtc
+        };
+
+        var single = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+            db,
+            singleCandidate,
+            tenantId,
+            CancellationToken.None);
+        var batch = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+            db,
+            [batchCandidate],
+            tenantId,
+            CancellationToken.None);
+
+        Assert.Equal(projectedSyncedAtUtc, single!.SyncedAtUtc);
+        Assert.Equal(projectedSyncedAtUtc, Assert.Single(batch)!.SyncedAtUtc);
+    }
+
     [Fact]
     public async Task Detail_ByIdRejectsMismatchedWarmCandidateWithoutSql()
     {
@@ -245,6 +285,299 @@ public sealed class ProductSearchSqlAuthorityBatchTests
         counter.Reset();
         Assert.Null(await Read());
         Assert.True(counter.CommandCount > 0);
+    }
+
+    [Fact]
+    public async Task ProductList_OldCaughtUpProjection_AllowsCachePopulationWithRevisionProof()
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, "list-old-caught-up");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var productId = SeedProduct(db, tenantId, categoryId, "Old caught up");
+        SeedUnit(db, tenantId, productId, 12m);
+        await db.SaveChangesAsync();
+
+        var sourceVersion = db.Products.Local.Single(product => product.Id == productId).ProjectionMutationVersion;
+        var oldEventUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(-30), DateTimeKind.Utc);
+        var population = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId,
+                ProductGeneration = sourceVersion,
+                LastEventOccurredAtUtc = oldEventUtc,
+                LastEventVersion = (int)sourceVersion,
+                SyncedAtUtc = oldEventUtc
+            }]);
+
+        Assert.NotNull(population.Value);
+        Assert.False(population.SkipCache);
+        Assert.Equal(sourceVersion, population.ProjectionVersion);
+        Assert.Equal(sourceVersion, population.SourceVersion);
+        Assert.Equal(oldEventUtc, population.ProjectionLastUpdatedAtUtc);
+        Assert.Equal(oldEventUtc, population.SourceEventOccurredAtUtc);
+    }
+
+    [Fact]
+    public async Task ProductList_SourceRevisionAhead_RejectsCachePopulation()
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, "list-lag");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var productId = SeedProduct(db, tenantId, categoryId, "Lagging");
+        SeedUnit(db, tenantId, productId, 12m);
+        await db.SaveChangesAsync();
+
+        var product = db.Products.Local.Single(product => product.Id == productId);
+        var appliedVersion = product.ProjectionMutationVersion;
+        product.Name = "Lagging source advanced";
+        await db.SaveChangesAsync();
+        var sourceVersion = product.ProjectionMutationVersion;
+
+        var population = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId,
+                ProductGeneration = appliedVersion,
+                LastEventOccurredAtUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(-2), DateTimeKind.Utc),
+                LastEventVersion = int.MaxValue,
+                SyncedAtUtc = DateTime.UtcNow
+            }]);
+
+        Assert.NotNull(population.Value);
+        Assert.True(population.SkipCache);
+        Assert.Equal(appliedVersion, population.ProjectionVersion);
+        Assert.Equal(sourceVersion, population.SourceVersion);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(int.MaxValue)]
+    public async Task ProductList_UnrelatedEventVersion_DoesNotReplaceProductGenerationProof(int eventVersion)
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, $"list-version-namespace-{eventVersion}");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var productId = SeedProduct(db, tenantId, categoryId, "Version namespaces");
+        SeedUnit(db, tenantId, productId, 12m);
+        await db.SaveChangesAsync();
+
+        var sourceVersion = db.Products.Local.Single(product => product.Id == productId).ProjectionMutationVersion;
+        var population = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId,
+                ProductGeneration = sourceVersion,
+                LastEventOccurredAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                LastEventVersion = eventVersion,
+                SyncedAtUtc = DateTime.UtcNow
+            }]);
+
+        Assert.False(population.SkipCache);
+        Assert.Equal(sourceVersion, population.ProjectionVersion);
+        Assert.Equal(sourceVersion, population.SourceVersion);
+    }
+
+    [Fact]
+    public async Task ProductList_SqlOverlayRestamp_DoesNotFabricateLagForUnchangedProjection()
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, "list-overlay-restamp");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var productId = SeedProduct(db, tenantId, categoryId, "Overlay restamp");
+        SeedUnit(db, tenantId, productId, 12m);
+        await db.SaveChangesAsync();
+
+        var sourceVersion = db.Products.Local.Single(product => product.Id == productId).ProjectionMutationVersion;
+        var oldEventUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(-6), DateTimeKind.Utc);
+        var first = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId,
+                ProductGeneration = sourceVersion,
+                LastEventOccurredAtUtc = oldEventUtc,
+                LastEventVersion = (int)sourceVersion,
+                SyncedAtUtc = oldEventUtc
+            }]);
+        var second = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId,
+                ProductGeneration = sourceVersion,
+                LastEventOccurredAtUtc = oldEventUtc,
+                LastEventVersion = (int)sourceVersion,
+                SyncedAtUtc = DateTime.UtcNow
+            }]);
+
+        Assert.False(first.SkipCache);
+        Assert.False(second.SkipCache);
+        Assert.Equal(first.ProjectionVersion, second.ProjectionVersion);
+        Assert.Equal(first.SourceVersion, second.SourceVersion);
+        Assert.Equal(oldEventUtc, first.ProjectionLastUpdatedAtUtc);
+        Assert.NotEqual(first.ProjectionLastUpdatedAtUtc, second.ProjectionLastUpdatedAtUtc);
+    }
+
+    [Fact]
+    public async Task ProductList_MultiProductPage_RejectsIfAnyVisibleProductIsBehind()
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, "list-multi-lag");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var currentProductId = SeedProduct(db, tenantId, categoryId, "Current");
+        var laggingProductId = SeedProduct(db, tenantId, categoryId, "Lagging");
+        SeedUnit(db, tenantId, currentProductId, 12m);
+        SeedUnit(db, tenantId, laggingProductId, 14m);
+        await db.SaveChangesAsync();
+
+        var currentVersion = db.Products.Local.Single(product => product.Id == currentProductId).ProjectionMutationVersion;
+        var laggingProduct = db.Products.Local.Single(product => product.Id == laggingProductId);
+        var laggingAppliedVersion = laggingProduct.ProjectionMutationVersion;
+        laggingProduct.Name = "Lagging source advanced";
+        await db.SaveChangesAsync();
+
+        var population = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [
+                new ProductDocument
+                {
+                    TenantId = tenantId,
+                    ProductId = currentProductId,
+                    ProductGeneration = currentVersion,
+                    LastEventOccurredAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                    LastEventVersion = (int)currentVersion,
+                    SyncedAtUtc = DateTime.UtcNow
+                },
+                new ProductDocument
+                {
+                    TenantId = tenantId,
+                    ProductId = laggingProductId,
+                    ProductGeneration = laggingAppliedVersion,
+                    LastEventOccurredAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                    LastEventVersion = int.MaxValue,
+                    SyncedAtUtc = DateTime.UtcNow
+                }
+            ]);
+
+        Assert.NotNull(population.Value);
+        Assert.True(population.SkipCache);
+        Assert.Equal(laggingAppliedVersion, population.ProjectionVersion);
+        Assert.Equal(laggingProduct.ProjectionMutationVersion, population.SourceVersion);
+    }
+
+    [Fact]
+    public async Task ProductList_MissingProjectedMember_ReturnsCurrentSqlPageAndRejectsCachePopulation()
+    {
+        var (db, _, connection) = CreateSqliteContext();
+        await using var ownedDb = db;
+        await using var ownedConnection = connection;
+        var tenantId = SeedTenant(db, "list-missing-member");
+        var categoryId = SeedCategory(db, tenantId, "Visible");
+        var olderProductId = SeedProduct(db, tenantId, categoryId, "Older");
+        var newerProductId = SeedProduct(db, tenantId, categoryId, "Newer");
+        SeedUnit(db, tenantId, olderProductId, 12m);
+        SeedUnit(db, tenantId, newerProductId, 14m);
+        var products = db.Products.Local.Where(product =>
+            product.Id == olderProductId || product.Id == newerProductId).ToList();
+        products.Single(product => product.Id == olderProductId).CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+        products.Single(product => product.Id == newerProductId).CreatedAt = DateTime.UtcNow.AddMinutes(-1);
+        await db.SaveChangesAsync();
+
+        var projectedVersion = db.Products.Local
+            .Single(product => product.Id == olderProductId)
+            .ProjectionMutationVersion;
+        var population = await PopulateProductListAsync(
+            db,
+            tenantId,
+            [new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = olderProductId,
+                ProductGeneration = projectedVersion,
+                LastEventOccurredAtUtc = DateTime.UtcNow.AddMinutes(-2),
+                LastEventVersion = (int)projectedVersion,
+                SyncedAtUtc = DateTime.UtcNow
+            }],
+            pageSize: 2);
+
+        Assert.NotNull(population.Value);
+        Assert.True(population.SkipCache);
+        Assert.Equal(2, population.Value!.TotalCount);
+        Assert.Equal(newerProductId, population.Value.Items[0].Id);
+        Assert.Equal(olderProductId, population.Value.Items[1].Id);
+    }
+
+    private static async Task<CachePopulationResult<PagedResult<ProductListItemDto>>> PopulateProductListAsync(
+        ApplicationDbContext db,
+        Guid tenantId,
+        List<ProductDocument> candidates,
+        int? pageSize = null)
+    {
+        CachePopulationResult<PagedResult<ProductListItemDto>>? captured = null;
+        var repository = new Mock<IProductReadRepository>();
+        repository.Setup(r => r.GetProductListAsync(
+                tenantId,
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<bool?>(),
+                true,
+                false,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((candidates, candidates.Count));
+
+        var cache = new Mock<IRedisJsonCacheService>();
+        cache.Setup(c => c.GetOrCreateOwnedWithStatusAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Func<CancellationToken, Task<CachePopulationResult<PagedResult<ProductListItemDto>>>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string, string, TimeSpan,
+                Func<CancellationToken, Task<CachePopulationResult<PagedResult<ProductListItemDto>>>>, TimeSpan?, CancellationToken>(
+                async (_, _, _, _, factory, _, ct) =>
+                {
+                    captured = await factory(ct);
+                    return new CacheReadResult<PagedResult<ProductListItemDto>>(captured.Value, Refreshed: true);
+                });
+
+        var service = new StorefrontProductService(
+            repository.Object,
+            db,
+            cache.Object,
+            Options.Create(new RedisSettings()),
+            NullLogger<StorefrontProductService>.Instance);
+
+        await service.GetProductListAsync(
+            tenantId,
+            new ProductListQuery { Page = 1, PageSize = pageSize ?? Math.Max(1, candidates.Count) },
+            affiliateModeOnly: false,
+            CancellationToken.None);
+
+        return captured ?? throw new InvalidOperationException("Product list factory did not run.");
     }
 
     private sealed class CountingInterceptor : DbCommandInterceptor

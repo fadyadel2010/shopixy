@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -17,8 +16,6 @@ namespace PointOfSale.Tests.Storefront;
 
 public sealed class StorefrontPreviewServiceTests
 {
-    private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
-
     [Fact]
     public async Task GetConfigPreviewAsync_ReturnsDraftConfigWithoutFallingBackToLive()
     {
@@ -201,9 +198,8 @@ public sealed class StorefrontPreviewServiceTests
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
-        var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .UseInMemoryDatabase(databaseName, SharedInMemoryDatabaseRoot.Instance)
             .Options;
 
         return new ApplicationDbContext(options, new TestTenantContext(tenantId));

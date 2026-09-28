@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Concurrent;
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -14,6 +15,7 @@ namespace PointOfSale.API.Infrastructure.Mvc;
 public sealed class ApiRequestNormalizationFilter : IAsyncActionFilter
 {
     private const decimal MaxAllowedAmount = 1_000_000_000m;
+    private static readonly ConcurrentDictionary<ICustomAttributeProvider, bool> RequiredMembers = new();
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -533,13 +535,29 @@ public sealed class ApiRequestNormalizationFilter : IAsyncActionFilter
 
     private static bool IsRequired(ICustomAttributeProvider? member, Type declaredType)
     {
-        if (member != null && member.GetCustomAttributes(typeof(RequiredAttribute), inherit: true).Length > 0)
+        if (member != null)
+        {
+            return RequiredMembers.GetOrAdd(member, static candidate => ComputeIsRequired(candidate));
+        }
+
+        return false;
+    }
+
+    private static bool ComputeIsRequired(ICustomAttributeProvider member)
+    {
+        if (member.GetCustomAttributes(typeof(RequiredAttribute), inherit: true).Length > 0)
         {
             return true;
         }
 
-        if (member is ParameterInfo parameterInfo &&
-            parameterInfo.HasDefaultValue)
+        var declaredType = member switch
+        {
+            PropertyInfo property => property.PropertyType,
+            ParameterInfo parameter => parameter.ParameterType,
+            _ => typeof(object)
+        };
+
+        if (member is ParameterInfo { HasDefaultValue: true })
         {
             return false;
         }
@@ -549,8 +567,8 @@ public sealed class ApiRequestNormalizationFilter : IAsyncActionFilter
             return false;
         }
 
-        // NullabilityInfoContext is not thread-safe. Keep its mutable reflection cache
-        // local so concurrent requests never share or serialize access to it.
+        // The context itself is not shared. Only its immutable result is published
+        // through the concurrent metadata cache.
         var nullabilityContext = new NullabilityInfoContext();
 
         return member switch

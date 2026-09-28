@@ -22,8 +22,7 @@ public sealed class AdminStoreConfigThemeContractTests
 {
     // Database names already isolate test data. Reuse the EF provider root to avoid
     // crossing EF Core's internal service-provider limit in combined StoreConfig runs.
-    private static readonly InMemoryDatabaseRoot SharedDatabaseRoot = new();
-    private static InMemoryDatabaseRoot CreateInMemoryDatabaseRoot() => SharedDatabaseRoot;
+    private static InMemoryDatabaseRoot CreateInMemoryDatabaseRoot() => SharedInMemoryDatabaseRoot.Instance;
 
     [Fact]
     public async Task GetStoreConfigAsync_ReturnsMaterializedDraftAndLiveThemes()

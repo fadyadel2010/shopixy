@@ -76,6 +76,8 @@ export interface ShippingMethod {
     tenantId: string;
     id: string;
     name: string;
+    /** Optional localized display evidence. Never used as checkout authority. */
+    nameAr?: string;
     description?: string;
     price: number;
     currency: string;

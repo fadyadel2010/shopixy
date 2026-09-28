@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -25,16 +26,16 @@ namespace PointOfSale.Infrastructure.Redis;
 public static class CacheKeyFilterNormalizer
 {
     /// <summary>
-    /// Maximum number of filter parameters allowed.
-    /// Excess filters are truncated (sorted alphabetically).
+    /// Key schema version. Changing canonicalization requires a new version so
+    /// old distributed entries can expire without being interpreted as current.
     /// </summary>
-    private const int MaxFilterCount = 20;
+    private const string HashSchemaVersion = "h2";
 
     /// <summary>
-    /// Hash output length in hex characters (12 bytes = 24 hex chars).
-    /// Shorter hashes reduce key size while maintaining sufficient uniqueness.
+    /// Full SHA-256 output avoids making correctness depend on a deliberately
+    /// truncated collision space.
     /// </summary>
-    private const int HashTruncationLength = 24;
+    private const int HashLength = 64;
 
     /// <summary>
     /// Normalizes a dictionary of filter parameters into a deterministic hash string.
@@ -49,43 +50,36 @@ public static class CacheKeyFilterNormalizer
         int? pageSize = null)
     {
         var normalized = filters
-            .Where(f => !string.IsNullOrWhiteSpace(f.Value))
+            .Where(f => !string.IsNullOrWhiteSpace(f.Key) && f.Value != null)
             .Select(f => new KeyValuePair<string, string>(
                 f.Key.Trim().ToLowerInvariant(),
                 f.Value!.Trim().ToLowerInvariant()))
-            .Where(f => !IsDefaultValue(f.Value))
             .OrderBy(f => f.Key, StringComparer.Ordinal)
-            .Take(MaxFilterCount)
+            .ThenBy(f => f.Value, StringComparer.Ordinal)
             .ToList();
 
         var sb = new StringBuilder(256);
+        sb.Append(HashSchemaVersion);
 
         foreach (var filter in normalized)
         {
-            if (sb.Length > 0)
-            {
-                sb.Append('|');
-            }
-
-            sb.Append(filter.Key).Append('=').Append(filter.Value);
+            AppendLengthPrefixed(sb, filter.Key);
+            AppendLengthPrefixed(sb, filter.Value);
         }
 
         if (page.HasValue)
         {
-            sb.Append("|p=").Append(page.Value);
+            AppendLengthPrefixed(sb, "page");
+            AppendLengthPrefixed(sb, page.Value.ToString(CultureInfo.InvariantCulture));
         }
 
         if (pageSize.HasValue)
         {
-            sb.Append("|ps=").Append(pageSize.Value);
+            AppendLengthPrefixed(sb, "page-size");
+            AppendLengthPrefixed(sb, pageSize.Value.ToString(CultureInfo.InvariantCulture));
         }
 
-        if (sb.Length == 0)
-        {
-            return "all";
-        }
-
-        return HashString(sb.ToString());
+        return $"{HashSchemaVersion}-{HashString(sb.ToString())}";
     }
 
     /// <summary>
@@ -114,25 +108,29 @@ public static class CacheKeyFilterNormalizer
         if (!string.IsNullOrWhiteSpace(sortDirection))
             filters.Add(new("dir", sortDirection));
         if (inStock.HasValue)
-            filters.Add(new("stock", inStock.Value.ToString()));
+            filters.Add(new("stock", inStock.Value ? "true" : "false"));
         if (minPrice.HasValue)
-            filters.Add(new("pmin", minPrice.Value.ToString("F2")));
+            filters.Add(new("pmin", minPrice.Value.ToString("G29", CultureInfo.InvariantCulture)));
         if (maxPrice.HasValue)
-            filters.Add(new("pmax", maxPrice.Value.ToString("F2")));
+            filters.Add(new("pmax", maxPrice.Value.ToString("G29", CultureInfo.InvariantCulture)));
         if (!string.IsNullOrWhiteSpace(brand))
             filters.Add(new("brand", brand));
 
         return NormalizeAndHash(filters, page, pageSize);
     }
 
-    private static bool IsDefaultValue(string value)
+    private static void AppendLengthPrefixed(StringBuilder builder, string value)
     {
-        return value is "0" or "false" or "" or "null" or "none" or "all" or "default";
+        builder
+            .Append('|')
+            .Append(value.Length.ToString(CultureInfo.InvariantCulture))
+            .Append(':')
+            .Append(value);
     }
 
     private static string HashString(string input)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(bytes)[..HashTruncationLength].ToLowerInvariant();
+        return Convert.ToHexString(bytes)[..HashLength].ToLowerInvariant();
     }
 }

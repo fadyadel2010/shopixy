@@ -27,13 +27,16 @@ vi.mock('../store/authStore', () => ({
 
 import {
     confirmAdminReturnReceipt,
+    getAdminOrderCustomerTrust,
     getAdminOrderFulfillmentActions,
     getAdminOrderPaymentActions,
+    getAdminOrderSessionIntelligence,
     getAdminOrders,
     mapAdminOrdersError,
     requireAdminOrderPaymentActionAuthority,
     runAdminOrderFulfillmentAction,
     runAdminOrderPaymentAction,
+    runAdminOrderCustomerPhoneAction,
 } from './adminOrdersApi'
 
 const makeStorefrontOrder = (index: number) => ({
@@ -219,6 +222,57 @@ const liveFiveOrderResponse = {
 describe('Admin Orders API error contract', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+    })
+
+    it('loads order-scoped trust and session intelligence without a client session identifier', async () => {
+        const trust = {
+            orderId: realAffiliateOrder.orderId,
+            phoneNumber: '+201000000001',
+            hasPhone: true,
+            riskLevel: 'SAFE',
+        }
+        const journey = {
+            orderId: realAffiliateOrder.orderId,
+            source: 'direct',
+            device: 'mobile',
+            visitedPages: ['/products/1', '/checkout'],
+        }
+        apiGetMock
+            .mockResolvedValueOnce({ status: 200, data: trust })
+            .mockResolvedValueOnce({ status: 200, data: journey })
+
+        await expect(getAdminOrderCustomerTrust(realAffiliateOrder.orderId)).resolves.toEqual(trust)
+        await expect(getAdminOrderSessionIntelligence(realAffiliateOrder.orderId)).resolves.toEqual(journey)
+
+        expect(apiGetMock).toHaveBeenNthCalledWith(1, `/admin/orders/${realAffiliateOrder.orderId}/customer-trust`, expect.any(Object))
+        expect(apiGetMock).toHaveBeenNthCalledWith(2, `/admin/orders/${realAffiliateOrder.orderId}/session-intelligence`, expect.any(Object))
+        expect(apiGetMock.mock.calls[1][0]).not.toContain('sessionId')
+    })
+
+    it('treats a no-content session journey as unavailable rather than an order failure', async () => {
+        apiGetMock.mockResolvedValue({ status: 204, data: '' })
+
+        await expect(getAdminOrderSessionIntelligence(realAffiliateOrder.orderId)).resolves.toBeNull()
+    })
+
+    it('uses fixed order-scoped phone mutation endpoints and never submits a phone number', async () => {
+        apiPostMock.mockResolvedValue({ data: { phoneNumber: '+201000000001', isBlocked: true } })
+
+        await runAdminOrderCustomerPhoneAction(realAffiliateOrder.orderId, 'block', 'Reviewed order')
+        await runAdminOrderCustomerPhoneAction(realAffiliateOrder.orderId, 'reportSpam')
+
+        expect(apiPostMock).toHaveBeenNthCalledWith(
+            1,
+            `/admin/orders/${realAffiliateOrder.orderId}/customer-phone/block`,
+            { reason: 'Reviewed order' },
+            expect.any(Object),
+        )
+        expect(apiPostMock).toHaveBeenNthCalledWith(
+            2,
+            `/admin/orders/${realAffiliateOrder.orderId}/customer-phone/report-spam`,
+            undefined,
+            expect.any(Object),
+        )
     })
 
     it('submits manual delivery evidence to the backend-advertised lifecycle endpoint', async () => {

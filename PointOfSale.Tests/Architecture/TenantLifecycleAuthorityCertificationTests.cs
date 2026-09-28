@@ -9,6 +9,7 @@ public sealed class TenantLifecycleAuthorityCertificationTests
         var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/TenantsController.cs");
         var interceptor = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/TenantSaveChangesInterceptor.cs");
         var lineage = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Reliability/TenantLineageAuthority.cs");
+        var tenantMemo = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Tenancy/TenantAuthorityMemo.cs");
         var tenantResolution = CertificationSource.ReadRepoFile("PointOfSale.API/Middleware/TenantResolutionMiddleware.cs");
         var checkout = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCheckoutService.cs");
         var cart = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCartService.cs");
@@ -29,8 +30,10 @@ public sealed class TenantLifecycleAuthorityCertificationTests
         Assert.Contains("Entries<Tenant>()", interceptor, StringComparison.Ordinal);
 
         var activeTenantMethod = Slice(lineage, "public static async Task<bool> IsActiveTenantAsync", "public static async Task<TenantLineageValidation>");
-        Assert.Contains("tenant.IsActive", activeTenantMethod, StringComparison.Ordinal);
-        Assert.Contains("tenant.Status == TenantStatus.Active", activeTenantMethod, StringComparison.Ordinal);
+        Assert.Contains("TenantAuthorityMemo.GetTenantByIdAsync", activeTenantMethod, StringComparison.Ordinal);
+        Assert.Contains("tenant.IsActive", tenantMemo, StringComparison.Ordinal);
+        Assert.Contains("tenant.Status == TenantStatus.Active", tenantMemo, StringComparison.Ordinal);
+        Assert.Contains("tenant.DeletedAtUtc == null", tenantMemo, StringComparison.Ordinal);
 
         Assert.Contains("tenant.IsActive", tenantResolution, StringComparison.Ordinal);
         Assert.Contains("tenant.Status == TenantStatus.Active", tenantResolution, StringComparison.Ordinal);

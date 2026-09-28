@@ -271,6 +271,33 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
         Assert.Equal("CHECKOUT_ATTACHMENT_TYPE_NOT_ALLOWED", ex.ErrorCode);
     }
 
+    [Theory]
+    [InlineData("portrait.svg", "image/jpeg")]
+    [InlineData("portrait.html", "image/jpeg")]
+    [InlineData("document.jpg", "application/pdf")]
+    [InlineData("no-extension", "image/jpeg")]
+    public async Task CreateUploadLease_RejectsOriginalFileExtensionThatDoesNotMatchMimeType(
+        string fileName,
+        string contentType)
+    {
+        var tenantId = Guid.NewGuid();
+        var fieldType = contentType == "application/pdf" ? CheckoutFieldType.File : CheckoutFieldType.Image;
+        var field = await SeedFieldAsync(tenantId, fieldType);
+        var service = CreateService();
+
+        var ex = await Assert.ThrowsAsync<CheckoutDynamicFieldValidationException>(() =>
+            service.CreateUploadLeaseAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                NewLeaseRequest(field.Id, Guid.NewGuid(), fileName, contentType, 1024)));
+
+        Assert.Equal("CHECKOUT_ATTACHMENT_EXTENSION_MISMATCH", ex.ErrorCode);
+        Assert.Empty(await _dbContext.CheckoutAttachments.IgnoreQueryFilters().ToListAsync());
+    }
+
     [Fact]
     public async Task CreateUploadLease_RejectsOversizedFile()
     {

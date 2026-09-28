@@ -23,8 +23,11 @@ const EMPTY_CONFIG_FORM = {
     confirmReset: false
 }
 
-const FAWRY_AUTHORITY_REASON_CODE = 'FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE'
-const FAWRY_AUTHORITY_MESSAGE = 'Fawry is unavailable because financial settlement authority is not configured/certified.'
+const HIDDEN_NEW_PAYMENT_PROVIDER_CODES = new Set(['FAWRY'])
+
+function isHiddenNewPaymentProvider(code) {
+    return HIDDEN_NEW_PAYMENT_PROVIDER_CODES.has(code?.toUpperCase?.() || code)
+}
 
 export function isUnsupportedMethod(method) {
     if (!method) {
@@ -35,14 +38,13 @@ export function isUnsupportedMethod(method) {
         return true
     }
 
-    return (method.code?.toUpperCase?.() || method.code) === 'FAWRY'
+    return isHiddenNewPaymentProvider(method.code)
 }
 
 export function unsupportedReason(method) {
-    const isFawry = (method?.code?.toUpperCase?.() || method?.code) === 'FAWRY'
     return {
-        code: method?.unsupportedReasonCode || (isFawry ? FAWRY_AUTHORITY_REASON_CODE : 'PROVIDER_UNSUPPORTED'),
-        message: method?.unsupportedMessage || (isFawry ? FAWRY_AUTHORITY_MESSAGE : 'This payment provider is not supported.')
+        code: method?.unsupportedReasonCode || 'PROVIDER_UNSUPPORTED',
+        message: method?.unsupportedMessage || 'This payment provider is not supported.'
     }
 }
 
@@ -88,7 +90,7 @@ function normalizeMethod(method) {
         feeType: method.feeType || 'fixed',
         // T-09: the server is the authority, but the UI must never present
         // Fawry credential fields as a route to activation.
-        isSupported: method.isSupported !== false && (method.code?.toUpperCase?.() || method.code) !== 'FAWRY',
+        isSupported: method.isSupported !== false && !isHiddenNewPaymentProvider(method.code),
         unsupportedReasonCode: method.unsupportedReasonCode || null,
         unsupportedMessage: method.unsupportedMessage || null
     }
@@ -96,8 +98,7 @@ function normalizeMethod(method) {
 
 function normalizeCatalogProvider(provider) {
     const code = provider.code?.toUpperCase?.() || provider.code
-    const serverUnsupported = provider.isSupported === false
-    const unsupported = serverUnsupported || code === 'FAWRY'
+    const unsupported = provider.isSupported === false || isHiddenNewPaymentProvider(code)
 
     return normalizeMethod({
         id: null,
@@ -118,23 +119,25 @@ function normalizeCatalogProvider(provider) {
         configurationErrors: [],
         isEnabled: false,
         hasTenantPaymentMethod: false,
-        // T-09: Fawry is discoverable only as unsupported.
         isSupported: !unsupported,
         unsupportedReasonCode: unsupported
-            ? (provider.unsupportedReasonCode || FAWRY_AUTHORITY_REASON_CODE)
+            ? (provider.unsupportedReasonCode || 'PROVIDER_UNSUPPORTED')
             : null,
         unsupportedMessage: unsupported
-            ? (provider.unsupportedMessage || FAWRY_AUTHORITY_MESSAGE)
+            ? (provider.unsupportedMessage || 'This payment provider is not supported.')
             : null
     })
 }
 
 export function mergePaymentMethodCatalog(catalog, methods) {
     const methodByCode = new Map(
-        (methods || []).map((method) => [method.code?.toUpperCase?.() || method.code, normalizeMethod(method)])
+        (methods || [])
+            .filter((method) => !isHiddenNewPaymentProvider(method.code))
+            .map((method) => [method.code?.toUpperCase?.() || method.code, normalizeMethod(method)])
     )
 
     return (catalog || [])
+        .filter((provider) => !isHiddenNewPaymentProvider(provider.code))
         .map((provider) => {
             const code = provider.code?.toUpperCase?.() || provider.code
             return methodByCode.get(code) || normalizeCatalogProvider(provider)
@@ -146,6 +149,8 @@ export default function PaymentMethods() {
     const { t, i18n } = useTranslation()
     const { formatCurrency, settings } = useSettings()
     const isRTL = i18n.language === 'ar'
+    const getLocalizedMethodName = (method) =>
+        isRTL && method?.displayNameAr ? method.displayNameAr : method?.displayName
 
     const [methods, setMethods] = useState([])
     const [loading, setLoading] = useState(true)
@@ -352,22 +357,22 @@ export default function PaymentMethods() {
         try {
             if (method.isEnabled) {
                 await api.post(`/admin/payment-methods/${method.code}/disable`)
-                setSuccess(t('paymentMethods.disabled', { name: method.displayName }))
+                setSuccess(t('paymentMethods.disabled', { name: getLocalizedMethodName(method) }))
                 await fetchMethods()
                 return
             }
 
             if (method.requiresConfiguration && !method.isConfigurationValid) {
-                setError(`${method.displayName} requires valid configuration before it can be enabled.`)
+                setError(t('paymentMethods.validConfigurationRequired', { name: getLocalizedMethodName(method) }))
                 setErrorDetails(method.configurationErrors.length > 0
                     ? method.configurationErrors
-                    : ['Complete the required provider fields, then try enabling the method again.'])
+                    : [t('paymentMethods.completeRequiredFields')])
                 handleConfig(method)
                 return
             }
 
             await api.post(`/admin/payment-methods/${method.code}/enable`)
-            setSuccess(t('paymentMethods.enabled', { name: method.displayName }))
+            setSuccess(t('paymentMethods.enabled', { name: getLocalizedMethodName(method) }))
             await fetchMethods()
         } catch (err) {
             applyApiError(err, t('common.error'))
@@ -388,40 +393,34 @@ export default function PaymentMethods() {
         switch (code) {
             case 'STRIPE':
                 return [
-                    { key: 'publishableKey', label: 'Publishable Key', placeholder: 'pk_live_...' },
-                    { key: 'secretKey', label: 'Secret Key', placeholder: 'sk_live_...', sensitive: true },
-                    { key: 'webhookSecret', label: 'Webhook Secret', placeholder: 'whsec_...', sensitive: true }
+                    { key: 'publishableKey', label: t('paymentMethods.fields.publishableKey'), placeholder: 'pk_live_...' },
+                    { key: 'secretKey', label: t('paymentMethods.fields.secretKey'), placeholder: 'sk_live_...', sensitive: true },
+                    { key: 'webhookSecret', label: t('paymentMethods.fields.webhookSecret'), placeholder: 'whsec_...', sensitive: true }
                 ]
             case 'PAYMOB':
                 return [
-                    { key: 'publicKey', label: 'Public Key', placeholder: 'egy_pk_test_...' },
+                    { key: 'publicKey', label: t('paymentMethods.fields.publicKey'), placeholder: 'egy_pk_test_...' },
                     {
                         key: 'apiKey',
-                        label: 'API Key',
-                        placeholder: 'Paymob account API key for dashboard reconciliation',
+                        label: t('paymentMethods.fields.apiKey'),
+                        placeholder: t('paymentMethods.placeholders.paymobApiKey'),
                         sensitive: true,
-                        helpText: 'Stored encrypted. Leave blank to keep the existing API Key.'
+                        helpText: t('paymentMethods.help.paymobApiKey')
                     },
-                    { key: 'secretKey', label: 'Secret Key', placeholder: 'egy_sk_test_...', sensitive: true },
+                    { key: 'secretKey', label: t('paymentMethods.fields.secretKey'), placeholder: 'egy_sk_test_...', sensitive: true },
                     {
                         key: 'integrationId',
-                        label: 'Integration IDs',
-                        placeholder: 'e.g. 3153058, 3153060',
-                        helpText: 'Comma-separated Paymob integrations shown together in Unified Checkout.'
+                        label: t('paymentMethods.fields.integrationIds'),
+                        placeholder: t('paymentMethods.placeholders.integrationIds'),
+                        helpText: t('paymentMethods.help.integrationIds')
                     },
-                    { key: 'hmacSecret', label: 'HMAC Secret', placeholder: 'Your Paymob HMAC secret', sensitive: true },
-                    { key: 'merchantId', label: 'Merchant ID (optional)', placeholder: 'Not required by Intention API' },
-                    { key: 'iframeId', label: 'Legacy iFrame ID (optional)', placeholder: 'Not used by Unified Checkout' }
-                ]
-            case 'FAWRY':
-                return [
-                    { key: 'merchantCode', label: 'Merchant Code', placeholder: 'Your Fawry merchant code' },
-                    { key: 'apiKey', label: 'API Key', placeholder: 'Your Fawry API key', sensitive: true },
-                    { key: 'webhookSecret', label: 'Webhook Secret', placeholder: 'Your Fawry webhook secret', sensitive: true }
+                    { key: 'hmacSecret', label: t('paymentMethods.fields.hmacSecret'), placeholder: t('paymentMethods.placeholders.hmacSecret'), sensitive: true },
+                    { key: 'merchantId', label: t('paymentMethods.fields.merchantIdOptional'), placeholder: t('paymentMethods.placeholders.merchantId') },
+                    { key: 'iframeId', label: t('paymentMethods.fields.iframeIdOptional'), placeholder: t('paymentMethods.placeholders.iframeId') }
                 ]
             case 'MANUALWALLET':
                 return [
-                    { key: 'walletNumber', label: isRTL ? 'رقم المحفظة' : 'Wallet Number', placeholder: isRTL ? 'مثال: 01012345678' : 'e.g. 01012345678' }
+                    { key: 'walletNumber', label: t('paymentMethods.fields.walletNumber'), placeholder: t('paymentMethods.placeholders.walletNumber') }
                 ]
             default:
                 return []
@@ -461,7 +460,9 @@ export default function PaymentMethods() {
 
         return (
             <span className={`px-2 py-1 text-xs font-semibold rounded-full ${className}`}>
-                {method.isConfigurationValid ? 'Valid' : 'Invalid'}
+                {method.isConfigurationValid
+                    ? t('paymentMethods.valid', 'Valid')
+                    : t('paymentMethods.invalid', 'Invalid')}
             </span>
         )
     }
@@ -509,7 +510,7 @@ export default function PaymentMethods() {
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">{t('paymentMethods.title', 'Payment Methods')}</h1>
-                    <p className="text-sm text-gray-600">{t('paymentMethods.subtitle', 'Configure payment methods for your storefront')}</p>
+                    <p className="text-sm text-gray-600">{t('paymentMethods.description', 'Configure payment methods for your storefront')}</p>
                 </div>
             </div>
 
@@ -566,7 +567,7 @@ export default function PaymentMethods() {
                                     <th className="px-6 py-3 text-start text-xs font-medium uppercase text-gray-500">{t('common.name')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium uppercase text-gray-500">{t('paymentMethods.type', 'Type')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium uppercase text-gray-500">{t('paymentMethods.fee', 'Fee')}</th>
-                                    <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">{t('paymentMethods.configured', 'Configuration')}</th>
+                                    <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">{t('paymentMethods.configuration', 'Configuration')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">{t('common.status')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">{t('common.actions')}</th>
                                 </tr>
@@ -577,7 +578,7 @@ export default function PaymentMethods() {
                                         <td className="px-6 py-4 align-top">
                                             <div>
                                                 <div className="font-medium text-gray-900">
-                                                    {isRTL && method.displayNameAr ? method.displayNameAr : method.displayName}
+                                                    {getLocalizedMethodName(method)}
                                                 </div>
                                                 <div className="text-sm text-gray-500">{method.code}</div>
                                                 {method.requiresConfiguration && !method.isConfigurationValid && method.configurationErrors.length > 0 && (
@@ -820,17 +821,17 @@ export default function PaymentMethods() {
                     <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
                         <div className="border-b p-6">
                             <h2 className="text-xl font-bold">
-                                {t('paymentMethods.configure', 'Configure')} {editingMethod.displayName}
+                                {t('paymentMethods.configure', 'Configure')} {getLocalizedMethodName(editingMethod)}
                             </h2>
                             <p className="mt-1 text-sm text-gray-500">
-                                Provider secrets are never returned to the browser. Leave a field blank to keep the stored value unchanged.
+                                {t('paymentMethods.secretHandlingDescription')}
                             </p>
                         </div>
 
                         <form onSubmit={handleConfigSubmit} className="space-y-4 p-6">
                             {editingMethod.requiresConfiguration && !editingMethod.isConfigurationValid && editingMethod.configurationErrors.length > 0 && (
                                 <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">
-                                    <p className="font-medium">Configuration issues</p>
+                                    <p className="font-medium">{t('paymentMethods.configurationIssues')}</p>
                                     <ul className="mt-2 list-disc pl-5 text-sm">
                                         {editingMethod.configurationErrors.map((detail, index) => (
                                             <li key={`${detail}-${index}`}>{detail}</li>
@@ -858,7 +859,7 @@ export default function PaymentMethods() {
                             </div>
 
                             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-                                Empty or null configuration never wipes stored secrets. To clear credentials, use the explicit reset section below and confirm the action.
+                                {t('paymentMethods.secretResetDescription')}
                             </div>
 
                             {getConfigFields(editingMethod.code).map((field) => {
@@ -900,8 +901,7 @@ export default function PaymentMethods() {
                                         className="mt-1"
                                     />
                                     <span>
-                                        Reset the stored provider configuration.
-                                        This will disable the payment method immediately to prevent invalid checkout exposure.
+                                        {t('paymentMethods.resetWarning')}
                                     </span>
                                 </label>
 
@@ -913,7 +913,7 @@ export default function PaymentMethods() {
                                             onChange={(e) => setConfigData((current) => ({ ...current, confirmReset: e.target.checked }))}
                                             className="mt-1"
                                         />
-                                        <span>I understand this clears the stored configuration and requires reconfiguration before the method can be enabled again.</span>
+                                        <span>{t('paymentMethods.resetConfirmation')}</span>
                                     </label>
                                 )}
                             </div>
@@ -923,7 +923,7 @@ export default function PaymentMethods() {
                                     {t('common.cancel')}
                                 </button>
                                 <button type="submit" className="btn-primary flex-1">
-                                    {configData.reset ? 'Reset Configuration' : t('common.save')}
+                                    {configData.reset ? t('paymentMethods.resetConfiguration') : t('common.save')}
                                 </button>
                             </div>
                         </form>

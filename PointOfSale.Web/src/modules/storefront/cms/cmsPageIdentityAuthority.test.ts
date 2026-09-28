@@ -103,6 +103,44 @@ describe('CMS page identity authority admission', () => {
         }), user, { expectedPageId: pageId })).toBeNull()
     })
 
+    it('admits complete bilingual snapshots and rejects partial Arabic evidence', () => {
+        const english = {
+            title: 'About Us',
+            contentType: 'RichText',
+            content: '<p>About</p>',
+            schemaVersion: 1,
+            seo: page().draft.seo,
+        }
+        const arabic = {
+            title: 'من نحن',
+            contentType: 'RichText',
+            content: '<p>محتوى عربي</p>',
+            schemaVersion: 1,
+            seo: {
+                metaTitle: 'من نحن',
+                metaDescription: null,
+                metaKeywords: null,
+                openGraphImageUrl: null,
+            },
+        }
+        const bilingualPage = page({
+            draft: {
+                ...page().draft,
+                translations: { en: english, ar: arabic },
+            },
+        })
+
+        const admitted = deriveCurrentCmsPageIdentityPresentation(bilingualPage, user, { expectedPageId: pageId })
+        expect(admitted?.draft?.translations?.ar?.title).toBe('من نحن')
+
+        expect(deriveCurrentCmsPageIdentityPresentation(page({
+            draft: {
+                ...page().draft,
+                translations: { en: english, ar: { ...arabic, content: '' } },
+            },
+        }), user, { expectedPageId: pageId })).toBeNull()
+    })
+
     it('admits list rows as one backend-owned collection and rejects duplicate or foreign evidence', () => {
         const list = [{
             id: pageId,

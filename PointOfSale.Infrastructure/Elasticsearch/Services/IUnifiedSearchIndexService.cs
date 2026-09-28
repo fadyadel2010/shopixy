@@ -66,16 +66,20 @@ public interface IUnifiedSearchIndexService
     Task<bool> IndexCmsPageAsync(CmsPageSearchDocument document, CancellationToken cancellationToken = default);
     
     /// <summary>
-    /// Deletes a CMS page from the search index.
+    /// Deletes a CMS page from the search index by its immutable page-group identity.
     /// </summary>
-    Task<bool> DeleteCmsPageAsync(Guid tenantId, string slug, CancellationToken cancellationToken = default);
+    Task<bool> DeleteCmsPageAsync(
+        Guid tenantId,
+        Guid pageGroupId,
+        string? legacySlug = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deletes tenant-scoped CMS page documents that are missing from the current SQL authority set.
     /// </summary>
     Task<long> DeleteStaleCmsPagesAsync(
         Guid tenantId,
-        IReadOnlyCollection<string> authoritativeSlugs,
+        IReadOnlyCollection<Guid> authoritativePageGroupIds,
         CancellationToken cancellationToken = default);
     
     #endregion

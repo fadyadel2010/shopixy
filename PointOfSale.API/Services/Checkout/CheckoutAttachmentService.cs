@@ -107,6 +107,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
         var policy = BuildPolicy(field);
         var contentType = NormalizeContentType(request.ContentType);
         var allowedType = ResolveAllowedFileType(contentType, policy.AllowedFileTypes);
+        ValidateOriginalFileExtension(request.FileName, allowedType);
         ValidateFileSize(request.FileSizeBytes, policy);
         await ValidateCartAuthorityAsync(
             tenantId,
@@ -1103,6 +1104,29 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
         AllowedFileType.Docx => ".docx",
         _ => ".bin"
     };
+
+    private static void ValidateOriginalFileExtension(string? fileName, AllowedFileType allowedType)
+    {
+        var extension = Path.GetExtension(Path.GetFileName(fileName ?? string.Empty));
+        var allowedExtensions = allowedType switch
+        {
+            AllowedFileType.Jpeg => new[] { ".jpg", ".jpeg" },
+            AllowedFileType.Png => new[] { ".png" },
+            AllowedFileType.Webp => new[] { ".webp" },
+            AllowedFileType.Pdf => new[] { ".pdf" },
+            AllowedFileType.Doc => new[] { ".doc" },
+            AllowedFileType.Docx => new[] { ".docx" },
+            _ => Array.Empty<string>()
+        };
+
+        if (string.IsNullOrWhiteSpace(extension) ||
+            !allowedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new CheckoutDynamicFieldValidationException(
+                "CHECKOUT_ATTACHMENT_EXTENSION_MISMATCH",
+                "File extension does not match the selected file type.");
+        }
+    }
 
     private static bool IsImageType(AllowedFileType type) =>
         type is AllowedFileType.Jpeg or AllowedFileType.Png or AllowedFileType.Webp;

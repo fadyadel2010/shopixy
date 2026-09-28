@@ -166,6 +166,19 @@ const SYSTEM_FIELD_ADDRESS_KEYS: Record<string, keyof ShippingAddress> = {
     order_notes: 'notes',
 };
 
+const SYSTEM_FIELD_TRANSLATION_KEYS: Record<string, string> = {
+    full_name: 'fullName',
+    phone: 'phoneNumber',
+    email: 'emailAddress',
+    city: 'city',
+    area: 'area',
+    street_address: 'streetAddress',
+    building: 'building',
+    apartment: 'apartment',
+    postal_code: 'postalCode',
+    order_notes: 'orderNotes',
+};
+
 const getSystemInputType = (field: CheckoutFieldDefinition) => {
     if (field.fieldType === 'EMAIL') return 'email';
     if (field.fieldType === 'PHONE') return 'tel';
@@ -194,11 +207,53 @@ const parseAttachments = (value: string): CheckoutAttachment[] => {
     }
 };
 
-const formatFileSize = (bytes: number) => {
+const formatFileSize = (bytes: number, bytesLabel = 'bytes') => {
     if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-    return `${bytes} bytes`;
+    return `${bytes} ${bytesLabel}`;
 };
+
+const uploadFileToLease = (
+    uploadUrl: string,
+    uploadMethod: string,
+    contentType: string,
+    file: File,
+    signal: AbortSignal,
+    onProgress: (percentage: number) => void,
+) => new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    const cleanup = () => signal.removeEventListener('abort', abort);
+
+    request.open(uploadMethod || 'PUT', uploadUrl);
+    request.setRequestHeader('Content-Type', contentType);
+    request.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && event.total > 0) {
+            onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        }
+    });
+    request.addEventListener('load', () => {
+        cleanup();
+        if (request.status >= 200 && request.status < 300) resolve();
+        else reject(new Error('CHECKOUT_ATTACHMENT_STORAGE_UPLOAD_FAILED'));
+    });
+    request.addEventListener('error', () => {
+        cleanup();
+        reject(new Error('CHECKOUT_ATTACHMENT_STORAGE_UPLOAD_FAILED'));
+    });
+    request.addEventListener('abort', () => {
+        cleanup();
+        reject(new DOMException('Upload aborted', 'AbortError'));
+    });
+
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) {
+        request.abort();
+        return;
+    }
+
+    request.send(file);
+});
 
 interface DynamicCustomFieldProps {
     field: CheckoutFieldDefinition;
@@ -209,6 +264,7 @@ interface DynamicCustomFieldProps {
 }
 
 const DynamicCustomField: React.FC<DynamicCustomFieldProps> = ({ field, value, error, onChange, onBlur }) => {
+    const { t } = useTranslation();
     const inputId = `checkout-custom-${field.id}`;
     const errorId = `${inputId}-error`;
     const helpId = getFieldHelpId(inputId, Boolean(field.helpText));
@@ -259,7 +315,7 @@ const DynamicCustomField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                     aria-describedby={getFieldDescribedBy(inputId, Boolean(field.helpText), hasError)}
                     required={field.isRequired}
                 >
-                    <option value="">Select an option</option>
+                    <option value="">{t('checkout.fields.selectOption')}</option>
                     {options.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
@@ -321,10 +377,13 @@ const DynamicCustomField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
 };
 
 const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, error, onChange, onBlur }) => {
+    const { t } = useTranslation();
     const inputId = `checkout-custom-${field.id}`;
     const errorId = `${inputId}-error`;
     const [uploadError, setUploadError] = useState<string | null>(null);
     const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
+    const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+    const [failedFile, setFailedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const uploadAbortControllerRef = useRef<AbortController | null>(null);
     const cartId = useCartStore((state) => state.cart?.cartId ?? null);
@@ -345,32 +404,36 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
         onBlur();
     };
 
-    const uploadFiles = async (files: FileList | null) => {
+    const uploadFiles = async (files: FileList | File[] | null) => {
         if (!files || files.length === 0) return;
         if (!cartId) {
-            setUploadError('Cart is not ready yet. Please try again.');
+            setUploadError(t('checkout.fields.cartNotReady'));
             return;
         }
 
         setUploadError(null);
+        setFailedFile(null);
         const controller = new AbortController();
         uploadAbortControllerRef.current = controller;
         beginAttachmentUpload();
         const next = [...attachments];
+        let activeFile: File | null = null;
         try {
             for (const file of Array.from(files)) {
+                activeFile = file;
                 if (next.length >= maxFiles) {
-                    setUploadError(`${field.label} allows at most ${maxFiles} file(s).`);
+                    setUploadError(t('checkout.fields.maxFiles', { label: field.label, count: maxFiles }));
                     break;
                 }
 
                 const maxFileSize = field.configuration.maxFileSize;
                 if (maxFileSize && file.size > maxFileSize) {
-                    setUploadError(`${file.name} must be ${formatFileSize(maxFileSize)} or smaller.`);
+                    setUploadError(t('checkout.fields.maxFileSize', { fileName: file.name, size: formatFileSize(maxFileSize, t('checkout.fields.bytes')) }));
                     continue;
                 }
 
                 setUploadingFileName(file.name);
+                setUploadProgress(0);
                 const lease = await httpClient.post('/api/storefront/checkout/attachments/upload-lease', {
                     cartId,
                     fieldId: field.id,
@@ -379,16 +442,14 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                     fileSizeBytes: file.size,
                 }, { signal: controller.signal });
 
-                const uploadResponse = await fetch(lease.data.uploadUrl, {
-                    method: lease.data.uploadMethod || 'PUT',
-                    headers: { 'Content-Type': lease.data.contentType },
-                    body: file,
-                    signal: controller.signal,
-                });
-
-                if (!uploadResponse.ok) {
-                    throw new Error('Storage upload failed.');
-                }
+                await uploadFileToLease(
+                    lease.data.uploadUrl,
+                    lease.data.uploadMethod || 'PUT',
+                    lease.data.contentType,
+                    file,
+                    controller.signal,
+                    setUploadProgress,
+                );
 
                 const confirmed = await httpClient.post<CheckoutAttachment>('/api/storefront/checkout/attachments/confirm', {
                     cartId,
@@ -397,12 +458,21 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                 }, { signal: controller.signal });
                 next.push(confirmed.data);
                 updateAttachments(next);
+                setFailedFile(null);
                 setUploadingFileName(null);
+                setUploadProgress(null);
             }
         } catch (err) {
             if (!controller.signal.aborted) {
                 const apiError = err as { response?: { data?: { message?: string } }; message?: string };
-                setUploadError(apiError.response?.data?.message || apiError.message || 'Unable to upload the selected file.');
+                setFailedFile(activeFile);
+                setUploadError(
+                    apiError.response?.data?.message
+                    || (apiError.message === 'CHECKOUT_ATTACHMENT_STORAGE_UPLOAD_FAILED'
+                        ? t('checkout.fields.storageUploadFailed')
+                        : apiError.message)
+                    || t('checkout.fields.uploadFailed'),
+                );
             }
         } finally {
             if (uploadAbortControllerRef.current === controller) {
@@ -410,6 +480,7 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
             }
             endAttachmentUpload();
             setUploadingFileName(null);
+            setUploadProgress(null);
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
@@ -447,19 +518,28 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                 aria-describedby={hasError ? errorId : undefined}
             />
             {field.helpText && !hasError && <p className={checkoutHelpClassName}>{field.helpText}</p>}
-            {uploadingFileName && <p className="text-sm text-muted" role="status">Uploading {uploadingFileName}...</p>}
+            {uploadingFileName && (
+                <div className="space-y-1" role="status" aria-live="polite">
+                    <p className="text-sm text-muted">
+                        {t('checkout.fields.uploading', { fileName: uploadingFileName, progress: uploadProgress ?? 0 })}
+                    </p>
+                    <progress className="h-2 w-full accent-primary" max="100" value={uploadProgress ?? 0}>
+                        {uploadProgress ?? 0}%
+                    </progress>
+                </div>
+            )}
             {attachments.length > 0 && (
-                <ul className="space-y-2" aria-label={`${field.label} uploaded files`}>
+                <ul className="space-y-2" aria-label={t('checkout.fields.uploadedFiles', { label: field.label })}>
                     {attachments.map((attachment) => (
                         <li key={attachment.attachmentId} className="flex flex-col gap-2 rounded-lg border border-muted/20 bg-background px-3 py-2 text-sm text-text sm:flex-row sm:items-center sm:justify-between">
-                            <span className="min-w-0 truncate">{attachment.fileName} ({formatFileSize(attachment.sizeBytes)})</span>
+                            <span className="min-w-0 truncate">{attachment.fileName} ({formatFileSize(attachment.sizeBytes, t('checkout.fields.bytes'))})</span>
                             <button
                                 type="button"
                                 onClick={() => removeAttachment(attachment)}
                                 disabled={uploadingFileName != null}
                                 className="self-start rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-60 sm:self-auto"
                             >
-                                Remove
+                                {t('checkout.fields.remove')}
                             </button>
                         </li>
                     ))}
@@ -470,6 +550,15 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                     {uploadError || error}
                 </p>
             )}
+            {failedFile && !uploadingFileName ? (
+                <button
+                    type="button"
+                    onClick={() => void uploadFiles([failedFile])}
+                    className="rounded-md border border-primary/30 px-3 py-2 text-sm font-medium text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                >
+                    {t('checkout.fields.retryUpload')}
+                </button>
+            ) : null}
         </div>
     );
 };
@@ -500,6 +589,8 @@ const ShippingMethodCard: React.FC<ShippingMethodCardProps> = ({
     isDisabled,
     onSelect,
 }) => {
+    const { t } = useTranslation();
+
     return (
         <label
             className={`
@@ -527,7 +618,7 @@ const ShippingMethodCard: React.FC<ShippingMethodCardProps> = ({
                 <div className="flex items-center justify-between">
                     <span className="font-medium text-text">{name}</span>
                     <span className="font-semibold text-text">
-                        {price > 0 ? formatPrice(price) : 'Free'}
+                        {price > 0 ? formatPrice(price) : t('checkout.shipping.free')}
                     </span>
                 </div>
 
@@ -537,7 +628,12 @@ const ShippingMethodCard: React.FC<ShippingMethodCardProps> = ({
 
                 {estimatedDays && (
                     <p className="text-xs text-muted mt-1">
-                        Estimated delivery: {estimatedDays} day{estimatedDays !== 1 ? 's' : ''}
+                        {t(
+                            estimatedDays === 1
+                                ? 'checkout.shipping.estimatedDeliveryDay'
+                                : 'checkout.shipping.estimatedDeliveryDays',
+                            { count: estimatedDays },
+                        )}
                     </p>
                 )}
             </div>
@@ -549,7 +645,7 @@ const ShippingMethodCard: React.FC<ShippingMethodCardProps> = ({
  * Shipping Step Component
  */
 export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
     
     // Currency formatting from store config
     const { formatPrice } = useCurrency();
@@ -606,17 +702,20 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                 return null;
             }
 
+            const translationKey = field.systemFieldKey ? SYSTEM_FIELD_TRANSLATION_KEYS[field.systemFieldKey] : undefined;
+            const label = translationKey ? t(`checkout.shipping.${translationKey}`) : field.label;
+
             return (
                 <div key={field.id} className={getCheckoutFieldLayoutClass(field)}>
                     <InputField
-                        label={field.label}
+                        label={label}
                         name={addressKey}
                         type={getSystemInputType(field)}
                         value={(address[addressKey] as string | undefined) || ''}
                         onChange={(value) => setAddressField(addressKey, value)}
                         onBlur={() => touchField(addressKey)}
                         error={getFieldError(addressKey)}
-                        placeholder={field.label}
+                        placeholder={label}
                         helpText={field.helpText}
                         multiline={field.fieldType === 'TEXTAREA'}
                         required={field.isRequired}
@@ -643,30 +742,30 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
             {/* Shipping Address */}
             <section className="space-y-5">
                 <div>
-                    <h2 className="text-lg font-semibold text-text">Shipping Address</h2>
+                    <h2 className="text-lg font-semibold text-text">{t('checkout.shipping.addressTitle')}</h2>
                 </div>
 
                 {checkoutFieldsLoading ? (
-                    <div className={checkoutFieldGridClassName}>
+                    <div className={checkoutFieldGridClassName} role="status" aria-label={t('checkout.shipping.loadingFields')}>
                         {[1, 2, 3, 4].map((item) => (
                             <div key={item} className="h-24 rounded-lg bg-muted/10 skeleton" />
                         ))}
                     </div>
                 ) : checkoutFieldsStatus === 'UNAVAILABLE' || checkoutFieldsStatus === 'ERROR' ? (
                     <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
-                        <p>{checkoutFieldsError || 'Checkout field configuration could not be loaded.'}</p>
-                        <p className="mt-1">Checkout is paused so required store fields cannot be bypassed.</p>
+                        <p>{checkoutFieldsError || t('checkout.shipping.fieldsUnavailable')}</p>
+                        <p className="mt-1">{t('checkout.shipping.fieldsUnavailableHelp')}</p>
                         <button
                             type="button"
                             onClick={() => void fetchCheckoutFields(true)}
                             className="mt-3 inline-flex items-center rounded-lg border border-red-300 px-3 py-2 font-medium text-red-700 hover:bg-red-100"
                         >
-                            Retry checkout fields
+                            {t('checkout.shipping.retryFields')}
                         </button>
                     </div>
                 ) : configuredCheckoutFields && checkoutFieldsStatus === 'EMPTY' ? (
                     <p className="rounded-lg border border-muted/20 bg-muted/5 p-4 text-sm text-muted" role="status">
-                        This store does not require additional customer fields for checkout.
+                        {t('checkout.shipping.noAdditionalFields')}
                     </p>
                 ) : useDynamicFields ? (
                     <div className={checkoutFieldGridClassName}>
@@ -675,63 +774,60 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                 ) : (
                 <div className={checkoutFieldGridClassName}>
                     <InputField
-                        label="Full Name"
+                        label={t('checkout.shipping.fullName')}
                         name="fullName"
                         value={address.fullName}
                         onChange={(value) => setAddressField('fullName', value)}
                         onBlur={() => touchField('fullName')}
                         error={getFieldError('fullName')}
-                        placeholder="Enter your full name"
+                        placeholder={t('checkout.shipping.fullNamePlaceholder')}
                         required
                     />
 
                     <InputField
-                        label="Phone Number"
+                        label={t('checkout.shipping.phoneNumber')}
                         name="phone"
                         type="tel"
                         value={address.phone}
                         onChange={(value) => setAddressField('phone', value)}
                         onBlur={() => touchField('phone')}
                         error={getFieldError('phone')}
-                        placeholder="e.g. 01022174803"
+                        placeholder={t('checkout.shipping.phonePlaceholder')}
+                        helpText={t('checkout.shipping.phoneHelp')}
                         required
                     />
-                    {/* Phone number hint */}
-                    <p className="text-xs leading-5 text-muted md:col-span-2 md:-mt-3">
-                        Enter your local number. Country code is optional.
-                    </p>
 
                     <InputField
-                        label="City"
+                        label={t('checkout.shipping.city')}
                         name="city"
                         value={address.city}
                         onChange={(value) => setAddressField('city', value)}
                         onBlur={() => touchField('city')}
                         error={getFieldError('city')}
-                        placeholder="Enter city"
+                        placeholder={t('checkout.shipping.cityPlaceholder')}
                         required
                     />
 
                     <InputField
-                        label="Area / District"
+                        label={t('checkout.shipping.area')}
                         name="area"
                         value={address.area}
                         onChange={(value) => setAddressField('area', value)}
                         onBlur={() => touchField('area')}
                         error={getFieldError('area')}
-                        placeholder="Enter area or district"
+                        placeholder={t('checkout.shipping.areaPlaceholder')}
                         required
                     />
 
                     <div className="md:col-span-2">
                         <InputField
-                            label="Street Address"
+                            label={t('checkout.shipping.streetAddress')}
                             name="addressLine"
                             value={address.addressLine}
                             onChange={(value) => setAddressField('addressLine', value)}
                             onBlur={() => touchField('addressLine')}
                             error={getFieldError('addressLine')}
-                            placeholder="Enter your full street address"
+                            placeholder={t('checkout.shipping.streetAddressPlaceholder')}
                             multiline
                             required
                         />
@@ -739,12 +835,12 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
 
                     <div className="md:col-span-2">
                         <InputField
-                            label="Delivery Notes (Optional)"
+                            label={t('checkout.shipping.deliveryNotes')}
                             name="notes"
                             value={address.notes || ''}
                             onChange={(value) => setAddressField('notes', value)}
                             onBlur={() => touchField('notes')}
-                            placeholder="Any special instructions for delivery"
+                            placeholder={t('checkout.shipping.deliveryNotesPlaceholder')}
                             multiline
                         />
                     </div>
@@ -753,59 +849,59 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
             </section>
 
             {/* Shipping Method */}
-            <section>
-                <h2 className="text-lg font-semibold text-text mb-4">Shipping Method</h2>
+            <fieldset className="min-w-0 border-0 p-0">
+                <legend className="mb-4 text-lg font-semibold text-text">{t('checkout.shipping.methodTitle')}</legend>
 
                 {isLoadingMethods ? (
-                    <div className="space-y-3">
+                    <div className="space-y-3" role="status" aria-label={t('checkout.shipping.loadingMethods')}>
                         {[1, 2].map((i) => (
                             <div key={i} className="h-20 bg-muted/10 rounded-lg skeleton" />
                         ))}
                     </div>
                 ) : shippingMethodsStatus === 'EMPTY' ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" role="status">
-                        <p className="font-medium">No shipping methods are currently enabled for this store.</p>
+                        <p className="font-medium">{t('checkout.shipping.noEnabledMethods')}</p>
                         <p className="mt-1 text-amber-700">
-                            Checkout cannot continue until the store configures and enables a shipping method.
+                            {t('checkout.shipping.noEnabledMethodsHelp')}
                         </p>
                     </div>
                 ) : shippingMethodsStatus === 'NOT_APPLICABLE' ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" role="status">
-                        <p className="font-medium">No shipping methods apply to this cart or address.</p>
+                        <p className="font-medium">{t('checkout.shipping.notApplicable')}</p>
                         <p className="mt-1 text-amber-700">
-                            Check the shipping address or contact the store for delivery options.
+                            {t('checkout.shipping.notApplicableHelp')}
                         </p>
                     </div>
                 ) : shippingMethodsStatus === 'UNAVAILABLE' || shippingMethodsStatus === 'ERROR' ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                        <p>{shippingMethodsError || 'Shipping options could not be loaded.'}</p>
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+                        <p>{shippingMethodsError || t('checkout.shipping.unavailable')}</p>
                         <p className="mt-1 text-red-600">
-                            We could not load the latest shipping options. Please retry before continuing.
+                            {t('checkout.shipping.unavailableHelp')}
                         </p>
                         <button
                             type="button"
                             onClick={() => void fetchShippingMethods({ force: true })}
                             className="mt-3 inline-flex items-center rounded-lg border border-red-300 px-3 py-2 font-medium text-red-700 hover:bg-red-100"
                         >
-                            Retry shipping options
+                            {t('checkout.shipping.retryMethods')}
                         </button>
                     </div>
                 ) : shippingMethodsStatus === 'VALIDATION_REQUIRED' ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" role="status">
-                        <p className="font-medium">Shipping options need checkout context before they can load.</p>
+                        <p className="font-medium">{t('checkout.shipping.contextRequired')}</p>
                         <p className="mt-1 text-amber-700">
-                            {shippingMethodsError || 'Review your checkout details and try again.'}
+                            {shippingMethodsError || t('checkout.shipping.contextRequiredHelp')}
                         </p>
                     </div>
                 ) : shippingMethods.length === 0 ? (
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
-                        No shipping methods are currently available for this store.
+                        {t('checkout.shipping.noMethods')}
                     </div>
                 ) : (
                     <div className="space-y-3">
                         {isSelectingMethod && (
                             <p className="text-sm text-muted" role="status" aria-live="polite">
-                                Confirming shipping availability...
+                                {t('checkout.shipping.confirmingAvailability')}
                             </p>
                         )}
                         {shippingSelectionStatus === 'stale' && staleShippingSelection && (
@@ -815,7 +911,11 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                                 aria-live="polite"
                                 aria-atomic="true"
                             >
-                                <p className="font-medium">{t(staleShippingSelection.message, { defaultValue: 'Your previous selection is no longer available' })}</p>
+                                <p className="font-medium">
+                                    {t(staleShippingSelection.message) === staleShippingSelection.message
+                                        ? t('checkout.staleSelection')
+                                        : t(staleShippingSelection.message)}
+                                </p>
                                 <p className="mt-1 text-amber-700">
                                     {t('checkout.previousSelection')}: {staleShippingSelection.label}
                                 </p>
@@ -825,7 +925,7 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                             <ShippingMethodCard
                                 key={method.id}
                                 id={method.id}
-                                name={method.name}
+                                name={language === 'ar' && method.nameAr?.trim() ? method.nameAr : method.name}
                                 description={method.description}
                                 price={method.price}
                                 formatPrice={formatPrice}
@@ -837,7 +937,7 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                         ))}
                     </div>
                 )}
-            </section>
+            </fieldset>
 
             {/* Continue Button */}
             <div className="pt-4">
@@ -856,7 +956,7 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                     `}
                     aria-disabled={!canContinue}
                 >
-                    Continue to Payment
+                    {t('checkout.shipping.continueToPayment')}
                 </button>
             </div>
         </div>

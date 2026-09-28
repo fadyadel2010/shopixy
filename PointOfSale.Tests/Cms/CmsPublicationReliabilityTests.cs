@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,8 +15,6 @@ namespace PointOfSale.Tests.Cms;
 
 public sealed class CmsPublicationReliabilityTests
 {
-    private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
-
     [Fact]
     public async Task PublishStorefrontPageAsync_WhenOutboxPublishFails_DoesNotChangeLiveCmsTruth()
     {
@@ -115,9 +112,8 @@ public sealed class CmsPublicationReliabilityTests
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
-        var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .UseInMemoryDatabase(databaseName, SharedInMemoryDatabaseRoot.Instance)
             .Options;
 
         return new ApplicationDbContext(options, new TestTenantContext(tenantId));

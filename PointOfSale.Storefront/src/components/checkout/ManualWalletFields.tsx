@@ -145,11 +145,9 @@ export const ManualWalletFields: React.FC = () => {
         event.target.value = '';
 
         if (file.size > maxFileBytes) {
-            setUploadError(
-                isRTL
-                    ? `Proof files must be ${formatMaxFileSize(maxFileBytes)} or smaller.`
-                    : `Proof files must be ${formatMaxFileSize(maxFileBytes)} or smaller.`,
-            );
+            setUploadError(t('checkout.payment.manualWallet.fileTooLarge', {
+                size: formatMaxFileSize(maxFileBytes),
+            }));
             return;
         }
 
@@ -159,11 +157,9 @@ export const ManualWalletFields: React.FC = () => {
         const isValidExtension = allowedExtensions.some(ext => ext.toLowerCase() === fileExtension);
 
         if (!isValidMimeType && !isValidExtension) {
-            setUploadError(
-                isRTL
-                    ? `Unsupported file type. Allowed formats: ${allowedExtensions.join(', ')}.`
-                    : `Unsupported file type. Allowed formats: ${allowedExtensions.join(', ')}.`,
-            );
+            setUploadError(t('checkout.payment.manualWallet.unsupportedFileType', {
+                formats: allowedExtensions.join(', '),
+            }));
             return;
         }
 
@@ -190,7 +186,7 @@ export const ManualWalletFields: React.FC = () => {
             const normalized = normalizeError(finalError as any);
             clearLocalPreview();
             setManualWalletProofFileKey(null);
-            setUploadError(normalized.message || 'Proof upload failed. Please retry.');
+            setUploadError(normalized.message || t('checkout.payment.manualWallet.uploadFailed'));
         } finally {
             setUploading(false);
             event.target.value = '';
@@ -200,10 +196,10 @@ export const ManualWalletFields: React.FC = () => {
         allowedMimeTypes,
         attemptUpload,
         clearLocalPreview,
-        isRTL,
         maxFileBytes,
         setLocalPreview,
         setManualWalletProofFileKey,
+        t,
     ]);
 
     const clearProof = useCallback(async (retryAuth = false) => {
@@ -264,12 +260,15 @@ export const ManualWalletFields: React.FC = () => {
             }
 
             const normalized = normalizeError(finalError as any);
-            setUploadError(normalized.message || 'Proof removal failed. Please retry.');
+            setUploadError(normalized.message || t('checkout.payment.manualWallet.removalFailed'));
         }
-    }, [clearLocalPreview, clearProof, setManualWalletProofFileKey]);
+    }, [clearLocalPreview, clearProof, setManualWalletProofFileKey, t]);
 
     const acceptValue = allowedMimeTypes.join(', ');
-    const fileRulesLabel = `${allowedExtensions.join(', ')} • ${formatMaxFileSize(maxFileBytes)} max`;
+    const fileRulesLabel = t('checkout.payment.manualWallet.fileRules', {
+        formats: allowedExtensions.join(', '),
+        size: formatMaxFileSize(maxFileBytes),
+    });
 
     return (
         <div className="mt-4 space-y-6 rounded-xl border border-muted/20 bg-muted/5 p-4">
@@ -281,7 +280,7 @@ export const ManualWalletFields: React.FC = () => {
 
             <div>
                 <label className="mb-2 block text-sm font-medium text-text">
-                    {isRTL ? 'Select Wallet *' : 'Select Wallet *'}
+                    {t('checkout.payment.manualWallet.selectWallet')}
                 </label>
                 {walletTypes.length === 0 ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800" role="alert">
@@ -322,7 +321,7 @@ export const ManualWalletFields: React.FC = () => {
             <div className="flex items-center justify-between rounded-lg border border-border bg-surface p-4">
                 <div>
                     <p className="mb-1 text-xs text-muted">
-                        {isRTL ? 'Transfer the exact amount to this wallet number' : 'Transfer the exact amount to this wallet number'}
+                        {t('checkout.payment.manualWallet.transferExactAmount')}
                     </p>
                     <p className="font-mono text-xl font-bold tracking-wider text-primary">
                         {merchantWalletNumber || '---'}
@@ -333,7 +332,7 @@ export const ManualWalletFields: React.FC = () => {
                     onClick={() => merchantWalletNumber && navigator.clipboard.writeText(merchantWalletNumber)}
                     disabled={!merchantWalletNumber}
                     className="rounded p-2 text-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:text-muted"
-                    title={isRTL ? 'Copy' : 'Copy'}
+                    title={t('checkout.payment.manualWallet.copy')}
                 >
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -343,7 +342,7 @@ export const ManualWalletFields: React.FC = () => {
 
             <div>
                 <label className="mb-1 block text-sm font-medium text-text">
-                    {isRTL ? 'Wallet Number Used For Transfer *' : 'Wallet Number Used For Transfer *'}
+                    {t('checkout.payment.manualWallet.senderNumber')}
                 </label>
                 <input
                     type="tel"
@@ -358,9 +357,7 @@ export const ManualWalletFields: React.FC = () => {
                     dir="ltr"
                 />
                 <p className="mt-1 text-xs text-muted">
-                    {isRTL
-                        ? 'Enter the wallet number that sent the transfer so the team can verify it.'
-                        : 'Enter the wallet number that sent the transfer so the team can verify it.'}
+                    {t('checkout.payment.manualWallet.senderNumberHelp')}
                 </p>
                 {showAllErrors && validationErrors.walletPhoneNumber && (
                     <p className="mt-2 text-xs text-red-600">{t(`checkout.payment.manualWalletErrors.${validationErrors.walletPhoneNumber.code}`)}</p>
@@ -369,7 +366,7 @@ export const ManualWalletFields: React.FC = () => {
 
             <div>
                 <label className="mb-2 block text-sm font-medium text-text">
-                    {isRTL ? 'Transfer Proof *' : 'Transfer Proof *'}
+                    {t('checkout.payment.manualWallet.transferProof')}
                 </label>
 
                 {!proofFileKey ? (
@@ -393,7 +390,7 @@ export const ManualWalletFields: React.FC = () => {
                                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                                     </svg>
-                                    <span className="text-sm text-muted">{isRTL ? 'Uploading proof...' : 'Uploading proof...'}</span>
+                                    <span className="text-sm text-muted">{t('checkout.payment.manualWallet.uploadingProof')}</span>
                                 </div>
                             ) : (
                                 <div className="flex flex-col items-center">
@@ -401,7 +398,7 @@ export const ManualWalletFields: React.FC = () => {
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                                     </svg>
                                     <span className="text-sm font-medium text-primary">
-                                        {isRTL ? 'Upload transfer proof' : 'Upload transfer proof'}
+                                        {t('checkout.payment.manualWallet.uploadProof')}
                                     </span>
                                     <span className="mt-1 text-xs text-muted">{fileRulesLabel}</span>
                                 </div>
@@ -413,7 +410,7 @@ export const ManualWalletFields: React.FC = () => {
                         {previewUrl && previewKind === 'image' ? (
                             <img
                                 src={previewUrl}
-                                alt="Transfer proof"
+                                alt={t('checkout.payment.manualWallet.proofAlt')}
                                 className="h-32 w-full object-cover"
                             />
                         ) : previewUrl && previewKind === 'pdf' ? (
@@ -421,7 +418,7 @@ export const ManualWalletFields: React.FC = () => {
                                 <svg className="mb-2 h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7V3h8l4 4v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" />
                                 </svg>
-                                <span className="text-sm font-medium">PDF proof selected</span>
+                                <span className="text-sm font-medium">{t('checkout.payment.manualWallet.pdfSelected')}</span>
                             </div>
                         ) : (
                             <div className="flex h-32 w-full flex-col items-center justify-center bg-green-50">
@@ -429,7 +426,7 @@ export const ManualWalletFields: React.FC = () => {
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                 </svg>
                                 <span className="text-sm font-medium text-green-700">
-                                    {isRTL ? 'Transfer proof uploaded' : 'Transfer proof uploaded'}
+                                    {t('checkout.payment.manualWallet.proofUploaded')}
                                 </span>
                             </div>
                         )}
@@ -448,15 +445,15 @@ export const ManualWalletFields: React.FC = () => {
                             <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                             </svg>
-                            {isRTL ? 'Uploaded' : 'Uploaded'}
+                            {t('checkout.payment.manualWallet.uploaded')}
                         </div>
                     </div>
                 )}
 
                 <p className="mt-1 text-xs text-muted">
-                    {isRTL
-                        ? 'Accepted formats:'
-                        : 'Accepted formats:'} {allowedExtensions.join(', ')}
+                    {t('checkout.payment.manualWallet.acceptedFormats', {
+                        formats: allowedExtensions.join(', '),
+                    })}
                 </p>
                 {showAllErrors && validationErrors.proofFileKey && (
                     <p className="mt-2 text-xs text-red-600">{t(`checkout.payment.manualWalletErrors.${validationErrors.proofFileKey.code}`)}</p>

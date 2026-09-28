@@ -1,8 +1,11 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Services.Admin;
+using PointOfSale.API.Services.Analytics;
+using PointOfSale.API.Services.PhoneRisk;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 
@@ -36,17 +39,193 @@ namespace PointOfSale.API.Controllers;
 public class AdminOrdersController : ControllerBase
 {
     private readonly IAdminOrderService _adminOrderService;
+    private readonly IPhoneRiskProfileService _phoneRiskProfileService;
+    private readonly IAnalyticsSessionJourneyService _sessionJourneyService;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<AdminOrdersController> _logger;
 
     public AdminOrdersController(
         IAdminOrderService adminOrderService,
+        IPhoneRiskProfileService phoneRiskProfileService,
+        IAnalyticsSessionJourneyService sessionJourneyService,
         ITenantContext tenantContext,
         ILogger<AdminOrdersController> logger)
     {
         _adminOrderService = adminOrderService;
+        _phoneRiskProfileService = phoneRiskProfileService;
+        _sessionJourneyService = sessionJourneyService;
         _tenantContext = tenantContext;
         _logger = logger;
+    }
+
+    [HttpGet("{orderId:guid}/customer-trust")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(AdminOrderCustomerTrustDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AdminApiErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetCustomerTrust(
+        [FromRoute] Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            var result = await _phoneRiskProfileService.GetOrderCustomerTrustAsync(
+                validation.TenantId!.Value,
+                orderId,
+                cancellationToken);
+            return result == null
+                ? NotFound(AdminApiErrorResponse.OrderNotFound(traceId))
+                : Ok(result);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex,
+                "GetCustomerTrust | TenantId: {TenantId} | OrderId: {OrderId} | Error | TraceId: {TraceId}",
+                validation.TenantId, orderId, traceId);
+            return StatusCode(StatusCodes.Status500InternalServerError, AdminApiErrorResponse.InternalError(traceId));
+        }
+    }
+
+    [HttpGet("{orderId:guid}/session-intelligence")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(AdminOrderSessionIntelligenceDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> GetSessionIntelligence(
+        [FromRoute] Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            var journey = await _sessionJourneyService.GetOrderJourneyAsync(
+                validation.TenantId!.Value,
+                orderId,
+                cancellationToken);
+            if (journey == null)
+            {
+                return NoContent();
+            }
+
+            return Ok(new AdminOrderSessionIntelligenceDto
+            {
+                OrderId = journey.OrderId,
+                Source = journey.Source,
+                Medium = journey.Medium,
+                Device = journey.Device,
+                VisitedPages = journey.VisitedPages,
+                DurationSeconds = journey.DurationSeconds,
+                FirstVisitAtUtc = journey.FirstVisitAtUtc,
+                CheckoutVisitAtUtc = journey.CheckoutVisitAtUtc,
+                PurchaseCompletedAtUtc = journey.PurchaseCompletedAtUtc,
+                SessionsCount = journey.SessionsCount,
+                EventCount = journey.EventCount,
+            });
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex,
+                "GetSessionIntelligence | TenantId: {TenantId} | OrderId: {OrderId} | Error | TraceId: {TraceId}",
+                validation.TenantId, orderId, traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new AdminApiErrorResponse("SESSION_INTELLIGENCE_UNAVAILABLE", "Session intelligence is temporarily unavailable.", traceId));
+        }
+    }
+
+    [HttpPost("{orderId:guid}/customer-phone/block")]
+    [ProducesResponseType(typeof(AdminPhoneRiskStatusDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> BlockCustomerPhone(
+        [FromRoute] Guid orderId,
+        [FromBody] AdminBlockOrderPhoneRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return await UpdateOrderPhoneAsync(
+            orderId,
+            async (tenantId, phoneNumber) => await _phoneRiskProfileService.BlockAsync(
+                tenantId,
+                phoneNumber,
+                request.Reason,
+                GetCurrentUserId(),
+                cancellationToken),
+            cancellationToken);
+    }
+
+    [HttpPost("{orderId:guid}/customer-phone/unblock")]
+    [ProducesResponseType(typeof(AdminPhoneRiskStatusDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UnblockCustomerPhone(
+        [FromRoute] Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        return await UpdateOrderPhoneAsync(
+            orderId,
+            async (tenantId, phoneNumber) => await _phoneRiskProfileService.UnblockAsync(
+                tenantId,
+                phoneNumber,
+                cancellationToken),
+            cancellationToken);
+    }
+
+    [HttpPost("{orderId:guid}/customer-phone/report-spam")]
+    [ProducesResponseType(typeof(AdminPhoneRiskStatusDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ReportCustomerPhoneAsSpam(
+        [FromRoute] Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            var trust = await _phoneRiskProfileService.GetOrderCustomerTrustAsync(
+                validation.TenantId!.Value,
+                orderId,
+                cancellationToken);
+            if (trust == null)
+            {
+                return NotFound(AdminApiErrorResponse.OrderNotFound(traceId));
+            }
+
+            if (!trust.HasPhone)
+            {
+                return Conflict(new AdminApiErrorResponse(
+                    "ORDER_PHONE_UNAVAILABLE",
+                    "The order does not have an available customer phone number.",
+                    traceId));
+            }
+
+            var result = await _phoneRiskProfileService.ReportSpamAsync(
+                validation.TenantId.Value,
+                orderId,
+                GetCurrentUserId(),
+                cancellationToken);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return Conflict(new AdminApiErrorResponse("ORDER_PHONE_UNAVAILABLE", ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex,
+                "ReportCustomerPhoneAsSpam | TenantId: {TenantId} | OrderId: {OrderId} | Error | TraceId: {TraceId}",
+                validation.TenantId, orderId, traceId);
+            return StatusCode(StatusCodes.Status500InternalServerError, AdminApiErrorResponse.InternalError(traceId));
+        }
     }
 
     /// <summary>
@@ -96,7 +275,7 @@ public class AdminOrdersController : ControllerBase
             PageSize = pageSize,
             Status = status,
             PaymentStatus = paymentStatus,
-            Source = source,
+            Source = OrderSource.Ecommerce,
             FromDate = fromDate,
             ToDate = toDate,
             CustomerId = customerId,
@@ -104,6 +283,14 @@ public class AdminOrdersController : ControllerBase
             SortBy = sortBy,
             SortDirection = sortDirection
         };
+
+        if (source.HasValue && source != OrderSource.Ecommerce)
+        {
+            return BadRequest(new AdminApiErrorResponse(
+                "ORDER_SCOPE_INVALID",
+                "Storefront order management only admits Ecommerce orders.",
+                traceId));
+        }
 
         // Validate query
         var queryError = query.Validate();
@@ -187,6 +374,7 @@ public class AdminOrdersController : ControllerBase
     }
 
     [HttpGet("{orderId:guid}/checkout-attachments/{attachmentId:guid}/download")]
+    [Authorize(Roles = "Owner,Admin")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<IActionResult> DownloadCheckoutAttachment(
         [FromRoute] Guid orderId,
@@ -210,6 +398,10 @@ public class AdminOrdersController : ControllerBase
                 traceId,
                 cancellationToken);
 
+            Response.Headers.CacheControl = "private, no-store, max-age=0";
+            Response.Headers.Pragma = "no-cache";
+            Response.Headers["X-Content-Type-Options"] = "nosniff";
+            Response.Headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
             return File(result.Content, result.ContentType, result.FileName, enableRangeProcessing: false);
         }
         catch (AdminOrderNotFoundException)
@@ -397,6 +589,58 @@ public class AdminOrdersController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError, 
                 AdminApiErrorResponse.InternalError(traceId));
         }
+    }
+
+    private async Task<IActionResult> UpdateOrderPhoneAsync(
+        Guid orderId,
+        Func<Guid, string, Task<AdminPhoneRiskStatusDto>> update,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            var trust = await _phoneRiskProfileService.GetOrderCustomerTrustAsync(
+                validation.TenantId!.Value,
+                orderId,
+                cancellationToken);
+            if (trust == null)
+            {
+                return NotFound(AdminApiErrorResponse.OrderNotFound(traceId));
+            }
+
+            if (!trust.HasPhone)
+            {
+                return Conflict(new AdminApiErrorResponse(
+                    "ORDER_PHONE_UNAVAILABLE",
+                    "The order does not have an available customer phone number.",
+                    traceId));
+            }
+
+            return Ok(await update(validation.TenantId.Value, trust.PhoneNumber!));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new AdminApiErrorResponse("PHONE_NUMBER_INVALID", ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex,
+                "UpdateOrderPhone | TenantId: {TenantId} | OrderId: {OrderId} | Error | TraceId: {TraceId}",
+                validation.TenantId, orderId, traceId);
+            return StatusCode(StatusCodes.Status500InternalServerError, AdminApiErrorResponse.InternalError(traceId));
+        }
+    }
+
+    private Guid? GetCurrentUserId()
+    {
+        var claimValue = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        return Guid.TryParse(claimValue, out var userId) ? userId : null;
     }
 
     #region Header Validation

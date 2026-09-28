@@ -21,7 +21,7 @@ namespace PointOfSale.Tests;
 
 public sealed class DiscountValidationHardeningTests
 {
-    private static readonly InMemoryDatabaseRoot _sharedRoot = new();
+    private static readonly InMemoryDatabaseRoot _sharedRoot = SharedInMemoryDatabaseRoot.Instance;
     [Fact]
     public async Task CreateCoupon_NegativeDiscount_ReturnsBadRequest()
     {

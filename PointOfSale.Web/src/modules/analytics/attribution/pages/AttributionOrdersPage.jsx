@@ -33,17 +33,17 @@ import { useAttributionOrders } from '../hooks/useAttribution'
 import { useSettings } from '../../../../contexts/SettingsContext'
 
 const DATE_PERIODS = [
-    { value: 'today', label: 'Today' },
-    { value: 'yesterday', label: 'Yesterday' },
-    { value: 'last_7_days', label: 'Last 7 Days' },
-    { value: 'last_30_days', label: 'Last 30 Days' },
-    { value: 'this_month', label: 'This Month' },
-    { value: 'last_month', label: 'Last Month' }
+    { value: 'today', labelKey: 'attribution.periods.today' },
+    { value: 'yesterday', labelKey: 'attribution.periods.yesterday' },
+    { value: 'last_7_days', labelKey: 'attribution.periods.last7Days' },
+    { value: 'last_30_days', labelKey: 'attribution.periods.last30Days' },
+    { value: 'this_month', labelKey: 'attribution.periods.thisMonth' },
+    { value: 'last_month', labelKey: 'attribution.periods.lastMonth' }
 ]
 
 const ATTRIBUTION_MODELS = [
-    { value: 'LastTouch', label: 'Last Touch' },
-    { value: 'FirstTouch', label: 'First Touch' }
+    { value: 'LastTouch', labelKey: 'attribution.lastTouch' },
+    { value: 'FirstTouch', labelKey: 'attribution.firstTouch' }
 ]
 
 export default function AttributionOrdersPage() {
@@ -63,7 +63,7 @@ export default function AttributionOrdersPage() {
     const currentPeriod = DATE_PERIODS.find(p => p.value === period)
 
     const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleDateString('en-US', {
+        return new Date(dateString).toLocaleDateString(isRTL ? 'ar-EG' : 'en-US', {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
@@ -120,13 +120,13 @@ export default function AttributionOrdersPage() {
                         className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                     >
                         <span className="text-sm font-medium text-gray-700">
-                            {currentModel?.label}
+                            {t(currentModel?.labelKey)}
                         </span>
                         <ChevronDown size={16} className="text-gray-400" />
                     </button>
 
                     {showModelDropdown && (
-                        <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 rounded-lg shadow-lg z-10 w-40">
+                        <div className="absolute top-full mt-1 start-0 bg-white border border-gray-200 rounded-lg shadow-lg z-10 w-40">
                             {ATTRIBUTION_MODELS.map(m => (
                                 <button
                                     key={m.value}
@@ -134,9 +134,9 @@ export default function AttributionOrdersPage() {
                                         setModel(m.value)
                                         setShowModelDropdown(false)
                                     }}
-                                    className={`w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${model === m.value ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}`}
+                                    className={`w-full px-4 py-2.5 text-start text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${model === m.value ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}`}
                                 >
-                                    {m.label}
+                                    {t(m.labelKey)}
                                 </button>
                             ))}
                         </div>
@@ -154,13 +154,13 @@ export default function AttributionOrdersPage() {
                     >
                         <Calendar size={16} className="text-gray-400" />
                         <span className="text-sm font-medium text-gray-700">
-                            {currentPeriod?.label}
+                            {t(currentPeriod?.labelKey)}
                         </span>
                         <ChevronDown size={16} className="text-gray-400" />
                     </button>
 
                     {showPeriodDropdown && (
-                        <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 rounded-lg shadow-lg z-10 w-48">
+                        <div className="absolute top-full mt-1 start-0 bg-white border border-gray-200 rounded-lg shadow-lg z-10 w-48">
                             {DATE_PERIODS.map(p => (
                                 <button
                                     key={p.value}
@@ -168,9 +168,9 @@ export default function AttributionOrdersPage() {
                                         setPeriod(p.value)
                                         setShowPeriodDropdown(false)
                                     }}
-                                    className={`w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${period === p.value ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}`}
+                                    className={`w-full px-4 py-2.5 text-start text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${period === p.value ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}`}
                                 >
-                                    {p.label}
+                                    {t(p.labelKey)}
                                 </button>
                             ))}
                         </div>
@@ -178,8 +178,8 @@ export default function AttributionOrdersPage() {
                 </div>
 
                 {/* Count Badge */}
-                <div className="ml-auto text-sm text-gray-500">
-                    {data?.totalCount || 0} {t('attribution.ordersFound', 'orders')}
+                <div className="ms-auto text-sm text-gray-500">
+                    {t('attribution.ordersFound', { count: data?.totalCount || 0 })}
                 </div>
             </div>
 
@@ -226,22 +226,22 @@ export default function AttributionOrdersPage() {
                         <table className="w-full">
                             <thead>
                                 <tr className="bg-gray-50 border-b border-gray-100">
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <th className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                         {t('attribution.orderId', 'Order ID')}
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <th className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                         {t('attribution.date', 'Date')}
                                     </th>
-                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                                    <th className="px-4 py-3 text-end text-xs font-medium text-gray-500 uppercase">
                                         {t('attribution.revenue', 'Revenue')}
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <th className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                         {t('attribution.source', 'Source')}
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <th className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                         {t('attribution.medium', 'Medium')}
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                    <th className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                         {t('attribution.campaign', 'Campaign')}
                                     </th>
                                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
@@ -260,7 +260,7 @@ export default function AttributionOrdersPage() {
                                         <td className="px-4 py-3 text-sm text-gray-600">
                                             {formatDate(order.attributedAt)}
                                         </td>
-                                        <td className="px-4 py-3 text-right">
+                                        <td className="px-4 py-3 text-end">
                                             <span className="font-semibold text-gray-900">
                                                 {formatCurrency(order.orderValue)}
                                             </span>

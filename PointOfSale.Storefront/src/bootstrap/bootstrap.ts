@@ -32,7 +32,7 @@ import {
     isNetworkError,
     type BootstrapError
 } from './bootstrapErrors';
-import { useStoreConfigStore } from '@/store';
+import { hydrateCheckoutStateStorage, useStoreConfigStore } from '@/store';
 import { getThemePreviewToken } from '@/storefront/preview/themePreviewMode';
 import { resolveActiveTheme } from '@/storefront/themes/ThemeResolver';
 import {
@@ -162,6 +162,7 @@ export async function bootstrap(): Promise<BootstrapResult> {
             const config = await refreshStoreConfig();
 
             setCanonicalTenant(config.tenantId);
+            await hydrateCheckoutStateStorage();
             const sessionId = initializeSession();
 
             if (import.meta.env.DEV) {

@@ -352,6 +352,7 @@ beforeEach(() => {
     });
     vi.stubGlobal('document', {
         referrer: '',
+        cookie: 'csrf_token=csrf-test-value',
     });
     vi.stubGlobal('navigator', {
         userAgent: 'Vitest',
@@ -527,6 +528,7 @@ describe('commerce authority certification', () => {
                 headers: expect.objectContaining({
                     'X-Tenant-Id': TENANT_A,
                     'X-Session-Id': SESSION_A,
+                    'X-CSRF-Token': 'csrf-test-value',
                 }),
             })
         );

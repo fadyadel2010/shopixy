@@ -5,7 +5,14 @@ export interface CmsPage {
     title: string;
     contentType: CmsPageContentType;
     content: string | CmsPageBlock[];
+    schemaVersion: number;
     seo: CmsPageSeo;
+    requestedLanguage: 'en' | 'ar';
+    language: 'en' | 'ar';
+    fallbackApplied: boolean;
+    availableLanguages: Array<'en' | 'ar'>;
+    canonicalPath: string;
+    alternatePaths: Record<string, string>;
     updatedAtUtc: string;
     publishedAtUtc?: string | null;
 }
@@ -25,6 +32,10 @@ export interface CmsPageBlock {
 export interface CmsPageListItem {
     slug: string;
     title: string;
+    requestedLanguage: 'en' | 'ar';
+    language: 'en' | 'ar';
+    fallbackApplied: boolean;
+    availableLanguages: Array<'en' | 'ar'>;
     updatedAtUtc: string;
     publishedAtUtc?: string | null;
 }

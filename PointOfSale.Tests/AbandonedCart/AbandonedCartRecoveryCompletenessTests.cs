@@ -15,6 +15,7 @@ using PointOfSale.Infrastructure.Consumers.AbandonedCart;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Jobs;
+using PointOfSale.Tests.Infrastructure;
 using AbandonedCartEntity = PointOfSale.Core.Entities.AbandonedCart;
 
 namespace PointOfSale.Tests.AbandonedCart;
@@ -138,7 +139,7 @@ public sealed class AbandonedCartRecoveryCompletenessTests
         IAbandonedCartService cartService,
         IEventPublisher eventPublisher)
     {
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
         var databaseName = $"AbandonedCartRecoveryCompleteness_{Guid.NewGuid():N}";
         var dbContextOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName, databaseRoot)

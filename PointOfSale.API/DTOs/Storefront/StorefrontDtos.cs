@@ -1549,20 +1549,14 @@ public class ProductListQuery
     /// </summary>
     public string GetQueryHash()
     {
-        // Build deterministic string for hashing
-        var parts = new[]
-        {
-            $"p={Page}",
-            $"ps={PageSize}",
-            $"cat={CategoryId?.ToString("N") ?? "null"}",
-            $"active={IsActive}"
-        };
-        
-        var queryString = string.Join("&", parts);
-        
-        // Use simple hash for cache key (not cryptographic)
-        var hash = queryString.GetHashCode();
-        return Math.Abs(hash).ToString("X8");
+        return PointOfSale.Infrastructure.Redis.CacheKeyFilterNormalizer.NormalizeAndHash(
+            new[]
+            {
+                new KeyValuePair<string, string?>("active", IsActive ? "true" : "false"),
+                new KeyValuePair<string, string?>("category", CategoryId?.ToString("N") ?? "none")
+            },
+            Page,
+            PageSize);
     }
 }
 

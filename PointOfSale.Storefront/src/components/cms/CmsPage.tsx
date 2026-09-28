@@ -11,7 +11,7 @@ interface CmsPageProps {
 }
 
 export const CmsPageView: React.FC<CmsPageProps> = ({ slug, preview = false, previewToken = null }) => {
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
     const [page, setPage] = useState<CmsPage | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export const CmsPageView: React.FC<CmsPageProps> = ({ slug, preview = false, pre
             setError(null);
 
             try {
-                const data = await fetchCmsPage(slug, preview, previewToken);
+                const data = await fetchCmsPage(slug, preview, previewToken, language);
                 if (!cancelled) {
                     setPage(data);
                     applySeo(data, preview);
@@ -46,7 +46,7 @@ export const CmsPageView: React.FC<CmsPageProps> = ({ slug, preview = false, pre
         return () => {
             cancelled = true;
         };
-    }, [preview, previewToken, slug]);
+    }, [language, preview, previewToken, slug]);
 
     if (loading) {
         return (
@@ -72,7 +72,11 @@ export const CmsPageView: React.FC<CmsPageProps> = ({ slug, preview = false, pre
     }
 
     return (
-        <div className="bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_45%)]">
+        <div
+            lang={page.language}
+            dir={page.language === 'ar' ? 'rtl' : 'ltr'}
+            className="bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_45%)]"
+        >
             <div className="mx-auto max-w-5xl px-6 py-14">
                 <header className="rounded-[36px] border border-slate-200 bg-white/90 px-8 py-10 shadow-sm backdrop-blur">
                     {preview && (
@@ -225,6 +229,30 @@ function applySeo(page: CmsPage, preview: boolean): void {
     setMetaProperty('og:title', page.seo.metaTitle || page.title);
     setMetaProperty('og:description', page.seo.metaDescription || '');
     setMetaProperty('og:image', page.seo.openGraphImageUrl || '');
+    setLink('canonical', absoluteUrl(page.canonicalPath));
+    document.querySelectorAll('link[data-cms-hreflang]').forEach((element) => element.remove());
+    Object.entries(page.alternatePaths || {}).forEach(([hrefLang, path]) => {
+        const link = document.createElement('link');
+        link.rel = 'alternate';
+        link.hreflang = hrefLang;
+        link.href = absoluteUrl(path);
+        link.dataset.cmsHreflang = 'true';
+        document.head.appendChild(link);
+    });
+}
+
+function absoluteUrl(path: string): string {
+    return new URL(path || '/', window.location.origin).toString();
+}
+
+function setLink(rel: string, href: string): void {
+    let element = document.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`);
+    if (!element) {
+        element = document.createElement('link');
+        element.rel = rel;
+        document.head.appendChild(element);
+    }
+    element.href = href;
 }
 
 function setMeta(name: string, content: string): void {

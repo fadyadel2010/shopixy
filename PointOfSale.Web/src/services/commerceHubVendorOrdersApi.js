@@ -1,12 +1,15 @@
 import api from './api'
 import { useAuthStore } from '../store/authStore'
 import {
+    buildOrderQueryParams,
     buildTenantHeaders,
     confirmAdminReturnReceipt,
-    getAdminOrderDetails,
-    getAdminOrders,
     mapAdminOrdersError,
 } from './adminOrdersApi'
+import {
+    requireMarketplaceOrderLifecycleAuthority,
+    requireMarketplaceOrderLifecycleListAuthority,
+} from '../auth/marketplaceOrderLifecycleAuthority'
 import {
     requireBackendMarketplaceLineageAuthority,
     requireCurrentVendorOrderVisibilityAuthority,
@@ -117,8 +120,12 @@ export function requireCommerceHubVendorActionAuthority(authority, user, subOrde
 
 export async function getCommerceHubVendorOrders(filters, signal) {
     try {
-        const response = await getAdminOrders({ ...filters, source: 'Marketplace' }, signal)
-        return requireCommerceHubVendorOrderListAuthority(response, useAuthStore.getState().user)
+        const response = await api.get(`/commercehub/vendor-orders?${buildOrderQueryParams(filters).toString()}`, {
+            headers: buildTenantHeaders(),
+            signal,
+        })
+        const lifecycleAccepted = requireMarketplaceOrderLifecycleListAuthority(response.data)
+        return requireCommerceHubVendorOrderListAuthority(lifecycleAccepted, useAuthStore.getState().user)
     } catch (error) {
         throw mapAdminOrdersError(error, 'Unable to load CommerceHub vendor orders right now.')
     }
@@ -126,8 +133,12 @@ export async function getCommerceHubVendorOrders(filters, signal) {
 
 export async function getCommerceHubVendorOrder(subOrderId, signal) {
     try {
-        const order = await getAdminOrderDetails(subOrderId, signal)
-        return requireCommerceHubVendorOrderAuthority(order, useAuthStore.getState().user, subOrderId)
+        const response = await api.get(`/commercehub/vendor-orders/${subOrderId}`, {
+            headers: buildTenantHeaders(),
+            signal,
+        })
+        const lifecycleAccepted = requireMarketplaceOrderLifecycleAuthority(response.data)
+        return requireCommerceHubVendorOrderAuthority(lifecycleAccepted, useAuthStore.getState().user, subOrderId)
     } catch (error) {
         throw mapAdminOrdersError(error, 'Unable to load this CommerceHub vendor order right now.')
     }

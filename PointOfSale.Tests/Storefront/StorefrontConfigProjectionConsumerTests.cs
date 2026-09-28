@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -18,8 +17,6 @@ namespace PointOfSale.Tests.Storefront;
 
 public sealed class StorefrontConfigProjectionConsumerTests
 {
-    private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
-
     [Fact]
     public async Task ConsumePublishedEvent_ProjectsLiveConfig()
     {
@@ -325,9 +322,8 @@ public sealed class StorefrontConfigProjectionConsumerTests
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
-        var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .UseInMemoryDatabase(databaseName, SharedInMemoryDatabaseRoot.Instance)
             .Options;
 
         return new ApplicationDbContext(options, new TestTenantContext(tenantId));

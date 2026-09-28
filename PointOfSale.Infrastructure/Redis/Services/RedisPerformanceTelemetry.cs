@@ -20,6 +20,7 @@ public sealed class RedisPerformanceTelemetry
     public Histogram<double> ProjectionLagMs { get; }
     public Histogram<double> ReadLatencyMs { get; }
     public Histogram<double> WriteLatencyMs { get; }
+    public Counter<long> CacheWriteOutcomes { get; }
     public Counter<long> PatternInvalidations { get; }
 
     public RedisPerformanceTelemetry()
@@ -39,6 +40,7 @@ public sealed class RedisPerformanceTelemetry
         ProjectionLagMs = _meter.CreateHistogram<double>("redis.cache.projection_lag_ms", "ms", "Read-model projection lag at cache population time");
         ReadLatencyMs = _meter.CreateHistogram<double>("redis.cache.read_latency_ms", "ms", "Redis cache read latency");
         WriteLatencyMs = _meter.CreateHistogram<double>("redis.cache.write_latency_ms", "ms", "Redis cache write latency");
+        CacheWriteOutcomes = _meter.CreateCounter<long>("redis.cache.write_outcomes", "count", "Redis cache write outcomes");
         PatternInvalidations = _meter.CreateCounter<long>("redis.cache.pattern_invalidations", "count", "Redis cache pattern-based invalidations");
     }
 
@@ -64,6 +66,12 @@ public sealed class RedisPerformanceTelemetry
 
     public void RecordWriteLatency(string cacheType, TimeSpan latency) =>
         WriteLatencyMs.Record(latency.TotalMilliseconds, CreateTags(cacheType));
+
+    public void RecordWriteOutcome(string cacheType, string outcome) =>
+        CacheWriteOutcomes.Add(
+            1,
+            new KeyValuePair<string, object?>("cache_type", NormalizeCacheType(cacheType)),
+            new KeyValuePair<string, object?>("outcome", outcome));
 
     public void RecordPatternInvalidation(string pattern) =>
         PatternInvalidations.Add(

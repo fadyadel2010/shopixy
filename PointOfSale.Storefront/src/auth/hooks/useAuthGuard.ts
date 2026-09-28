@@ -9,6 +9,7 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore, selectAuthStatus, selectIsLoading } from '../store/authStore';
+import { resolveStorefrontReturnPath } from '../returnPath';
 
 export interface UseAuthGuardOptions {
     /** Redirect path for unauthenticated users (default: /login) */
@@ -93,7 +94,10 @@ export function useAuthGuard(options: UseAuthGuardOptions = {}): UseAuthGuardRet
 
         if (redirectIfAuthenticated && isAuthenticated) {
             // Redirect authenticated users away from login/register
-            const returnTo = new URLSearchParams(location.search).get('return') || authenticatedRedirectTo;
+            const returnTo = resolveStorefrontReturnPath(
+                new URLSearchParams(location.search).get('return'),
+                authenticatedRedirectTo
+            );
             navigate(returnTo, { replace: true });
             return;
         }

@@ -40,7 +40,8 @@ public interface ISeoService
         string slug,
         string? baseUrl,
         string correlationId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en");
 
     /// <summary>
     /// Gets breadcrumb trail for a product or category.

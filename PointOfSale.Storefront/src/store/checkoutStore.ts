@@ -55,6 +55,9 @@ const SENSITIVE_STORAGE_KEY = 'checkout-sensitive-session';
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 const AUTOSAVE_MAX_RETRIES = 3;
 const AUTOSAVE_RETRY_BASE_DELAY_MS = 750;
+const FAWRY_PROVIDER_CODE = 'FAWRY';
+const FAWRY_AUTHORITY_ERROR_CODE = 'FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE';
+const FAWRY_UNAVAILABLE_ERROR_KEY = 'checkout.errors.fawryUnavailable.message';
 
 // Checkout API endpoints
 const CHECKOUT_ENDPOINTS = {
@@ -951,6 +954,7 @@ function admitStorefrontShippingMethodList(payload: unknown, expectedTenantId: s
             tenantId,
             id,
             name,
+            nameAr: optionalShippingString(candidate.nameAr),
             description: optionalShippingString(candidate.description),
             price: requireShippingAmount(candidate.price, 'price'),
             currency,
@@ -1121,7 +1125,9 @@ function admitStorefrontPaymentMethodList(payload: unknown): PaymentMethodDto[] 
         });
     }
 
-    return admitted;
+    // Defense in depth for stale projections or cached API responses. Historical
+    // Fawry records remain readable elsewhere, but never enter a new checkout.
+    return admitted.filter((method) => method.code !== FAWRY_PROVIDER_CODE);
 }
 
 function admitStorefrontPaymentMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: PaymentMethodDto[] } {
@@ -1140,8 +1146,13 @@ function admitStorefrontPaymentMethods(payload: unknown): { status: CheckoutDepe
     const candidate = payload as { status?: unknown; paymentMethods?: unknown };
     const methods = admitStorefrontPaymentMethodList(candidate.paymentMethods);
 
+    const normalizedStatus = normalizeCheckoutDependencyStatus(
+        candidate.status,
+        methods.length > 0 ? 'AVAILABLE' : 'EMPTY'
+    );
+
     return {
-        status: normalizeCheckoutDependencyStatus(candidate.status, methods.length > 0 ? 'AVAILABLE' : 'EMPTY'),
+        status: normalizedStatus === 'AVAILABLE' && methods.length === 0 ? 'EMPTY' : normalizedStatus,
         methods,
     };
 }
@@ -2379,7 +2390,9 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         if (controller.signal.aborted || sequence !== paymentMethodsRequestSequence) return;
                         const admittedResponse = admitStorefrontPaymentMethods(response.data);
                         const methods = admittedResponse.methods;
-                        const currentPaymentMethodCode = get().selectedPaymentMethodCode || get().paymentMethod;
+                        const currentPaymentMethodCode = (
+                            get().selectedPaymentMethodCode || get().paymentMethod
+                        )?.trim().toUpperCase() || null;
                         const previousMethods = get().paymentMethods;
                         const previousStaleSelection = get().stalePaymentSelection;
                         const availableMethodCodes = methods
@@ -2402,7 +2415,9 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                                     previousMethods.find((method) => method.code === currentPaymentMethodCode)?.displayName ||
                                     previousStaleSelection?.label ||
                                     currentPaymentMethodCode,
-                                message: STALE_SELECTION_ERROR_KEY,
+                                message: currentPaymentMethodCode === FAWRY_PROVIDER_CODE
+                                    ? FAWRY_UNAVAILABLE_ERROR_KEY
+                                    : STALE_SELECTION_ERROR_KEY,
                             }
                             : null;
                         const shouldKeepManualWalletState =
@@ -2466,11 +2481,19 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         stalePaymentSelection: {
                             value: normalizedCode,
                             label: normalizedCode,
-                            message: STALE_SELECTION_ERROR_KEY,
+                            message: normalizedCode === FAWRY_PROVIDER_CODE
+                                ? FAWRY_UNAVAILABLE_ERROR_KEY
+                                : STALE_SELECTION_ERROR_KEY,
                         },
                         manualWalletType: null,
                         manualWalletPhoneNumber: '',
                         manualWalletProofFileKey: null,
+                        error: normalizedCode === FAWRY_PROVIDER_CODE
+                            ? FAWRY_UNAVAILABLE_ERROR_KEY
+                            : null,
+                        errorCode: normalizedCode === FAWRY_PROVIDER_CODE
+                            ? FAWRY_AUTHORITY_ERROR_CODE
+                            : null,
                     });
                     emitCheckoutSelectionInvalidated('payment', 'client_selection_not_admitted', normalizedCode);
                     get().autosaveCheckoutSession();
@@ -2489,6 +2512,8 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                     manualWalletProofFileKey: admittedMethod.code === 'MANUALWALLET'
                         ? state.manualWalletProofFileKey
                         : null,
+                    error: null,
+                    errorCode: null,
                 }));
                 get().autosaveCheckoutSession();
             },
@@ -2887,6 +2912,16 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         return false;
                     }
 
+                    const stalePaymentMethodCode = latestState.stalePaymentSelection?.value?.toUpperCase();
+                    if (stalePaymentMethodCode === FAWRY_PROVIDER_CODE) {
+                        set({
+                            isSubmitting: false,
+                            error: FAWRY_UNAVAILABLE_ERROR_KEY,
+                            errorCode: FAWRY_AUTHORITY_ERROR_CODE,
+                        });
+                        return false;
+                    }
+
                     if (!latestState.paymentMethod) {
                         set({ isSubmitting: false, error: 'checkout.paymentMethodRequired' });
                         return false;
@@ -3157,6 +3192,8 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                             errorMessage = 'Please enter a valid wallet phone number.';
                         } else if (errorCode === 'MANUAL_WALLET_PROOF_REQUIRED') {
                             errorMessage = 'Please upload a transfer proof before placing the order.';
+                        } else if (errorCode === FAWRY_AUTHORITY_ERROR_CODE) {
+                            errorMessage = FAWRY_UNAVAILABLE_ERROR_KEY;
                         } else if (errorCode === 'CHECKOUT_IDEMPOTENCY_CONFLICT') {
                             errorMessage = axiosError.response?.data?.message ||
                                 'Your checkout details have changed. Please try again.';
@@ -3389,6 +3426,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
             name: STORAGE_KEY,
             version: 5,
             storage: createJSONStorage(() => checkoutStateStorage),
+            skipHydration: true,
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<CheckoutState>;
 
@@ -3411,13 +3449,19 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
     )
 );
 
-const sensitiveCheckoutState = readSensitiveCheckoutSessionStorage();
-if (sensitiveCheckoutState) {
-    useCheckoutStore.setState({
-        checkoutDataCartId: sensitiveCheckoutState.cartId,
-        address: cloneShippingAddress(sensitiveCheckoutState.address),
-        customFieldValues: sensitiveCheckoutState.customFieldValues,
-    });
+export async function hydrateCheckoutStateStorage(): Promise<void> {
+    // Store modules load before bootstrap resolves the canonical tenant, so hydration
+    // must be deferred until tenant-scoped storage keys are authoritative.
+    const sensitiveCheckoutState = readSensitiveCheckoutSessionStorage();
+    await useCheckoutStore.persist.rehydrate();
+
+    if (sensitiveCheckoutState) {
+        useCheckoutStore.setState({
+            checkoutDataCartId: sensitiveCheckoutState.cartId,
+            address: cloneShippingAddress(sensitiveCheckoutState.address),
+            customFieldValues: sensitiveCheckoutState.customFieldValues,
+        });
+    }
 }
 
 useCheckoutStore.subscribe((state, prevState) => {

@@ -741,7 +741,8 @@ public sealed class EventOutboxConsistencyArchitectureTests
         Assert.Contains("filter.Lte(p => p.LastEventOccurredAtUtc, eventOccurredAtUtc)", productRepository, StringComparison.Ordinal);
         Assert.Contains("filter.Lt(p => p.LastEventVersion, eventVersion)", productRepository, StringComparison.Ordinal);
         Assert.Contains("sqlProjection.LastEventOccurredAtUtc = request.EventOccurredAtUtc", productProjectionWriter, StringComparison.Ordinal);
-        Assert.Contains("sqlProjection.LastEventVersion = request.EventVersion", productProjectionWriter, StringComparison.Ordinal);
+        Assert.Contains("ProductEventVersionHelper.ToProductEventVersion(sqlProjection.ProductGeneration)", productProjectionWriter, StringComparison.Ordinal);
+        Assert.Contains("sqlProjection.LastEventVersion = authoritativeVersion", productProjectionWriter, StringComparison.Ordinal);
         Assert.Contains("IStorefrontProductProjectionMutationBoundary", productProjectionWriter, StringComparison.Ordinal);
         Assert.Contains("StorefrontProductProjectionMutationKind.ReviewedVisibilityTombstone", productProjectionWriter, StringComparison.Ordinal);
         Assert.Contains("TombstoneIfFreshAsync", productMutationBoundary, StringComparison.Ordinal);

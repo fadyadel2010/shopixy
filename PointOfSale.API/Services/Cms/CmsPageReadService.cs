@@ -15,22 +15,26 @@ public interface ICmsPageReadService
     Task<CmsPageDto?> GetPublishedPageAsync(
         Guid tenantId,
         string slug,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en");
 
     Task<CmsPageDto?> GetPreviewPageAsync(
         Guid tenantId,
         string slug,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en");
 
     Task<CmsPageDto?> GetPreviewPageByIdAsync(
         Guid tenantId,
         Guid pageGroupId,
         int? pageVersion = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en");
 
     Task<IReadOnlyList<CmsPageListItemDto>> ListPublishedPagesAsync(
         Guid tenantId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en");
 }
 
 public sealed class CmsPageReadService : ICmsPageReadService
@@ -54,31 +58,35 @@ public sealed class CmsPageReadService : ICmsPageReadService
     public async Task<CmsPageDto?> GetPublishedPageAsync(
         Guid tenantId,
         string slug,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en")
     {
         slug = NormalizeSlug(slug);
         var page = await LoadCurrentPublishedPageBySlugAsync(tenantId, slug, cancellationToken);
-        return page == null ? null : MapPageWithSafeFallback(page);
+        return page == null ? null : MapPageWithSafeFallback(page, requestedLanguage);
     }
 
     public async Task<CmsPageDto?> GetPreviewPageAsync(
         Guid tenantId,
         string slug,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en")
     {
         slug = NormalizeSlug(slug);
         var tenantPreview = await LoadCurrentPageBySlugAsync(tenantId, slug, preferDraft: true, cancellationToken);
-        return tenantPreview == null ? null : MapPageWithSafeFallback(tenantPreview);
+        return tenantPreview == null ? null : MapPageWithSafeFallback(tenantPreview, requestedLanguage);
     }
 
     public async Task<CmsPageDto?> GetPreviewPageByIdAsync(
         Guid tenantId,
         Guid pageGroupId,
         int? pageVersion = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en")
     {
         var query = _dbContext.CmsPages
             .AsNoTracking()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => item.PageGroupId == pageGroupId)
             .Where(item => !item.IsDeleted && (item.IsDraft || item.IsPublished));
@@ -93,24 +101,30 @@ public sealed class CmsPageReadService : ICmsPageReadService
             .ThenByDescending(item => item.Version)
             .FirstOrDefaultAsync(cancellationToken);
 
-        return page == null ? null : MapPageWithSafeFallback(page);
+        return page == null ? null : MapPageWithSafeFallback(page, requestedLanguage);
     }
 
     public async Task<IReadOnlyList<CmsPageListItemDto>> ListPublishedPagesAsync(
         Guid tenantId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string requestedLanguage = "en")
     {
         var pages = await LoadCurrentPublishedPagesAsync(tenantId, cancellationToken);
 
         return pages
-            .OrderBy(page => page.Title, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(page => page.Slug, StringComparer.OrdinalIgnoreCase)
-            .Select(page => new CmsPageListItemDto
+            .Select(page => (Page: page, Resolved: ResolveTranslation(page, requestedLanguage)))
+            .OrderBy(item => item.Resolved.Translation.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Page.Slug, StringComparer.OrdinalIgnoreCase)
+            .Select(item => new CmsPageListItemDto
             {
-                Slug = page.Slug,
-                Title = page.Title,
-                UpdatedAtUtc = page.UpdatedAt,
-                PublishedAtUtc = page.PublishedAt
+                Slug = item.Page.Slug,
+                Title = item.Resolved.Translation.Title,
+                RequestedLanguage = item.Resolved.RequestedLanguage,
+                Language = item.Resolved.Language,
+                FallbackApplied = item.Resolved.FallbackApplied,
+                AvailableLanguages = item.Resolved.AvailableLanguages,
+                UpdatedAtUtc = item.Page.UpdatedAt,
+                PublishedAtUtc = item.Page.PublishedAt
             })
             .ToList();
     }
@@ -128,6 +142,7 @@ public sealed class CmsPageReadService : ICmsPageReadService
         return await _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => !item.IsDeleted)
             .Where(item => item.IsPublished && !item.IsDraft)
@@ -150,6 +165,7 @@ public sealed class CmsPageReadService : ICmsPageReadService
         var sqlPages = await _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => !item.IsDeleted)
             .Where(item => item.IsPublished && !item.IsDraft)
@@ -188,6 +204,7 @@ public sealed class CmsPageReadService : ICmsPageReadService
     {
         var query = _dbContext.CmsPages
             .AsNoTracking()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId)
             .Where(item => !item.IsDeleted)
             .Where(item => item.Slug == slug)
@@ -249,22 +266,31 @@ public sealed class CmsPageReadService : ICmsPageReadService
         }
     }
 
-    private CmsPageDto MapPageWithSafeFallback(CmsPage page)
+    private CmsPageDto MapPageWithSafeFallback(CmsPage page, string requestedLanguage)
     {
+        var resolved = ResolveTranslation(page, requestedLanguage);
+        var translation = resolved.Translation;
         try
         {
             return new CmsPageDto
             {
                 Slug = page.Slug,
-                Title = page.Title,
-                ContentType = page.ContentType,
-                Content = ParseContent(page.ContentType, page.Content),
+                Title = translation.Title,
+                ContentType = translation.ContentType,
+                Content = ParseContent(translation.ContentType, translation.Content),
+                SchemaVersion = translation.SchemaVersion,
+                RequestedLanguage = resolved.RequestedLanguage,
+                Language = resolved.Language,
+                FallbackApplied = resolved.FallbackApplied,
+                AvailableLanguages = resolved.AvailableLanguages,
+                CanonicalPath = resolved.Language == "ar" ? $"/ar/pages/{page.Slug}" : $"/pages/{page.Slug}",
+                AlternatePaths = BuildAlternatePaths(page.Slug, resolved.AvailableLanguages),
                 Seo = new CmsPageSeoDto
                 {
-                    MetaTitle = page.MetaTitle,
-                    MetaDescription = page.MetaDescription,
-                    MetaKeywords = page.MetaKeywords,
-                    OpenGraphImageUrl = page.OpenGraphImageUrl
+                    MetaTitle = translation.MetaTitle,
+                    MetaDescription = translation.MetaDescription,
+                    MetaKeywords = translation.MetaKeywords,
+                    OpenGraphImageUrl = translation.OpenGraphImageUrl
                 },
                 UpdatedAtUtc = page.UpdatedAt,
                 PublishedAtUtc = page.PublishedAt
@@ -282,21 +308,88 @@ public sealed class CmsPageReadService : ICmsPageReadService
             return new CmsPageDto
             {
                 Slug = page.Slug,
-                Title = page.Title,
-                ContentType = page.ContentType,
-                Content = GetFallbackContent(page.ContentType),
+                Title = translation.Title,
+                ContentType = translation.ContentType,
+                Content = GetFallbackContent(translation.ContentType),
+                SchemaVersion = translation.SchemaVersion,
+                RequestedLanguage = resolved.RequestedLanguage,
+                Language = resolved.Language,
+                FallbackApplied = resolved.FallbackApplied,
+                AvailableLanguages = resolved.AvailableLanguages,
+                CanonicalPath = resolved.Language == "ar" ? $"/ar/pages/{page.Slug}" : $"/pages/{page.Slug}",
+                AlternatePaths = BuildAlternatePaths(page.Slug, resolved.AvailableLanguages),
                 Seo = new CmsPageSeoDto
                 {
-                    MetaTitle = page.MetaTitle,
-                    MetaDescription = page.MetaDescription,
-                    MetaKeywords = page.MetaKeywords,
-                    OpenGraphImageUrl = page.OpenGraphImageUrl
+                    MetaTitle = translation.MetaTitle,
+                    MetaDescription = translation.MetaDescription,
+                    MetaKeywords = translation.MetaKeywords,
+                    OpenGraphImageUrl = translation.OpenGraphImageUrl
                 },
                 UpdatedAtUtc = page.UpdatedAt,
                 PublishedAtUtc = page.PublishedAt
             };
         }
     }
+
+    private static ResolvedTranslation ResolveTranslation(CmsPage page, string requestedLanguage)
+    {
+        requestedLanguage = PointOfSale.API.Localization.StorefrontLanguageResolver.Normalize(requestedLanguage);
+        var english = page.Translations.FirstOrDefault(item => item.Locale == "en")
+            ?? new CmsPageTranslation
+            {
+                CmsPageVersionId = page.Id,
+                TenantId = page.TenantId,
+                Locale = "en",
+                Title = page.Title,
+                Content = page.Content,
+                ContentType = page.ContentType,
+                SchemaVersion = page.SchemaVersion,
+                MetaTitle = page.MetaTitle,
+                MetaDescription = page.MetaDescription,
+                MetaKeywords = page.MetaKeywords,
+                OpenGraphImageUrl = page.OpenGraphImageUrl
+            };
+        var arabic = page.Translations.FirstOrDefault(item => item.Locale == "ar" && IsComplete(item));
+        var selected = requestedLanguage == "ar" && arabic != null ? arabic : english;
+        var language = selected.Locale;
+        var availableLanguages = arabic == null ? new List<string> { "en" } : new List<string> { "en", "ar" };
+
+        return new ResolvedTranslation(
+            requestedLanguage,
+            language,
+            requestedLanguage != language,
+            availableLanguages,
+            selected);
+    }
+
+    private static bool IsComplete(CmsPageTranslation translation)
+    {
+        return !string.IsNullOrWhiteSpace(translation.Title) &&
+               !string.IsNullOrWhiteSpace(translation.Content) &&
+               translation.SchemaVersion > 0;
+    }
+
+    private static Dictionary<string, string> BuildAlternatePaths(string slug, IReadOnlyCollection<string> languages)
+    {
+        var paths = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["en"] = $"/pages/{slug}",
+            ["x-default"] = $"/pages/{slug}"
+        };
+        if (languages.Contains("ar"))
+        {
+            paths["ar"] = $"/ar/pages/{slug}";
+        }
+
+        return paths;
+    }
+
+    private sealed record ResolvedTranslation(
+        string RequestedLanguage,
+        string Language,
+        bool FallbackApplied,
+        List<string> AvailableLanguages,
+        CmsPageTranslation Translation);
 
     public static JsonElement ParseContent(CmsPageContentType contentType, string content)
     {

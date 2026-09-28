@@ -77,6 +77,7 @@ public class CmsPageProjectionConsumer :
         var pageQuery = _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
+            .Include(item => item.Translations)
             .Where(item => item.TenantId == tenantId);
 
         // Use Slug for legacy pages (PageGroupId == Guid.Empty), otherwise use PageGroupId
@@ -540,28 +541,63 @@ public class CmsPageProjectionConsumer :
         DateTime eventOccurredAtUtc,
         int eventVersion)
     {
+        var translations = page.Translations
+            .Where(translation => translation.Locale is "en" or "ar")
+            .ToDictionary(
+                translation => translation.Locale,
+                translation => new StorefrontPageTranslationDocument
+                {
+                    Title = translation.Title,
+                    ContentType = translation.ContentType,
+                    Content = translation.Content,
+                    SchemaVersion = translation.SchemaVersion,
+                    Seo = new CmsPageSeo
+                    {
+                        MetaTitle = translation.MetaTitle ?? translation.Title,
+                        MetaDescription = translation.MetaDescription ?? string.Empty,
+                        MetaKeywords = translation.MetaKeywords,
+                        OpenGraphImageUrl = translation.OpenGraphImageUrl,
+                        NoIndex = false
+                    }
+                },
+                StringComparer.Ordinal);
+
+        if (!translations.ContainsKey("en"))
+        {
+            translations["en"] = new StorefrontPageTranslationDocument
+            {
+                Title = page.Title,
+                ContentType = page.ContentType,
+                Content = page.Content,
+                SchemaVersion = page.SchemaVersion,
+                Seo = new CmsPageSeo
+                {
+                    MetaTitle = page.MetaTitle ?? page.Title,
+                    MetaDescription = page.MetaDescription ?? string.Empty,
+                    MetaKeywords = page.MetaKeywords,
+                    OpenGraphImageUrl = page.OpenGraphImageUrl,
+                    NoIndex = false
+                }
+            };
+        }
+
+        var english = translations["en"];
         return new StorefrontPageDocument
         {
             TenantId = page.TenantId,
             PageGroupId = page.PageGroupId,
             Slug = page.Slug,
-            Title = page.Title,
-            ContentType = page.ContentType,
-            Content = page.Content ?? string.Empty,
-            Seo = new CmsPageSeo
-            {
-                MetaTitle = page.MetaTitle ?? page.Title,
-                MetaDescription = page.MetaDescription ?? string.Empty,
-                MetaKeywords = page.MetaKeywords,
-                OpenGraphImageUrl = page.OpenGraphImageUrl,
-                NoIndex = false
-            },
+            Title = english.Title,
+            ContentType = english.ContentType,
+            Content = english.Content,
+            Seo = english.Seo,
+            Translations = translations,
             Sections = new List<CmsPageSection>(),
             IsPublished = page.IsPublished,
             DisplayOrder = 0,
             UpdatedAt = page.UpdatedAt,
             PublishedAt = page.PublishedAt,
-            SchemaVersion = page.SchemaVersion,
+            SchemaVersion = english.SchemaVersion,
             LastEventId = eventId,
             LastEventOccurredAtUtc = eventOccurredAtUtc,
             LastEventVersion = eventVersion

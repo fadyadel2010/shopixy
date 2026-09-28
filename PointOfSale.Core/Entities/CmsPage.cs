@@ -24,4 +24,5 @@ public sealed class CmsPage : ITenantOwned
     public string? OpenGraphImageUrl { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public ICollection<CmsPageTranslation> Translations { get; set; } = new List<CmsPageTranslation>();
 }

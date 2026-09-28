@@ -14,6 +14,11 @@ public interface IPhoneRiskProfileService
 
     Task<bool> HasReportedSpamAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken = default);
 
+    Task<AdminOrderCustomerTrustDto?> GetOrderCustomerTrustAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken = default);
+
     Task<AdminPhoneRiskStatusDto> BlockAsync(
         Guid tenantId,
         string phoneNumber,
@@ -29,7 +34,6 @@ public interface IPhoneRiskProfileService
     Task<AdminPhoneRiskStatusDto> ReportSpamAsync(
         Guid tenantId,
         Guid orderId,
-        string phoneNumber,
         Guid? reportedByUserId,
         CancellationToken cancellationToken = default);
 

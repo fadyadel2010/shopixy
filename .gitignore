@@ -166,3 +166,5 @@ PointOfSale.WhatsApp.Baileys/auth_states/
 # -----------------------------------------------------------------------------
 *.local.env
 *.secret
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

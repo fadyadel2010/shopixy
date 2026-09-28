@@ -16,6 +16,7 @@ using PointOfSale.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.API.Services.PhoneRisk;
+using Npgsql;
 
 namespace PointOfSale.API.Services.Storefront;
 
@@ -197,14 +198,14 @@ public class StorefrontAuthService : IStorefrontAuthService
             };
         }
 
-        // Validate password strength (basic)
-        if (request.Password.Length < 8)
+        // Keep registration policy aligned with password reset/account changes and the visible UI.
+        if (!IsStrongPassword(request.Password))
         {
             return new StorefrontAuthResult
             {
                 Success = false,
                 Error = "WEAK_PASSWORD",
-                Message = "Password must be at least 8 characters"
+                Message = "Password must be at least 8 characters and include uppercase, lowercase, and a number"
             };
         }
 
@@ -309,6 +310,22 @@ public class StorefrontAuthService : IStorefrontAuthService
                     RefreshToken = string.Empty,
                     ExpiresAt = DateTime.UtcNow
                 }
+            };
+        }
+        catch (DbUpdateException ex) when (IsRegistrationEmailUniquenessViolation(ex))
+        {
+            _logger.LogWarning(
+                "[StorefrontAuth] {Action} rejected duplicate email race | TenantId: {TenantId} | Email: {Email} | TraceId: {TraceId}",
+                "REGISTRATION",
+                tenantId,
+                MaskEmail(normalizedEmail),
+                traceId);
+
+            return new StorefrontAuthResult
+            {
+                Success = false,
+                Error = "EMAIL_EXISTS",
+                Message = "An account with this email already exists"
             };
         }
         catch (Exception ex)
@@ -683,6 +700,19 @@ public class StorefrontAuthService : IStorefrontAuthService
 
         return await _phoneRiskProfileService.IsBlockedAsync(tenantId, phone, cancellationToken);
     }
+
+    private static bool IsStrongPassword(string password) =>
+        password.Length >= 8 &&
+        password.Any(char.IsUpper) &&
+        password.Any(char.IsLower) &&
+        password.Any(char.IsDigit);
+
+    private static bool IsRegistrationEmailUniquenessViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_OnlineCustomers_TenantId_Email"
+        };
 
     private static string MaskEmail(string? email)
     {

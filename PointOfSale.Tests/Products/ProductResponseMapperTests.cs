@@ -28,6 +28,43 @@ namespace PointOfSale.Tests.Products;
 public sealed class ProductResponseMapperTests
 {
     [Fact]
+    public void ToResponseDto_UsesOrderedCanonicalImageMediaBeforeLegacyImages()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var product = new Product
+        {
+            Id = productId,
+            TenantId = tenantId,
+            CategoryId = Guid.NewGuid(),
+            Name = "Media product",
+            Images = "https://legacy.example.test/image.jpg"
+        };
+        product.Media.Add(new ProductMedia
+        {
+            Id = Guid.NewGuid(), TenantId = tenantId, ProductId = productId,
+            MediaType = "image", Url = "/media/second.png", Position = 2,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        product.Media.Add(new ProductMedia
+        {
+            Id = Guid.NewGuid(), TenantId = tenantId, ProductId = productId,
+            MediaType = "video", Url = "/media/video.mp4", Position = 1,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        product.Media.Add(new ProductMedia
+        {
+            Id = Guid.NewGuid(), TenantId = tenantId, ProductId = productId,
+            MediaType = "image", Url = "/media/primary.png", Position = 1,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        var response = product.ToResponseDto();
+
+        Assert.Equal("/media/primary.png,/media/second.png", response.Images);
+    }
+
+    [Fact]
     public void ToResponseDto_ExcludesDeletedAndSupersededVariants_AndReportsAvailableStock()
     {
         var tenantId = Guid.NewGuid();

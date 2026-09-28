@@ -1,0 +1,82 @@
+{
+  "date": "2026-09-27",
+  "status": "PASS_WITH_UNRELATED_READINESS_FAILURES",
+  "secretValuesIncludedInArtifactsOrOutput": false,
+  "dell": {
+    "environment": "QA",
+    "deployment": {
+      "apiProcessId": 211119,
+      "processOwner": "fady",
+      "processGroup": "fady",
+      "executable": "/home/fady/.dotnet/dotnet",
+      "workingDirectory": "/home/fady/ShopixyQA/PointOfSale/PointOfSale.API",
+      "launchScript": "/home/fady/ShopixyQA/deploy-qa.sh",
+      "launchMode": "direct dotnet process with inherited environment",
+      "systemdServiceDetected": false,
+      "containerDetected": false,
+      "pidFile": "/home/fady/.deploy-qa/qa-api.pid",
+      "configurationDestination": "replacement API process environment",
+      "configurationPersistentAcrossFutureLauncherRestarts": false
+    },
+    "requiredR2Settings": {
+      "R2_ACCOUNT_ID": "present",
+      "R2_ACCESS_KEY_ID": "present",
+      "R2_SECRET_ACCESS_KEY": "present",
+      "R2_BUCKET": "present",
+      "R2_SERVICE_URL": "present",
+      "R2_PUBLIC_URL": "absent-optional"
+    },
+    "provisioning": {
+      "signedR2Preflight": "passed",
+      "firstReplacement": "failed startup validation",
+      "firstReplacementFailure": "Optional R2_PUBLIC_URL was incorrectly treated as a placeholder when omitted.",
+      "firstRollback": "succeeded",
+      "validatorFixApplied": true,
+      "validatorRegressionTests": {
+        "passed": 2,
+        "failed": 0
+      },
+      "releaseBuild": "passed with zero errors",
+      "secondReplacement": "succeeded",
+      "apiOnlyRestart": true,
+      "pidFileUpdatedAfterLiveHealth": true,
+      "databaseRedisKubernetesOrOtherServicesRestarted": false
+    },
+    "health": {
+      "liveHttpStatus": 200,
+      "readyHttpStatus": 503,
+      "r2HealthStatus": "Healthy",
+      "r2HealthDescription": "Cloudflare R2 is reachable.",
+      "unrelatedUnhealthyEntries": [
+        "projection_outbox",
+        "stripe_operational_readiness",
+        "manual_payment_operational_readiness"
+      ]
+    },
+    "authenticatedProductImageVerification": {
+      "existingTenantReused": true,
+      "existingProductReused": true,
+      "imageFormat": "PNG",
+      "productListHttpStatus": 200,
+      "binaryUploadHttpStatus": 200,
+      "mediaRegistrationHttpStatus": 201,
+      "freshMediaReloadHttpStatus": 200,
+      "metadataPersistenceVerified": true,
+      "authenticatedDownloadHttpStatus": 200,
+      "exactBytePersistenceVerified": true
+    },
+    "cleanup": {
+      "interactiveProvisionerRemoved": true,
+      "buildStagingRemoved": true,
+      "binaryBackupRemovedAfterVerification": true,
+      "unrelatedFilesPreserved": true
+    }
+  },
+  "sourceChange": {
+    "requiredByVerifiedDefect": true,
+    "productionFile": "PointOfSale.API/Configuration/SensitiveConfigurationValidator.cs",
+    "testFile": "PointOfSale.Tests/Security/SensitiveConfigurationValidatorTests.cs",
+    "summary": "Only non-empty optional R2 values are checked for placeholder markers."
+  },
+  "finalDecision": "PASS - Dell QA uses Cloudflare R2, R2 health is Healthy, and authenticated product-image upload, media registration, fresh reload, and exact-byte download all succeeded. Overall readiness remains HTTP 503 only because of unrelated dependency checks."
+}

@@ -28,7 +28,7 @@ public sealed class ManualWalletProofCleanupJobTests
         var paymentIntentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         var databaseName = $"manual-wallet-proof-cleanup-{Guid.NewGuid():N}";
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
 
         await using var dbContext = CreateDbContext(tenantId, databaseName, databaseRoot);
 
@@ -115,7 +115,7 @@ public sealed class ManualWalletProofCleanupJobTests
         var tenantId = Guid.NewGuid();
         var checkoutSessionId = Guid.NewGuid();
         var databaseName = $"manual-wallet-session-cleanup-{Guid.NewGuid():N}";
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
         var objectKey = $"tenants/{tenantId:D}/manual-wallet-proofs/checkout-sessions/{checkoutSessionId:D}/proof.png";
 
         await using var dbContext = CreateDbContext(tenantId, databaseName, databaseRoot);

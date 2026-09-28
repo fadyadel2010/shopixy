@@ -12,11 +12,10 @@ public sealed class AdminCmsPageRequest
     public int SchemaVersion { get; set; } = 1;
     public int? ExpectedVersion { get; set; }
     public AdminCmsPageSeoRequest Seo { get; set; } = new();
+    public Dictionary<string, AdminCmsPageTranslationRequest?>? Translations { get; set; }
 
     public string? Validate(bool requireSlug = true)
     {
-        Seo ??= new AdminCmsPageSeoRequest();
-
         if (requireSlug && string.IsNullOrWhiteSpace(Slug))
         {
             return "Slug is required";
@@ -27,27 +26,92 @@ public sealed class AdminCmsPageRequest
             return "Slug must be less than 160 characters";
         }
 
-        if (string.IsNullOrWhiteSpace(Title))
+        if (Translations != null)
         {
-            return "Title is required";
+            var normalizedLocales = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (locale, translation) in Translations)
+            {
+                var normalizedLocale = locale.Trim().ToLowerInvariant();
+                if (normalizedLocale is not ("en" or "ar"))
+                {
+                    return $"Unsupported CMS translation locale '{locale}'";
+                }
+
+                if (!normalizedLocales.Add(normalizedLocale))
+                {
+                    return $"Duplicate CMS translation locale '{normalizedLocale}'";
+                }
+
+                if (translation != null)
+                {
+                    var translationError = translation.Validate(normalizedLocale);
+                    if (translationError != null)
+                    {
+                        return translationError;
+                    }
+                }
+            }
+
+            if (!Translations.Any(item =>
+                    string.Equals(item.Key.Trim(), "en", StringComparison.OrdinalIgnoreCase) &&
+                    item.Value != null))
+            {
+                return "English translation is required";
+            }
+
+            return null;
         }
 
-        if (Title.Length > 200)
+        Seo ??= new AdminCmsPageSeoRequest();
+        return ValidateLegacyTranslation(Title, Content, SchemaVersion, "English");
+    }
+
+    internal static string? ValidateLegacyTranslation(
+        string title,
+        JsonElement content,
+        int schemaVersion,
+        string languageName)
+    {
+        if (string.IsNullOrWhiteSpace(title))
         {
-            return "Title must be less than 200 characters";
+            return $"{languageName} title is required";
         }
 
-        if (SchemaVersion < 1)
+        if (title.Length > 200)
         {
-            return "Schema version must be greater than zero";
+            return $"{languageName} title must be less than 200 characters";
         }
 
-        if (Content.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        if (schemaVersion < 1)
         {
-            return "Content is required";
+            return $"{languageName} schema version must be greater than zero";
+        }
+
+        if (content.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return $"{languageName} content is required";
         }
 
         return null;
+    }
+}
+
+public sealed class AdminCmsPageTranslationRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public CmsPageContentType ContentType { get; set; } = CmsPageContentType.RichText;
+    public JsonElement Content { get; set; }
+    public int SchemaVersion { get; set; } = 1;
+    public AdminCmsPageSeoRequest Seo { get; set; } = new();
+
+    public string? Validate(string locale)
+    {
+        Seo ??= new AdminCmsPageSeoRequest();
+        return AdminCmsPageRequest.ValidateLegacyTranslation(
+            Title,
+            Content,
+            SchemaVersion,
+            locale == "ar" ? "Arabic" : "English");
     }
 }
 
@@ -74,6 +138,7 @@ public sealed class AdminCmsPageListItemResponse
     public int? PublishedVersion { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
+    public List<string> AvailableLanguages { get; set; } = new();
 }
 
 public sealed class AdminCmsPageResponse
@@ -88,6 +153,7 @@ public sealed class AdminCmsPageResponse
     public DateTime? PublishedAtUtc { get; set; }
     public AdminCmsPageVersionResponse? Draft { get; set; }
     public AdminCmsPageVersionResponse? Published { get; set; }
+    public List<string> AvailableLanguages { get; set; } = new();
 }
 
 public sealed class AdminCmsPageVersionResponse
@@ -103,6 +169,16 @@ public sealed class AdminCmsPageVersionResponse
     public DateTime UpdatedAtUtc { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
     public AdminCmsPageSeoRequest Seo { get; set; } = new();
+    public Dictionary<string, AdminCmsPageTranslationResponse> Translations { get; set; } = new();
+}
+
+public sealed class AdminCmsPageTranslationResponse
+{
+    public string Title { get; set; } = string.Empty;
+    public CmsPageContentType ContentType { get; set; } = CmsPageContentType.RichText;
+    public JsonElement Content { get; set; }
+    public int SchemaVersion { get; set; }
+    public AdminCmsPageSeoRequest Seo { get; set; } = new();
 }
 
 public sealed class AdminCmsPreviewAccessResponse
@@ -111,6 +187,7 @@ public sealed class AdminCmsPreviewAccessResponse
     public string PreviewToken { get; set; } = string.Empty;
     public string PreviewUrl { get; set; } = string.Empty;
     public DateTime ExpiresAtUtc { get; set; }
+    public string Language { get; set; } = "en";
 }
 
 public sealed class AdminCmsSeedResponse

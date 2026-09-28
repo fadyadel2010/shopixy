@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PointOfSale.Core.Analytics.Attribution;
 using PointOfSale.Infrastructure.Analytics;
@@ -199,19 +201,73 @@ public class OrderAttributionStore : IOrderAttributionStore
         int take = 100,
         CancellationToken cancellationToken = default)
     {
+        var page = await GetAttributionPageAsync(
+            tenantId,
+            startUtc,
+            endUtc,
+            model,
+            skip: skip,
+            take: take,
+            cancellationToken: cancellationToken);
+        return page.Items.ToList();
+    }
+
+    public async Task<OrderAttributionPage> GetAttributionPageAsync(
+        Guid tenantId,
+        DateTime startUtc,
+        DateTime endUtc,
+        AttributionModel? model = null,
+        string? source = null,
+        string? campaign = null,
+        int skip = 0,
+        int take = 100,
+        CancellationToken cancellationToken = default)
+    {
         try
         {
+            var commerce = await _authorityReader.GetCommerceSnapshotAsync(
+                tenantId,
+                startUtc,
+                endUtc,
+                cancellationToken);
+            var purchaseOrderIds = commerce.PurchaseOrderIds.Distinct().ToArray();
+            if (purchaseOrderIds.Length == 0)
+            {
+                return new OrderAttributionPage([], 0);
+            }
+
             var filterBuilder = Builders<OrderAttributionDocument>.Filter;
             var filter = filterBuilder.And(
                 filterBuilder.Eq(x => x.TenantId, tenantId),
                 filterBuilder.Gte(x => x.AttributedAtUtc, startUtc),
-                filterBuilder.Lt(x => x.AttributedAtUtc, endUtc));
+                filterBuilder.Lt(x => x.AttributedAtUtc, endUtc),
+                filterBuilder.In(x => x.OrderId, purchaseOrderIds));
 
             if (model.HasValue)
             {
                 filter = filterBuilder.And(filter,
                     filterBuilder.Eq(x => x.Model, model.Value.ToString()));
             }
+
+            if (!string.IsNullOrWhiteSpace(source))
+            {
+                filter = filterBuilder.And(
+                    filter,
+                    filterBuilder.Regex(
+                        x => x.Source,
+                        new BsonRegularExpression($"^{Regex.Escape(source.Trim())}$", "i")));
+            }
+
+            if (!string.IsNullOrWhiteSpace(campaign))
+            {
+                filter = filterBuilder.And(
+                    filter,
+                    filterBuilder.Regex(
+                        x => x.Campaign,
+                        new BsonRegularExpression($"^{Regex.Escape(campaign.Trim())}$", "i")));
+            }
+
+            var totalCount = await _collection.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
 
             var documents = await _collection
                 .Find(filter)
@@ -220,15 +276,7 @@ public class OrderAttributionStore : IOrderAttributionStore
                 .Limit(take)
                 .ToListAsync(cancellationToken);
 
-            var commerce = await _authorityReader.GetCommerceSnapshotAsync(
-                tenantId,
-                startUtc,
-                endUtc,
-                cancellationToken);
-            var purchaseOrderIds = commerce.PurchaseOrderIds.ToHashSet();
-
-            return documents
-                .Where(document => purchaseOrderIds.Contains(document.OrderId))
+            var items = documents
                 .Select(document =>
                 {
                     var attribution = MapToAttribution(document);
@@ -236,13 +284,14 @@ public class OrderAttributionStore : IOrderAttributionStore
                     return attribution;
                 })
                 .ToList();
+            return new OrderAttributionPage(items, totalCount);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "[Attribution] Failed to get attributions by range | TenantId: {TenantId}",
                 tenantId);
-            return new List<OrderAttribution>();
+            return new OrderAttributionPage([], 0);
         }
     }
 

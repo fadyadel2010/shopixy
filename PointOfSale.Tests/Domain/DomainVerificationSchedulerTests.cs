@@ -246,7 +246,9 @@ public sealed class DomainVerificationSchedulerTests
     private static ApplicationDbContext CreateContext(Guid tenantId)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase($"DomainVerificationSchedulerTests_{Guid.NewGuid():N}", new InMemoryDatabaseRoot())
+            .UseInMemoryDatabase(
+                $"DomainVerificationSchedulerTests_{Guid.NewGuid():N}",
+                SharedInMemoryDatabaseRoot.Instance)
             .Options;
         var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
         context.Database.EnsureCreated();

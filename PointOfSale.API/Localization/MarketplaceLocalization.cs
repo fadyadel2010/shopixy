@@ -19,48 +19,12 @@ public static class MarketplaceLocalization
 
     public static string ResolveLanguage(string? requestedLanguage, StringValues acceptLanguage)
     {
-        if (!string.IsNullOrWhiteSpace(requestedLanguage))
-        {
-            return NormalizeLanguage(requestedLanguage);
-        }
-
-        foreach (var headerValue in acceptLanguage)
-        {
-            if (string.IsNullOrWhiteSpace(headerValue))
-            {
-                continue;
-            }
-
-            foreach (var token in headerValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var candidate = token.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)[0];
-                if (string.IsNullOrWhiteSpace(candidate))
-                {
-                    continue;
-                }
-
-                var normalized = NormalizeLanguage(candidate);
-                if (normalized is English or Arabic)
-                {
-                    return normalized;
-                }
-            }
-        }
-
-        return English;
+        return StorefrontLanguageResolver.Resolve(requestedLanguage, acceptLanguage);
     }
 
     public static string NormalizeLanguage(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return English;
-        }
-
-        var normalized = value.Trim().ToLowerInvariant();
-        return normalized.StartsWith(Arabic, StringComparison.Ordinal)
-            ? Arabic
-            : English;
+        return StorefrontLanguageResolver.Normalize(value);
     }
 
     public static LocalizedField MergeField(

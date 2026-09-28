@@ -70,10 +70,10 @@ describe('Admin Orders lifecycle UI contract', () => {
 
         const source = readFileSync(ordersPath, 'utf8')
         const service = readFileSync(adminOrdersApiPath, 'utf8')
-        expect(source).toContain('Delivery reference')
-        expect(source).toContain('Proof of delivery URL')
-        expect(source).toContain('Attempt number')
-        expect(source).toContain('Return authorization (optional)')
+        expect(source).toContain("t('orders.management.details.deliveryReference')")
+        expect(source).toContain("t('orders.management.details.proofUrl')")
+        expect(source).toContain("t('orders.management.details.attemptNumber')")
+        expect(source).toContain("t('orders.management.details.returnAuthorization')")
         expect(service).toContain("'delivered'")
         expect(service).toContain("'failed-delivery'")
     })
@@ -83,8 +83,8 @@ describe('Admin Orders lifecycle UI contract', () => {
 
         expect(source).toContain("queryKey: [...authorityScope, 'list', filters]")
         expect(source).toContain('onClick={() => ordersQuery.refetch()}')
-        expect(source).toContain('Code: ${orderListError.code}')
-        expect(source).toContain('Trace: ${orderListError.traceId}')
+        expect(source).toContain("t('orders.management.code', { code: orderListError.code })")
+        expect(source).toContain("t('orders.management.trace', { traceId: orderListError.traceId })")
     })
 
     it('normalizes malformed URL filter state to the supported server contract', () => {
@@ -119,8 +119,8 @@ describe('Admin Orders lifecycle UI contract', () => {
     it('keeps an order readable when optional Affiliate evidence is unavailable', () => {
         const source = readFileSync(ordersPath, 'utf8')
 
-        expect(source).toContain('Affiliate attribution is unavailable for this order. Order details remain available.')
-        expect(source).toContain('value="Affiliate attribution unavailable"')
+        expect(source).toContain("t('orders.management.details.affiliateWarning')")
+        expect(source).toContain("value={t('orders.management.affiliateUnavailable')}")
         expect(source).not.toContain('Affiliate order lineage authority rejected incomplete attribution evidence.')
     })
 
@@ -167,12 +167,25 @@ describe('Admin Orders lifecycle UI contract', () => {
 
     it('keeps payment, fulfillment, shipment, return, refund and cancellation commands distinct', () => {
         const source = readFileSync(ordersPath, 'utf8')
-        expect(source).toContain('Payment lifecycle')
-        expect(source).toContain('Shipment evidence')
+        expect(source).toContain("t('orders.management.details.paymentLifecycle')")
+        expect(source).toContain("t('orders.management.details.shipmentEvidence')")
         expect(source).toContain('cancel-order')
         expect(source).toContain('cancel-shipment')
-        expect(source).toContain('A refund changes payment state only')
+        expect(source).toContain("t('orders.management.details.refundScope')")
         expect(source).toContain('shouldRefund: false')
+    })
+
+    it('loads order-scoped customer trust and session intelligence without exposing raw session identifiers', () => {
+        const source = readFileSync(ordersPath, 'utf8')
+        const service = readFileSync(adminOrdersApiPath, 'utf8')
+
+        expect(source).toContain("queryKey: [...authorityScope, 'customer-trust', selectedOrderId]")
+        expect(source).toContain("queryKey: [...authorityScope, 'session-intelligence', selectedOrderId]")
+        expect(source).toContain("t('orders.management.details.customerTrust')")
+        expect(source).toContain("t('orders.sessionDetails')")
+        expect(service).toContain('`/admin/orders/${orderId}/session-intelligence`')
+        expect(service).not.toContain('/analytics/sessions/${sessionId}')
+        expect(source).not.toContain('.sessionId')
     })
 
     it('renders item refund and return evidence while keeping vendor authority receipt-only', () => {
@@ -180,10 +193,10 @@ describe('Admin Orders lifecycle UI contract', () => {
         const service = readFileSync(adminOrdersApiPath, 'utf8')
 
         expect(source).toContain('item.refunds?.length')
-        expect(source).toContain('Customer refund')
-        expect(source).toContain('Physical return')
+        expect(source).toContain("t('orders.management.details.customerRefund')")
+        expect(source).toContain("t('orders.management.details.physicalReturn')")
         expect(source).toContain('returnRequest.canConfirmReceipt')
-        expect(source).toContain('This records vendor receipt only. It does not execute the customer refund.')
+        expect(source).toContain("t('orders.management.details.receiptOnlyScope')")
         expect(service).toContain('`/pos-admin/returns/${returnId}/confirm-receipt`')
         expect(source).not.toContain('returnRequest.canSchedulePickup')
         expect(source).not.toContain('returnRequest.canMarkPickedUp')

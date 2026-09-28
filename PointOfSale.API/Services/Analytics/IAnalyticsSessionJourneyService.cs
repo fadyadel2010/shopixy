@@ -4,6 +4,11 @@ namespace PointOfSale.API.Services.Analytics;
 
 public interface IAnalyticsSessionJourneyService
 {
+    Task<AnalyticsSessionJourneyResponse?> GetOrderJourneyAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken = default);
+
     Task<AnalyticsSessionJourneyResponse?> GetJourneyAsync(
         Guid tenantId,
         Guid orderId,
@@ -13,6 +18,7 @@ public interface IAnalyticsSessionJourneyService
 
 public class AnalyticsSessionJourneyResponse
 {
+    [JsonIgnore]
     public string SessionId { get; set; } = string.Empty;
     public Guid OrderId { get; set; }
     public string Source { get; set; } = "direct";

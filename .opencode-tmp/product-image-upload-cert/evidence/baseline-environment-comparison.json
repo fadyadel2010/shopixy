@@ -1,0 +1,83 @@
+{
+  "incident": "MAIN product image upload differential",
+  "evidenceDate": "2026-09-27",
+  "secretsRecorded": false,
+  "sourceIdentity": {
+    "branch": "main",
+    "commit": "13c7afd2c9d8161e51205b657f3a996514220c6b",
+    "trackedUploadFilesMatch": true,
+    "trackedBlobIds": {
+      "PointOfSale.API/Controllers/UploadController.cs": "0345000d07f393b98b5bdd3af3e9c4dacae2a402",
+      "PointOfSale.API/Program.cs": "594321425d4a929ab9203efc73f356f153f1db34",
+      "PointOfSale.Web/package-lock.json": "2c7419cdb2d7040053bd086327b06ec6f9e91dab"
+    }
+  },
+  "windowsDevelopment": {
+    "machine": "FADYADEL",
+    "os": "Windows 11 Home Single Language 10.0.26200",
+    "dotnet": "9.0.308",
+    "node": "v22.20.0",
+    "npm": "10.9.3",
+    "environment": "Development",
+    "admin": {
+      "pid": 8708,
+      "listen": "[::1]:5173",
+      "workingDirectory": "PointOfSale.Web",
+      "launch": "Vite through npm run dev",
+      "vite": "5.4.21",
+      "axios": "1.20.0"
+    },
+    "api": {
+      "pid": 5956,
+      "parentPid": 11316,
+      "listen": "127.0.0.1/[::1]:5010",
+      "workingDirectory": "PointOfSale.API",
+      "launch": "dotnet run",
+      "debugAssemblySha256": "bace1fd9046d45ae9f5318e2362057abcc81cfc198d4852eda4a64017a9fc4cc"
+    },
+    "storage": {
+      "selectedProvider": "DevelopmentFileStorageService",
+      "reason": "Development and R2 is not configured",
+      "healthStatus": "Healthy",
+      "healthDescription": "Development file storage is active and writable; Cloudflare R2 is optional in Development."
+    },
+    "worktreeBaseline": [
+      "untracked: PointOfSale.API/secure-uploads/development-object-storage/tenants/<redacted>/products/<redacted>/<redacted>.png"
+    ]
+  },
+  "dellQa": {
+    "machine": "fady-Latitude-E6510",
+    "os": "Ubuntu 22.04.5 LTS, Linux 6.8.0-138-generic x86_64",
+    "dotnet": "9.0.308",
+    "node": "v20.20.2",
+    "npm": "10.8.2",
+    "environment": "QA",
+    "admin": {
+      "pid": 7078,
+      "listen": "127.0.0.1:5173",
+      "workingDirectory": "/home/fady/ShopixyQA/PointOfSale/PointOfSale.Web",
+      "launch": "Vite through npm run dev",
+      "vite": "5.4.21",
+      "axios": "1.20.0"
+    },
+    "api": {
+      "pid": 34387,
+      "parentPid": 1,
+      "listen": "0.0.0.0:5010",
+      "workingDirectory": "/home/fady/ShopixyQA/PointOfSale/PointOfSale.API",
+      "launch": "detached dotnet bin/Release/net9.0/PointOfSale.API.dll",
+      "stdout": "/home/fady/.deploy-qa/logs/qa-api-20260927-023734.log",
+      "releaseAssemblySha256": "e826a07d9441eac1cde9e9c0372ee137ca6890aac6b0877654d91a669ddd748f"
+    },
+    "storage": {
+      "selectedProvider": "R2StorageService",
+      "r2ProcessSettingsPresent": false,
+      "r2QaJsonSettingsPresent": false,
+      "healthStatus": "Unhealthy",
+      "healthDescription": "Cloudflare R2 is not fully configured."
+    },
+    "worktreeBaseline": [
+      "untracked: PointOfSale.API/appsettings.QA.json"
+    ]
+  }
+}

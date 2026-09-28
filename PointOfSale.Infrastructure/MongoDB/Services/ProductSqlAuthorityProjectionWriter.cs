@@ -172,6 +172,7 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
             sqlProjection.LastEventId = request.EventId;
             sqlProjection.LastEventOccurredAtUtc = request.EventOccurredAtUtc;
             sqlProjection.LastEventVersion = authoritativeVersion;
+            sqlProjection.SyncedAtUtc = DateTime.UtcNow;
             sqlProjection.ReadModelName = ReadModelEvolutionRegistry.StorefrontProduct;
             sqlProjection.ReadModelSchemaVersion = ProductDocument.CurrentReadModelSchemaVersion;
             sqlProjection.ProjectionVersion = ProductDocument.CurrentProjectionVersion;

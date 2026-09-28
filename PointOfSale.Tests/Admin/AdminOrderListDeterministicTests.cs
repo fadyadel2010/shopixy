@@ -152,6 +152,10 @@ public sealed class AdminOrderListDeterministicTests
             tenantId,
             posId,
             "deterministic-pos-detail"));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListOrdersAsync(
+            tenantId,
+            new AdminOrderListQuery { Page = 1, PageSize = 20, Source = OrderSource.POS },
+            "deterministic-pos-list"));
     }
 
     private static ApplicationDbContext CreateContext(Guid tenantId)

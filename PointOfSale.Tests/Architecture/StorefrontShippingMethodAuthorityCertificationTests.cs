@@ -38,8 +38,8 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
         Assert.Contains("isDisabled={isSelectingMethod}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("price={method.price}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("formatPrice={formatPrice}", shippingStep, StringComparison.Ordinal);
-        Assert.Contains("price > 0 ? formatPrice(price) : 'Free'", shippingStep, StringComparison.Ordinal);
-        Assert.Contains("Retry shipping options", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("price > 0 ? formatPrice(price) : t('checkout.shipping.free')", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("t('checkout.shipping.retryMethods')", shippingStep, StringComparison.Ordinal);
         Assert.Contains("ARCHITECTURAL RULE: Checkout displays ONLY backend pricing quotes.", reviewStep, StringComparison.Ordinal);
         Assert.Contains("Shipping, tax, discounts, and total come from the pricing preview endpoint", reviewStep, StringComparison.Ordinal);
         Assert.Contains("shippingMethod.name", reviewStep, StringComparison.Ordinal);

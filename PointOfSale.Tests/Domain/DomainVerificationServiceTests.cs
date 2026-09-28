@@ -542,7 +542,7 @@ public sealed class DomainVerificationServiceTests
     {
         var tenantId = Guid.NewGuid();
         var databaseName = $"DomainVerificationConcurrent_{Guid.NewGuid():N}";
-        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
 
         using (var seedContext = CreateContext(tenantId, databaseName, databaseRoot))
         {

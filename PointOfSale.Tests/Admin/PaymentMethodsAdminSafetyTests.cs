@@ -32,8 +32,36 @@ public sealed class PaymentMethodsAdminSafetyTests
         var catalog = Assert.IsAssignableFrom<IEnumerable<PaymentMethodCatalogProviderDto>>(ok.Value);
         var codes = catalog.Select(provider => provider.Code).ToArray();
 
-        Assert.Equal(new[] { "COD", "STRIPE", "PAYMOB", "FAWRY", "MANUALWALLET" }, codes);
+        Assert.Equal(new[] { "COD", "STRIPE", "PAYMOB", "MANUALWALLET" }, codes);
         Assert.Empty(await dbContext.TenantPaymentMethods.ToListAsync());
+    }
+
+    [Fact]
+    public async Task GetPaymentMethods_HidesFawryWithoutRewritingHistoricalRow()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+        dbContext.TenantPaymentMethods.Add(new TenantPaymentMethod
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Code = "FAWRY",
+            DisplayName = "Fawry Pay",
+            IsEnabled = true,
+            SupportsOnline = true,
+            FeeType = "fixed",
+            CreatedAt = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+        var result = await controller.GetPaymentMethods(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Empty(Assert.IsType<List<PaymentMethodResponseDto>>(ok.Value));
+        Assert.True((await dbContext.TenantPaymentMethods.SingleAsync()).IsEnabled);
     }
 
     [Fact]

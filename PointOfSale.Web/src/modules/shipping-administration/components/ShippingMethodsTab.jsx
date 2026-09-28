@@ -171,7 +171,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             setSupportedCarriers(await fetchSupportedCarriers())
         } catch (err) {
             setSupportedCarriers([])
-            setCarrierLoadError(err.message || 'Failed to load supported carriers.')
+            setCarrierLoadError(err.message || t('shippingAdministration.methods.carrierLoadFailed'))
         } finally {
             setCarriersLoading(false)
         }
@@ -198,7 +198,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
 
     const resolveWarehouseDisplayName = (warehouseId) => {
         const warehouse = warehouses.find((item) => item.id === warehouseId)
-        if (!warehouse) return 'Not configured'
+        if (!warehouse) return t('shippingAdministration.methods.notConfigured')
         return warehouse.code ? `${warehouse.name} (${warehouse.code})` : warehouse.name
     }
 
@@ -240,7 +240,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             const normalizedCarrierCode = normalizeCarrierCode(formData.carrierCode)
             const carrier = findCarrier(supportedCarriers, normalizedCarrierCode)
             if (!carrier) {
-                setError('Select a backend-supported carrier before saving.')
+                setError(t('shippingAdministration.methods.selectSupportedCarrier'))
                 return
             }
 
@@ -249,7 +249,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                 : getDefaultServiceLevel(carrier)
 
             if (formData.isActive && !formData.fulfillmentWarehouseId) {
-                setError('Active shipping methods require a fulfillment warehouse.')
+                setError(t('shippingAdministration.methods.activeWarehouseRequired'))
                 return
             }
 
@@ -336,7 +336,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
 
     return (
         <div>
-            <div className="flex justify-between items-center mb-6">
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-gray-900">{t('shipping.title')}</h2>
                     <p className="text-sm text-gray-600">{t('shipping.subtitle')}</p>
@@ -354,7 +354,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             {success && (
                 <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg">
                     {success}
-                    <button onClick={() => setSuccess('')} className="float-right">x</button>
+                    <button onClick={() => setSuccess('')} className="ms-3" aria-label={t('common.close')}>x</button>
                 </div>
             )}
 
@@ -365,7 +365,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                     </div>
                 ) : methods.length === 0 ? (
                     <div className="text-center py-12 text-gray-500">
-                        <p className="text-4xl">Shipping</p>
+                        <p className="text-lg font-semibold">{t('shipping.shipping')}</p>
                         <p className="mt-4">{t('shipping.noMethods')}</p>
                     </div>
                 ) : (
@@ -378,7 +378,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.perKgRate')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.freeThreshold')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.deliveryDays')}</th>
-                                    <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">Fulfillment Warehouse</th>
+                                    <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shippingAdministration.methods.fulfillmentWarehouse')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.status')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.actions')}</th>
                                 </tr>
@@ -406,7 +406,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                             {method.fulfillmentWarehouseId ? (
                                                 resolveWarehouseDisplayName(method.fulfillmentWarehouseId)
                                             ) : (
-                                                <span className="text-amber-700">Not configured</span>
+                                                <span className="text-amber-700">{t('shippingAdministration.methods.notConfigured')}</span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4 text-center">
@@ -419,14 +419,14 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                                 {method.isActive
                                                     ? method.fulfillmentWarehouseId
                                                         ? t('common.active')
-                                                        : 'Active - warehouse required'
+                                                        : t('shippingAdministration.methods.activeWarehouseMissing')
                                                     : t('common.inactive')}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-center">
                                             <button
                                                 onClick={() => handleEdit(method)}
-                                                className="text-primary-600 hover:text-primary-900 mr-3"
+                                                className="me-3 text-primary-600 hover:text-primary-900"
                                             >
                                                 {t('common.edit')}
                                             </button>
@@ -446,10 +446,10 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             </div>
 
             {showModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" role="presentation">
+                    <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="shipping-method-dialog-title">
                         <div className="p-6 border-b">
-                            <h2 className="text-xl font-bold">
+                            <h2 id="shipping-method-dialog-title" className="text-xl font-bold">
                                 {editingMethod ? t('shipping.editMethod') : t('shipping.addMethod')}
                             </h2>
                         </div>
@@ -556,7 +556,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 <div>
                                     <label className="label">{t('shipping.carrier')}</label>
                                     {carriersLoading ? (
-                                        <div className="input flex items-center text-gray-500">Loading carriers...</div>
+                                        <div className="input flex items-center text-gray-500" role="status">{t('shippingAdministration.methods.loadingCarriers')}</div>
                                     ) : carrierLoadError ? (
                                         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                                             {carrierLoadError}
@@ -571,7 +571,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                             >
                                                 {unsupportedLegacyCarrierCode && (
                                                     <option value={unsupportedLegacyCarrierCode} disabled>
-                                                        Unsupported legacy carrier: {unsupportedLegacyCarrierCode}
+                                                        {t('shippingAdministration.methods.unsupportedLegacyCarrier', { carrierCode: unsupportedLegacyCarrierCode })}
                                                     </option>
                                                 )}
                                                 {supportedCarriers.map((carrier) => (
@@ -582,7 +582,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                             </select>
                                             {unsupportedLegacyCarrierCode && (
                                                 <p className="mt-1 text-xs text-amber-700">
-                                                    This legacy carrier code is not returned by the backend registry. Select a supported carrier before saving.
+                                                    {t('shippingAdministration.methods.unsupportedLegacyHelp')}
                                                 </p>
                                             )}
                                         </>
@@ -617,20 +617,20 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 ) : (
                                     <div className="input flex items-center text-gray-500">
                                         {selectedCarrier
-                                            ? 'No backend service levels advertised; standard will be used.'
-                                            : 'Select a supported carrier first.'}
+                                            ? t('shippingAdministration.methods.standardServiceFallback')
+                                            : t('shippingAdministration.methods.selectCarrierFirst')}
                                     </div>
                                 )}
                             </div>
 
                             <div>
-                                <label className="label">Fulfillment Warehouse</label>
+                                <label className="label">{t('shippingAdministration.methods.fulfillmentWarehouse')}</label>
                                 <select
                                     value={formData.fulfillmentWarehouseId}
                                     onChange={(e) => setFormData({ ...formData, fulfillmentWarehouseId: e.target.value })}
                                     className="input"
                                 >
-                                    <option value="">Not configured</option>
+                                    <option value="">{t('shippingAdministration.methods.notConfigured')}</option>
                                     {activeWarehouses.map((warehouse) => (
                                         <option key={warehouse.id} value={warehouse.id}>
                                             {warehouse.code ? `${warehouse.name} (${warehouse.code})` : warehouse.name}
@@ -639,12 +639,12 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 </select>
                                 {editingMethod && !formData.fulfillmentWarehouseId && (
                                     <p className="mt-1 text-xs text-amber-700">
-                                        This legacy method will not appear in Storefront checkout until a warehouse is selected.
+                                        {t('shippingAdministration.methods.legacyWarehouseHelp')}
                                     </p>
                                 )}
                                 {formData.isActive && !formData.fulfillmentWarehouseId && (
                                     <p className="mt-1 text-xs text-red-700">
-                                        Select a warehouse before saving this method as active.
+                                        {t('shippingAdministration.methods.activeWarehouseHelp')}
                                     </p>
                                 )}
                             </div>

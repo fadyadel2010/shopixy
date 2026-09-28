@@ -168,7 +168,7 @@ public class SitemapController : ControllerBase
     {
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-        sb.AppendLine("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">");
+        sb.AppendLine("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:xhtml=\"http://www.w3.org/1999/xhtml\">");
 
         foreach (var url in sitemap.Urls)
         {
@@ -182,6 +182,10 @@ public class SitemapController : ControllerBase
             
             sb.AppendLine($"    <changefreq>{url.ChangeFreq}</changefreq>");
             sb.AppendLine($"    <priority>{url.Priority:F1}</priority>");
+            foreach (var alternate in url.Alternates)
+            {
+                sb.AppendLine($"    <xhtml:link rel=\"alternate\" hreflang=\"{EscapeXml(alternate.Key)}\" href=\"{EscapeXml(alternate.Value)}\" />");
+            }
             sb.AppendLine("  </url>");
         }
 

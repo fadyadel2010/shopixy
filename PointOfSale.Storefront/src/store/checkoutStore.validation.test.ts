@@ -3,8 +3,9 @@ import { httpClient } from '@/services/api';
 import type { CartDto } from '@/types';
 import type { CheckoutFieldDefinition, ShippingAddress } from '@/types/checkout';
 import { requireStorefrontPaymentSessionAuthority } from '@/features/checkout/paymentSessionAuthority';
+import { clearResolvedTenant, setResolvedTenant } from '@/bootstrap/tenantResolver';
 import { useCartStore } from './cartStore';
-import { useCheckoutStore, validateAddress } from './checkoutStore';
+import { hydrateCheckoutStateStorage, useCheckoutStore, validateAddress } from './checkoutStore';
 
 vi.mock('@/features/checkout/activeCheckoutOrderContext', () => ({
     persistActiveCheckoutOrderContext: vi.fn(),
@@ -31,6 +32,25 @@ vi.mock('@/features/auth/authTelemetry', () => ({
 const cartId = '10000000-0000-0000-0000-000000000001';
 const shippingMethodA = '20000000-0000-0000-0000-000000000001';
 const shippingMethodB = '20000000-0000-0000-0000-000000000002';
+
+function createMemoryStorage(): Storage {
+    const values = new Map<string, string>();
+
+    return {
+        get length() {
+            return values.size;
+        },
+        clear: () => values.clear(),
+        getItem: (key) => values.get(key) ?? null,
+        key: (index) => [...values.keys()][index] ?? null,
+        removeItem: (key) => {
+            values.delete(key);
+        },
+        setItem: (key, value) => {
+            values.set(key, value);
+        },
+    };
+}
 
 const address: ShippingAddress = {
     fullName: '',
@@ -101,6 +121,8 @@ describe('checkout state authority regression', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         useCheckoutStore.getState().reset();
+        clearResolvedTenant();
+        vi.unstubAllGlobals();
     });
 
     it('does not fall back to legacy requirements when configured fields are all hidden or disabled', () => {
@@ -151,6 +173,36 @@ describe('checkout state authority regression', () => {
         expect(state.checkoutDataCartId).toBe(cartId);
         expect(state.customFieldValues[attachmentFieldId]).toBeUndefined();
         expect(state.customFieldValues[textFieldId]).toBe('Keep this customer value');
+    });
+
+    it('hydrates tenant-scoped address and confirmed attachments after tenant resolution', async () => {
+        const tenantId = '40000000-0000-4000-8000-000000000001';
+        const attachmentFieldId = '70000000-0000-4000-8000-000000000001';
+        const sessionStorage = createMemoryStorage();
+        const localStorage = createMemoryStorage();
+        vi.stubGlobal('window', { sessionStorage, localStorage });
+        setResolvedTenant(tenantId, { overwrite: true });
+        sessionStorage.setItem(`checkout-sensitive-session:${tenantId}`, JSON.stringify({
+            cartId,
+            address: {
+                fullName: 'Reloaded Customer',
+                phone: '+201000000000',
+                city: 'Cairo',
+                area: 'Nasr City',
+                addressLine: '10 Test Street',
+            },
+            customFieldValues: {
+                [attachmentFieldId]: JSON.stringify([{ attachmentId: 'confirmed-attachment' }]),
+            },
+        }));
+
+        await hydrateCheckoutStateStorage();
+
+        const state = useCheckoutStore.getState();
+        expect(state.checkoutDataCartId).toBe(cartId);
+        expect(state.address.fullName).toBe('Reloaded Customer');
+        expect(state.address.addressLine).toBe('10 Test Street');
+        expect(state.customFieldValues[attachmentFieldId]).toContain('confirmed-attachment');
     });
 
     it('rejects malformed pricing responses at the API boundary', async () => {
@@ -206,6 +258,55 @@ describe('checkout state authority regression', () => {
         await Promise.all([first, second]);
 
         expect(useCheckoutStore.getState().pricing?.total).toBe(110);
+    });
+
+    it('suppresses Fawry from stale storefront payment-method responses', async () => {
+        vi.spyOn(httpClient, 'get').mockResolvedValue({
+            data: {
+                status: 'AVAILABLE',
+                paymentMethods: [
+                    {
+                        id: '90000000-0000-4000-8000-000000000001',
+                        code: 'FAWRY',
+                        displayName: 'Fawry Pay',
+                        supportsOnline: true,
+                        supportsOffline: false,
+                        fee: 0,
+                        feeType: 'fixed',
+                        sortOrder: 1,
+                        isAvailable: true,
+                    },
+                    {
+                        id: '90000000-0000-4000-8000-000000000002',
+                        code: 'COD',
+                        displayName: 'Cash on Delivery',
+                        supportsOnline: false,
+                        supportsOffline: true,
+                        fee: 0,
+                        feeType: 'fixed',
+                        sortOrder: 2,
+                        isAvailable: true,
+                    },
+                ],
+            },
+        });
+
+        await useCheckoutStore.getState().fetchPaymentMethods();
+
+        const state = useCheckoutStore.getState();
+        expect(state.paymentMethods.map((method) => method.code)).toEqual(['COD']);
+        expect(state.selectedPaymentMethodCode).toBe('COD');
+        expect(state.paymentMethodsStatus).toBe('AVAILABLE');
+    });
+
+    it('rejects direct stale Fawry selection with the stable authority code', () => {
+        useCheckoutStore.getState().selectPaymentMethod('fawry');
+
+        const state = useCheckoutStore.getState();
+        expect(state.selectedPaymentMethodCode).toBeNull();
+        expect(state.paymentSelectionStatus).toBe('stale');
+        expect(state.errorCode).toBe('FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE');
+        expect(state.error).toBe('checkout.errors.fawryUnavailable.message');
     });
 
     it('admits only the latest shipping selection response', async () => {

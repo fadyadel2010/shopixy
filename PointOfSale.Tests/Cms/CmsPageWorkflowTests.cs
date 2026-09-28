@@ -392,6 +392,149 @@ public sealed class CmsPageWorkflowTests
             reason: "stale replay"));
     }
 
+    [Fact]
+    public async Task PublishPageAsync_PublishesCompleteArabicSnapshotAndReturnsLocalizedSeo()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = await SeedTenantAsync(dbContext, "Bilingual Tenant");
+        var pageService = CreatePageService(dbContext);
+        var readService = CreateReadService(dbContext);
+
+        var created = await pageService.CreatePageAsync(
+            tenantId,
+            BuildBilingualRichTextRequest(
+                "about",
+                "About us",
+                "<p>English body</p>",
+                "من نحن",
+                "<p>المحتوى العربي</p>"));
+        await pageService.PublishPageAsync(tenantId, created.Id, created.Draft!.Version);
+
+        var english = await readService.GetPublishedPageAsync(tenantId, "about");
+        var arabic = await readService.GetPublishedPageAsync(
+            tenantId,
+            "about",
+            requestedLanguage: "ar");
+
+        Assert.NotNull(english);
+        Assert.NotNull(arabic);
+        Assert.Equal("About us", english!.Title);
+        Assert.Equal("en", english.Language);
+        Assert.False(english.FallbackApplied);
+        Assert.Equal("من نحن", arabic!.Title);
+        Assert.Equal("<p>المحتوى العربي</p>", arabic.Content.GetString());
+        Assert.Equal("ar", arabic.Language);
+        Assert.False(arabic.FallbackApplied);
+        Assert.Equal(new[] { "en", "ar" }, arabic.AvailableLanguages);
+        Assert.Equal("/ar/pages/about", arabic.CanonicalPath);
+        Assert.Equal("/ar/pages/about", arabic.AlternatePaths["ar"]);
+    }
+
+    [Fact]
+    public async Task GetPublishedPageAsync_MissingArabicFallsBackToWholeEnglishPageWithoutArabicAlternate()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = await SeedTenantAsync(dbContext, "Fallback Tenant");
+        var pageService = CreatePageService(dbContext);
+        var readService = CreateReadService(dbContext);
+
+        var created = await pageService.CreatePageAsync(
+            tenantId,
+            BuildRichTextRequest("terms", "Terms", "<p>English terms</p>"));
+        await pageService.PublishPageAsync(tenantId, created.Id, created.Draft!.Version);
+
+        var result = await readService.GetPublishedPageAsync(
+            tenantId,
+            "terms",
+            requestedLanguage: "ar");
+
+        Assert.NotNull(result);
+        Assert.Equal("Terms", result!.Title);
+        Assert.Equal("<p>English terms</p>", result.Content.GetString());
+        Assert.Equal("ar", result.RequestedLanguage);
+        Assert.Equal("en", result.Language);
+        Assert.True(result.FallbackApplied);
+        Assert.Equal(new[] { "en" }, result.AvailableLanguages);
+        Assert.Equal("/pages/terms", result.CanonicalPath);
+        Assert.DoesNotContain("ar", result.AlternatePaths.Keys);
+    }
+
+    [Fact]
+    public async Task UpdatePageAsync_PreservesOmittedArabicAndRemovesOnlyExplicitNull()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = await SeedTenantAsync(dbContext, "Translation Update Tenant");
+        var pageService = CreatePageService(dbContext);
+
+        var created = await pageService.CreatePageAsync(
+            tenantId,
+            BuildBilingualRichTextRequest(
+                "contact",
+                "Contact",
+                "<p>English v1</p>",
+                "اتصل بنا",
+                "<p>العربية v1</p>"));
+
+        var legacyUpdate = BuildRichTextRequest("contact", "Contact v2", "<p>English v2</p>");
+        legacyUpdate.ExpectedVersion = created.Draft!.Version;
+        var preserved = await pageService.UpdatePageAsync(tenantId, created.Id, legacyUpdate);
+
+        Assert.Equal("اتصل بنا", preserved.Draft!.Translations["ar"].Title);
+
+        var removal = BuildBilingualRichTextRequest(
+            "contact",
+            "Contact v3",
+            "<p>English v3</p>",
+            "unused",
+            "<p>unused</p>");
+        removal.Translations!["ar"] = null;
+        removal.ExpectedVersion = preserved.Draft.Version;
+        var removed = await pageService.UpdatePageAsync(tenantId, created.Id, removal);
+
+        Assert.DoesNotContain("ar", removed.Draft!.Translations.Keys);
+        Assert.Equal(new[] { "en" }, removed.AvailableLanguages);
+    }
+
+    [Fact]
+    public async Task RollbackPageAsync_ClonesExactBilingualSourceSnapshot()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = await SeedTenantAsync(dbContext, "Bilingual Rollback Tenant");
+        var pageService = CreatePageService(dbContext);
+
+        var created = await pageService.CreatePageAsync(
+            tenantId,
+            BuildBilingualRichTextRequest(
+                "history",
+                "History v1",
+                "<p>English v1</p>",
+                "السجل 1",
+                "<p>العربية 1</p>"));
+        await pageService.PublishPageAsync(tenantId, created.Id, created.Draft!.Version);
+
+        var update = BuildBilingualRichTextRequest(
+            "history",
+            "History v2",
+            "<p>English v2</p>",
+            "السجل 2",
+            "<p>العربية 2</p>");
+        update.ExpectedVersion = 1;
+        var draft = await pageService.UpdatePageAsync(tenantId, created.Id, update);
+        await pageService.PublishPageAsync(tenantId, created.Id, draft.Draft!.Version);
+
+        var rollback = await pageService.RollbackPageAsync(
+            tenantId,
+            created.Id,
+            rollbackVersion: 1,
+            expectedVersion: 2,
+            reason: "restore bilingual snapshot");
+
+        Assert.Equal("History v1", rollback.Published!.Translations["en"].Title);
+        Assert.Equal("<p>English v1</p>", rollback.Published.Translations["en"].Content.GetString());
+        Assert.Equal("السجل 1", rollback.Published.Translations["ar"].Title);
+        Assert.Equal("<p>العربية 1</p>", rollback.Published.Translations["ar"].Content.GetString());
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -408,6 +551,7 @@ public sealed class CmsPageWorkflowTests
         {
             base.OnModelCreating(modelBuilder);
             modelBuilder.Entity<CmsPage>().HasQueryFilter(page => !page.IsDeleted);
+            modelBuilder.Entity<CmsPageTranslation>().HasQueryFilter(_ => true);
         }
     }
 
@@ -456,6 +600,46 @@ public sealed class CmsPageWorkflowTests
             Content = JsonSerializer.SerializeToElement(html),
             SchemaVersion = 1,
             Seo = new AdminCmsPageSeoRequest()
+        };
+    }
+
+    private static AdminCmsPageRequest BuildBilingualRichTextRequest(
+        string slug,
+        string englishTitle,
+        string englishHtml,
+        string arabicTitle,
+        string arabicHtml)
+    {
+        var english = new AdminCmsPageTranslationRequest
+        {
+            Title = englishTitle,
+            ContentType = CmsPageContentType.RichText,
+            Content = JsonSerializer.SerializeToElement(englishHtml),
+            SchemaVersion = 1,
+            Seo = new AdminCmsPageSeoRequest { MetaTitle = englishTitle }
+        };
+        var arabic = new AdminCmsPageTranslationRequest
+        {
+            Title = arabicTitle,
+            ContentType = CmsPageContentType.RichText,
+            Content = JsonSerializer.SerializeToElement(arabicHtml),
+            SchemaVersion = 1,
+            Seo = new AdminCmsPageSeoRequest { MetaTitle = arabicTitle }
+        };
+
+        return new AdminCmsPageRequest
+        {
+            Slug = slug,
+            Title = englishTitle,
+            ContentType = CmsPageContentType.RichText,
+            Content = JsonSerializer.SerializeToElement(englishHtml),
+            SchemaVersion = 1,
+            Seo = english.Seo,
+            Translations = new Dictionary<string, AdminCmsPageTranslationRequest?>
+            {
+                ["en"] = english,
+                ["ar"] = arabic
+            }
         };
     }
 

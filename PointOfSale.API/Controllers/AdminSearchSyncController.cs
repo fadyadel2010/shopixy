@@ -331,7 +331,7 @@ public class AdminSearchSyncController : ControllerBase
             {
                 var staleDeleted = await _searchIndexService.DeleteStaleCmsPagesAsync(
                     tenantId,
-                    Array.Empty<string>(),
+                    Array.Empty<Guid>(),
                     cancellationToken);
 
                 return Ok(new
@@ -346,6 +346,7 @@ public class AdminSearchSyncController : ControllerBase
             var publishedPages = await _sqlContext.CmsPages
                 .AsNoTracking()
                 .IgnoreQueryFilters()
+                .Include(page => page.Translations)
                 .Where(page => page.TenantId == tenantId)
                 .Where(page => !page.IsDeleted)
                 .Where(page => page.IsPublished && !page.IsDraft)
@@ -375,12 +376,12 @@ public class AdminSearchSyncController : ControllerBase
                 }
 
                 totals.FailureCount++;
-                AppendErrors(totals.Errors, new[] { $"Failed to index CMS page search document {tenantId}_{page.Slug}" });
+                AppendErrors(totals.Errors, new[] { $"Failed to index CMS page search document {tenantId}_{page.PageGroupId}" });
             }
 
             totals.StaleDeletedCount = (int)await _searchIndexService.DeleteStaleCmsPagesAsync(
                 tenantId,
-                authoritativePages.Select(page => page.Slug).ToArray(),
+                authoritativePages.Select(page => page.PageGroupId).ToArray(),
                 cancellationToken);
 
             stopwatch.Stop();
@@ -577,9 +578,19 @@ public class AdminSearchSyncController : ControllerBase
 
     private static CmsPageSearchDocument MapToCmsPageSearchDocument(PointOfSale.Core.Entities.CmsPage page)
     {
-        var description = !string.IsNullOrWhiteSpace(page.MetaDescription)
-            ? page.MetaDescription
-            : BuildCmsSearchDescription(page.Content);
+        var english = page.Translations.FirstOrDefault(translation => translation.Locale == "en");
+        var arabic = page.Translations.FirstOrDefault(translation => translation.Locale == "ar");
+        var englishTitle = english?.Title ?? page.Title;
+        var englishContent = english?.Content ?? page.Content;
+        var englishMetaDescription = english?.MetaDescription ?? page.MetaDescription;
+        var description = !string.IsNullOrWhiteSpace(englishMetaDescription)
+            ? englishMetaDescription
+            : BuildCmsSearchDescription(englishContent);
+        var descriptionAr = arabic == null
+            ? null
+            : !string.IsNullOrWhiteSpace(arabic.MetaDescription)
+                ? arabic.MetaDescription
+                : BuildCmsSearchDescription(arabic.Content);
 
         var document = new CmsPageSearchDocument
         {
@@ -587,10 +598,12 @@ public class AdminSearchSyncController : ControllerBase
             PageId = page.PageGroupId,
             EntityType = "cms",
             Slug = page.Slug,
-            Name = page.Title,
-            NameAr = null,
+            Name = englishTitle,
+            NameAr = arabic?.Title,
             Description = description,
-            MetaDescription = page.MetaDescription,
+            DescriptionAr = descriptionAr,
+            MetaDescription = englishMetaDescription,
+            MetaDescriptionAr = arabic?.MetaDescription,
             IsActive = true,
             IsOnlineVisible = true,
             Version = page.Version,

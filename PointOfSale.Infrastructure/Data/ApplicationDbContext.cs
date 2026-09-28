@@ -81,6 +81,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<ProductReview> ProductReviews => Set<ProductReview>();
     public DbSet<HomepageSection> HomepageSections => Set<HomepageSection>();
     public DbSet<CmsPage> CmsPages => Set<CmsPage>();
+    public DbSet<CmsPageTranslation> CmsPageTranslations => Set<CmsPageTranslation>();
     public DbSet<MarketplaceCmsPage> MarketplaceCmsPages => Set<MarketplaceCmsPage>();
     public DbSet<MarketplaceCategoryTranslation> MarketplaceCategoryTranslations => Set<MarketplaceCategoryTranslation>();
     public DbSet<StorefrontFooterSection> StorefrontFooterSections => Set<StorefrontFooterSection>();
@@ -732,6 +733,8 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<CmsPage>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CmsPageTranslation>().HasQueryFilter(e =>
+            e.TenantId == CurrentTenantId);
              
         modelBuilder.Entity<Shipment>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);

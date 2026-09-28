@@ -28,6 +28,7 @@ const COMMERCEHUB_VENDOR_AUTHORITY_ENDPOINTS = [
     '/promotions',
     '/shippingmethods',
     '/commercehub/finance',
+    '/commercehub/vendor-orders',
     '/commercehub/earnings',
     '/commercehub/payments',
     '/vendors/payout-methods',

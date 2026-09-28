@@ -2,6 +2,8 @@ using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Moq;
 using PointOfSale.API.Controllers;
@@ -24,6 +26,46 @@ public sealed class CookieAuthSecurityTests
         Assert.True(options.Secure);
         Assert.Equal(SameSiteMode.Strict, options.SameSite);
         Assert.Equal("/api/customers", options.Path);
+    }
+
+    [Theory]
+    [InlineData("Development", false, false)]
+    [InlineData("Development", true, true)]
+    [InlineData("Production", false, true)]
+    public void SetSessionCookies_UsesInsecureCookiesOnlyForDevelopmentHttp(
+        string environmentName,
+        bool isHttps,
+        bool expectsSecure)
+    {
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(value => value.EnvironmentName).Returns(environmentName);
+        var services = new ServiceCollection()
+            .AddSingleton(environment.Object)
+            .BuildServiceProvider();
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        context.Request.Scheme = isHttps ? "https" : "http";
+
+        AuthCookieConfiguration.SetSessionCookies(
+            context,
+            AuthCookieConfiguration.Pos,
+            "access-token",
+            TimeSpan.FromMinutes(15),
+            "refresh-token",
+            TimeSpan.FromDays(7));
+
+        var issuedCookies = context.Response.Headers.SetCookie
+            .Where(value => value is not null &&
+                (value.StartsWith($"{AuthCookieConfiguration.PosAccessTokenCookieName}=", StringComparison.Ordinal) ||
+                 value.StartsWith($"{AuthCookieConfiguration.PosRefreshTokenCookieName}=", StringComparison.Ordinal) ||
+                 value.StartsWith($"{AuthCookieConfiguration.CsrfCookieName}=", StringComparison.Ordinal)))
+            .ToArray();
+
+        Assert.Equal(3, issuedCookies.Length);
+        Assert.All(issuedCookies, value =>
+            Assert.Equal(expectsSecure, value!.Contains("secure", StringComparison.OrdinalIgnoreCase)));
     }
 
     [Fact]

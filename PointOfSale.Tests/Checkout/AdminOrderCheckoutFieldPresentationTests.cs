@@ -137,6 +137,68 @@ public sealed class AdminOrderCheckoutFieldPresentationTests
         Assert.DoesNotContain("objectKey", serialized, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("staged-key", serialized, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("final-key", serialized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("finalETag", serialized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("finalChecksumSha256", serialized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OpenCheckoutAttachmentDownload_RejectsStorageMetadataThatDiffersFromOrderAssociation()
+    {
+        var tenantId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        await using var context = CreateContext(tenantId);
+        await SeedOrderAsync(context, tenantId, orderId);
+        context.CheckoutAttachments.Add(NewAttachedCheckoutAttachment(tenantId, orderId, attachmentId));
+        await context.SaveChangesAsync();
+        var content = new MemoryStream(new byte[] { 0x89, 0x50, 0x4E, 0x47 });
+        var storage = new Mock<IR2StorageService>();
+        storage.Setup(service => service.DownloadObjectAsync(
+                "tenants/private/final.jpg",
+                "final-etag",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new R2DownloadObjectResult(content, "image/png", 4, "final-etag"));
+        var service = CreateService(context, storage.Object);
+
+        await Assert.ThrowsAsync<AdminOrderAttachmentIntegrityException>(() =>
+            service.OpenCheckoutAttachmentDownloadAsync(
+                tenantId,
+                orderId,
+                attachmentId,
+                "test-correlation"));
+
+        Assert.Throws<ObjectDisposedException>(() => content.ReadByte());
+    }
+
+    [Fact]
+    public async Task OpenCheckoutAttachmentDownload_ReturnsCanonicalAssociatedMetadata()
+    {
+        var tenantId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        await using var context = CreateContext(tenantId);
+        await SeedOrderAsync(context, tenantId, orderId);
+        context.CheckoutAttachments.Add(NewAttachedCheckoutAttachment(tenantId, orderId, attachmentId));
+        await context.SaveChangesAsync();
+        var content = new MemoryStream(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 });
+        var storage = new Mock<IR2StorageService>();
+        storage.Setup(service => service.DownloadObjectAsync(
+                "tenants/private/final.jpg",
+                "final-etag",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new R2DownloadObjectResult(content, "image/jpeg; charset=binary", 4, "final-etag"));
+        var service = CreateService(context, storage.Object);
+
+        var result = await service.OpenCheckoutAttachmentDownloadAsync(
+            tenantId,
+            orderId,
+            attachmentId,
+            "test-correlation");
+
+        Assert.Same(content, result.Content);
+        Assert.Equal("customer.jpg", result.FileName);
+        Assert.Equal("image/jpeg", result.ContentType);
+        Assert.Equal(4, result.SizeBytes);
     }
 
     [Fact]
@@ -172,15 +234,38 @@ public sealed class AdminOrderCheckoutFieldPresentationTests
         return new ApplicationDbContext(options, new StaticTenantContext(tenantId));
     }
 
-    private static AdminOrderService CreateService(ApplicationDbContext context) => new(
+    private static AdminOrderService CreateService(ApplicationDbContext context, IR2StorageService? storage = null) => new(
         context,
         Mock.Of<IEventPublisher>(),
         Mock.Of<IRefundEvidenceService>(),
         Mock.Of<ICouponValidationService>(),
         Mock.Of<IPaymentLifecycleService>(),
         Mock.Of<IProductVariantStockRepository>(),
-        Mock.Of<IR2StorageService>(),
+        storage ?? Mock.Of<IR2StorageService>(),
         Mock.Of<ILogger<AdminOrderService>>());
+
+    private static CheckoutAttachment NewAttachedCheckoutAttachment(Guid tenantId, Guid orderId, Guid attachmentId) => new()
+    {
+        Id = attachmentId,
+        TenantId = tenantId,
+        CartId = Guid.NewGuid(),
+        OrderId = orderId,
+        OwnerId = "guest-session",
+        OwnerType = "session",
+        CheckoutFieldDefinitionId = Guid.NewGuid(),
+        ObjectKey = "tenants/private/staged.jpg",
+        FinalObjectKey = "tenants/private/final.jpg",
+        OriginalFileName = "customer.jpg",
+        ContentType = "image/jpeg",
+        MediaType = "image",
+        ExpectedSizeBytes = 4,
+        SizeBytes = 4,
+        Status = CheckoutAttachmentStatus.Attached,
+        FinalETag = "final-etag",
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+        CreatedAt = DateTime.UtcNow,
+        MetadataJson = "{}"
+    };
 
     private static async Task SeedOrderAsync(ApplicationDbContext context, Guid tenantId, Guid orderId)
     {

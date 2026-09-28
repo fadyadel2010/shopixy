@@ -10,6 +10,8 @@ public sealed class CmsPageConfiguration : IEntityTypeConfiguration<CmsPage>
     {
         builder.ToTable("CmsPages");
         builder.HasKey(page => page.Id);
+        builder.HasAlternateKey(page => new { page.Id, page.TenantId })
+            .HasName("AK_CmsPages_Id_TenantId");
 
         builder.Property(page => page.PageGroupId)
             .IsRequired();
@@ -73,25 +75,25 @@ public sealed class CmsPageConfiguration : IEntityTypeConfiguration<CmsPage>
             .IsUnique()
             .HasDatabaseName("UQ_CmsPages_PageGroupId_Version");
 
-        builder.HasIndex(page => page.PageGroupId)
+        builder.HasIndex(page => page.PageGroupId, "UQ_CmsPages_PageGroupId_Draft")
             .IsUnique()
             .HasFilter("\"IsDraft\" AND NOT \"IsDeleted\"")
             .HasDatabaseName("UQ_CmsPages_PageGroupId_Draft");
 
-        builder.HasIndex(page => page.PageGroupId)
+        builder.HasIndex(page => page.PageGroupId, "UQ_CmsPages_PageGroupId_Published")
             .IsUnique()
             .HasFilter("\"IsPublished\" AND NOT \"IsDeleted\"")
             .HasDatabaseName("UQ_CmsPages_PageGroupId_Published");
 
-        builder.HasIndex(page => page.PageGroupId)
+        builder.HasIndex(page => page.PageGroupId, "IX_CmsPages_PageGroupId")
             .HasDatabaseName("IX_CmsPages_PageGroupId");
 
-        builder.HasIndex(page => new { page.TenantId, page.Slug })
+        builder.HasIndex(page => new { page.TenantId, page.Slug }, "UQ_CmsPages_Tenant_Draft_Slug")
             .IsUnique()
             .HasFilter("\"IsDraft\" AND NOT \"IsDeleted\"")
             .HasDatabaseName("UQ_CmsPages_Tenant_Draft_Slug");
 
-        builder.HasIndex(page => new { page.TenantId, page.Slug })
+        builder.HasIndex(page => new { page.TenantId, page.Slug }, "UQ_CmsPages_Tenant_Published_Slug")
             .IsUnique()
             .HasFilter("\"IsPublished\" AND NOT \"IsDeleted\"")
             .HasDatabaseName("UQ_CmsPages_Tenant_Published_Slug");

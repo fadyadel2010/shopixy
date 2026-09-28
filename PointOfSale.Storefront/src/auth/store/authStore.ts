@@ -78,6 +78,7 @@ interface AuthState {
 let refreshPromise: Promise<AuthRefreshResult> | null = null;
 let authRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let authRecoveryAttempt = 0;
+let authRevision = 0;
 
 const AUTH_RECOVERY_BASE_DELAY_MS = 5000;
 const AUTH_RECOVERY_MAX_DELAY_MS = 30000;
@@ -194,12 +195,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Login with email and password
      */
     login: async (request: LoginRequest) => {
+        const operationRevision = ++authRevision;
         set({ isLoading: true, error: null });
 
         try {
             const response = await authApi.login(request);
+            if (operationRevision !== authRevision) {
+                return;
+            }
             get().setAuthenticated(response);
         } catch (error) {
+            if (operationRevision !== authRevision) {
+                return;
+            }
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();
             set({
@@ -216,10 +224,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Register new account
      */
     register: async (request: RegisterRequest) => {
+        const operationRevision = ++authRevision;
         set({ isLoading: true, error: null });
 
         try {
             const response = await authApi.register(request);
+            if (operationRevision !== authRevision) {
+                return response.customer;
+            }
             resetAuthRecoveryState();
             clearAuthenticatedContext();
             set({
@@ -230,6 +242,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             });
             return response.customer;
         } catch (error) {
+            if (operationRevision !== authRevision) {
+                throw error;
+            }
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();
             set({
@@ -251,6 +266,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * - Prevents cart data from persisting across different users
      */
     logout: async () => {
+        authRevision += 1;
         resetAuthRecoveryState();
         clearAuthenticatedContext();
 
@@ -304,6 +320,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Called on app boot to verify if user is authenticated
      */
     checkAuth: async (options = {}) => {
+        const operationRevision = authRevision;
         const { refreshAuth } = get();
         const { silent = false } = options;
 
@@ -313,6 +330,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         try {
             const customer = await authApi.getMe();
+            if (operationRevision !== authRevision) {
+                return;
+            }
             const previousCustomer = get().customer;
             const wasDegraded = get().status === 'degraded';
 
@@ -335,6 +355,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 emitAuthDegradedRecovery(options.reason || 'check_auth', 'recovered');
             }
         } catch (error) {
+            if (operationRevision !== authRevision) {
+                return;
+            }
             const authError = authApi.normalizeAuthError(error);
 
             if (
@@ -399,10 +422,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
 
         refreshPromise = (async () => {
+            const operationRevision = authRevision;
             try {
                 console.log('[Auth] Starting secure session refresh...');
                 const wasDegraded = get().status === 'degraded';
                 const response = await authApi.refreshToken();
+                if (operationRevision !== authRevision) {
+                    return get().status === 'authenticated' ? 'authenticated' : 'unauthenticated';
+                }
                 const previousCustomer = get().customer;
 
                 if (previousCustomer && previousCustomer.id !== response.customer.id) {
@@ -427,6 +454,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 console.log('[Auth] Secure session refresh successful');
                 return 'authenticated';
             } catch (error) {
+                if (operationRevision !== authRevision) {
+                    return get().status === 'authenticated' ? 'authenticated' : 'unauthenticated';
+                }
                 const authError = authApi.normalizeAuthError(error);
                 console.warn('[Auth] Secure session refresh failed:', authError.code);
 
@@ -461,12 +491,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Google login
      */
     googleLogin: async (idToken: string) => {
+        const operationRevision = ++authRevision;
         set({ isLoading: true, error: null });
 
         try {
             const response = await authApi.googleLogin(idToken);
+            if (operationRevision !== authRevision) {
+                return;
+            }
             get().setAuthenticated(response);
         } catch (error) {
+            if (operationRevision !== authRevision) {
+                return;
+            }
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();
             set({
@@ -483,12 +520,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Facebook login
      */
     facebookLogin: async (accessToken: string) => {
+        const operationRevision = ++authRevision;
         set({ isLoading: true, error: null });
 
         try {
             const response = await authApi.facebookLogin(accessToken);
+            if (operationRevision !== authRevision) {
+                return;
+            }
             get().setAuthenticated(response);
         } catch (error) {
+            if (operationRevision !== authRevision) {
+                return;
+            }
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();
             set({
@@ -629,6 +673,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Set unauthenticated state
      */
     setUnauthenticated: () => {
+        authRevision += 1;
         resetAuthRecoveryState();
         clearAuthenticatedContext();
         set({

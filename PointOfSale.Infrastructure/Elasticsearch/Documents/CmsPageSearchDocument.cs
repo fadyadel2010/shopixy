@@ -12,7 +12,7 @@ namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 /// - NOT the source of truth (PostgreSQL is)
 /// 
 /// Document ID Strategy:
-/// - Uses composite key: {TenantId}_{Slug}
+/// - Uses composite key: {TenantId}_{PageGroupId}
 /// - Ensures tenant isolation and idempotent indexing
 /// </summary>
 [ElasticsearchType(RelationName = "cmspage")]
@@ -26,7 +26,7 @@ public class CmsPageSearchDocument
     public Guid TenantId { get; set; }
 
     /// <summary>
-    /// Page ID (StoreConfigId + Slug combination makes unique).
+    /// Immutable logical page identity (CmsPage.PageGroupId).
     /// </summary>
     [Keyword]
     public Guid PageId { get; set; }
@@ -61,11 +61,17 @@ public class CmsPageSearchDocument
     [Text(Analyzer = "standard")]
     public string? Description { get; set; }
 
+    [Text(Analyzer = "standard")]
+    public string? DescriptionAr { get; set; }
+
     /// <summary>
     /// Meta description for SEO.
     /// </summary>
     [Text(Analyzer = "standard")]
     public string? MetaDescription { get; set; }
+
+    [Text(Analyzer = "standard")]
+    public string? MetaDescriptionAr { get; set; }
 
     /// <summary>
     /// Whether the page is active/published.
@@ -84,6 +90,9 @@ public class CmsPageSearchDocument
     /// </summary>
     [Text(Analyzer = "standard")]
     public string? SearchText { get; set; }
+
+    [Text(Analyzer = "standard")]
+    public string? SearchTextAr { get; set; }
 
     /// <summary>
     /// Published version number.
@@ -111,9 +120,9 @@ public class CmsPageSearchDocument
 
     /// <summary>
     /// Generates the document ID for Elasticsearch.
-    /// Uses composite key: {TenantId}_{Slug} for tenant isolation and idempotency.
+    /// Uses composite key: {TenantId}_{PageGroupId} for tenant isolation and idempotency.
     /// </summary>
-    public string GetDocumentId() => $"{TenantId}_{Slug}";
+    public string GetDocumentId() => $"{TenantId}_{PageId}";
 
     /// <summary>
     /// Builds aggregated search text from all searchable fields.
@@ -122,9 +131,14 @@ public class CmsPageSearchDocument
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(Name)) parts.Add(Name);
-        if (!string.IsNullOrWhiteSpace(NameAr)) parts.Add(NameAr);
         if (!string.IsNullOrWhiteSpace(Description)) parts.Add(Description);
         if (!string.IsNullOrWhiteSpace(MetaDescription)) parts.Add(MetaDescription);
         SearchText = string.Join(" ", parts);
+
+        var arabicParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(NameAr)) arabicParts.Add(NameAr);
+        if (!string.IsNullOrWhiteSpace(DescriptionAr)) arabicParts.Add(DescriptionAr);
+        if (!string.IsNullOrWhiteSpace(MetaDescriptionAr)) arabicParts.Add(MetaDescriptionAr);
+        SearchTextAr = arabicParts.Count == 0 ? null : string.Join(" ", arabicParts);
     }
 }

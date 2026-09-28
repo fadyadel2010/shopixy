@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using Microsoft.Extensions.Logging;
@@ -628,6 +630,7 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductList starting | TenantId: {TenantId} | Page: {Page} | PageSize: {PageSize} | CategoryId: {CategoryId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, query.Page, query.PageSize, query.CategoryId, affiliateModeOnly, cacheKey);
 
+        var cacheFactoryExecuted = false;
         var cacheResult = await _cacheService.GetOrCreateOwnedWithStatusAsync(
             cacheKey,
             "storefront-product-list",
@@ -635,9 +638,10 @@ public class StorefrontProductService : IStorefrontProductService
             TimeSpan.FromMinutes(_redisSettings.ProductListCacheTtlMinutes),
             async ct =>
             {
+                cacheFactoryExecuted = true;
                 try
                 {
-                    var (items, totalCount) = await _repository.GetProductListAsync(
+                    var (items, projectedTotalCount) = await _repository.GetProductListAsync(
                         tenantId,
                         query.Page,
                         query.PageSize,
@@ -647,9 +651,39 @@ public class StorefrontProductService : IStorefrontProductService
                         affiliateModeOnly: affiliateModeOnly,
                         ct);
 
+                    var authorityPage = await LoadCurrentSqlProductListAuthorityPageAsync(
+                        tenantId,
+                        query,
+                        affiliateModeOnly,
+                        ct);
+                    var projectionHasCompleteMembership =
+                        projectedTotalCount == authorityPage.TotalCount &&
+                        items.Select(item => item.ProductId).ToHashSet().SetEquals(authorityPage.ProductIds);
+                    var projectedGenerations = items
+                        .Where(item => item.TenantId == tenantId && item.ProductId != Guid.Empty)
+                        .GroupBy(item => item.ProductId)
+                        .ToDictionary(group => group.Key, group => group.First().ProductGeneration);
+                    var projectedById = items
+                        .Where(item => item.TenantId == tenantId && item.ProductId != Guid.Empty)
+                        .GroupBy(item => item.ProductId)
+                        .ToDictionary(group => group.Key, group => group.First());
+                    var orderedCandidates = authorityPage.ProductIds
+                        .Select(productId => projectedById.GetValueOrDefault(productId) ?? new ProductDocument
+                        {
+                            TenantId = tenantId,
+                            ProductId = productId
+                        })
+                        .ToList();
+                    var latestProjectedDocument = projectionHasCompleteMembership
+                        ? items
+                            .OrderByDescending(item => item.LastEventOccurredAtUtc)
+                            .ThenByDescending(item => item.LastEventVersion)
+                            .FirstOrDefault()
+                        : null;
+
                     var visibleItems = await RecomposeCurrentSqlProductListAuthorityAsync(
                         tenantId,
-                        items,
+                        orderedCandidates,
                         ct);
 
                     var dtoItems = visibleItems.Select(MapToListItemDto).ToList();
@@ -666,15 +700,18 @@ public class StorefrontProductService : IStorefrontProductService
                             $"AF-12 Security breach: {leakedCount} non-affiliate products returned in Affiliate Mode");
                     }
 
-                    var latestDocument = visibleItems
-                        .OrderByDescending(item => item.SyncedAtUtc)
-                        .FirstOrDefault();
+                    var freshness = projectionHasCompleteMembership &&
+                                    visibleItems.Count == authorityPage.ProductIds.Count
+                        ? ResolveProductListFreshness(visibleItems, projectedGenerations)
+                        : new ProductListFreshness(false, null, null);
 
                     return CachePopulationResult<PagedResult<ProductListItemDto>>.FromValue(
-                        new PagedResult<ProductListItemDto>(dtoItems, query.Page, query.PageSize, (int)totalCount),
-                        latestDocument?.SyncedAtUtc,
-                        latestDocument?.LastEventOccurredAtUtc,
-                        skipCache: latestDocument?.LastEventOccurredAtUtc == null);
+                        new PagedResult<ProductListItemDto>(dtoItems, query.Page, query.PageSize, authorityPage.TotalCount),
+                        latestProjectedDocument?.SyncedAtUtc,
+                        latestProjectedDocument?.LastEventOccurredAtUtc,
+                        skipCache: !freshness.HasProof,
+                        projectionVersion: freshness.ProjectionVersion,
+                        sourceVersion: freshness.SourceVersion);
                 }
                 catch (Exception ex)
                 {
@@ -693,7 +730,7 @@ public class StorefrontProductService : IStorefrontProductService
 
         // A factory result was composed from SQL authority in this request. Running
         // the same full overlay again only reacquires the same authority domains.
-        if (cacheResult.Refreshed)
+        if (cacheFactoryExecuted)
         {
             return result;
         }
@@ -701,6 +738,7 @@ public class StorefrontProductService : IStorefrontProductService
         return await RecomposeCachedProductListFromSqlAuthorityAsync(
             tenantId,
             result,
+            query,
             affiliateModeOnly,
             cancellationToken);
     }
@@ -758,30 +796,22 @@ public class StorefrontProductService : IStorefrontProductService
     private async Task<PagedResult<ProductListItemDto>> RecomposeCachedProductListFromSqlAuthorityAsync(
         Guid tenantId,
         PagedResult<ProductListItemDto> cached,
+        ProductListQuery query,
         bool affiliateModeOnly,
         CancellationToken cancellationToken)
     {
-        if (cached.Items.Count == 0)
-        {
-            return cached;
-        }
-
-        var placeholders = new List<ProductDocument>(cached.Items.Count);
-        var sourceItems = new List<ProductListItemDto>(cached.Items.Count);
-        foreach (var item in cached.Items)
-        {
-            if (item.Id == Guid.Empty)
-            {
-                continue;
-            }
-
-            placeholders.Add(new ProductDocument
+        var authorityPage = await LoadCurrentSqlProductListAuthorityPageAsync(
+            tenantId,
+            query,
+            affiliateModeOnly,
+            cancellationToken);
+        var placeholders = authorityPage.ProductIds
+            .Select(productId => new ProductDocument
             {
                 TenantId = tenantId,
-                ProductId = item.Id
-            });
-            sourceItems.Add(item);
-        }
+                ProductId = productId
+            })
+            .ToList();
 
         var recomposedDocs = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
             _dbContext,
@@ -789,8 +819,8 @@ public class StorefrontProductService : IStorefrontProductService
             tenantId,
             cancellationToken);
 
-        var recomposed = new List<ProductListItemDto>(sourceItems.Count);
-        for (var i = 0; i < sourceItems.Count; i++)
+        var recomposed = new List<ProductListItemDto>(authorityPage.ProductIds.Count);
+        for (var i = 0; i < authorityPage.ProductIds.Count; i++)
         {
             var current = recomposedDocs[i];
             if (!IsPubliclyVisibleProduct(current))
@@ -819,7 +849,72 @@ public class StorefrontProductService : IStorefrontProductService
             recomposed,
             cached.Page,
             cached.PageSize,
-            recomposed.Count);
+            authorityPage.TotalCount);
+    }
+
+    private async Task<ProductListAuthorityPage> LoadCurrentSqlProductListAuthorityPageAsync(
+        Guid tenantId,
+        ProductListQuery query,
+        bool affiliateModeOnly,
+        CancellationToken cancellationToken)
+    {
+        if (tenantId == Guid.Empty || !query.IsActive)
+        {
+            return new ProductListAuthorityPage([], 0);
+        }
+
+        var products = _dbContext.Products
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(product =>
+                product.TenantId == tenantId &&
+                !product.IsDeleted &&
+                product.IsActive &&
+                product.IsOnlineVisible &&
+                product.PublishStatus == PublishStatus.Published &&
+                (!query.CategoryId.HasValue || product.CategoryId == query.CategoryId.Value) &&
+                _dbContext.Tenants.IgnoreQueryFilters().Any(tenant =>
+                    tenant.Id == product.TenantId &&
+                    tenant.IsActive &&
+                    tenant.Status == TenantStatus.Active &&
+                    tenant.DeletedAtUtc == null) &&
+                _dbContext.Categories.IgnoreQueryFilters().Any(category =>
+                    category.Id == product.CategoryId &&
+                    category.TenantId == tenantId &&
+                    !category.IsDeleted));
+
+        if (affiliateModeOnly)
+        {
+            products = products.Where(product =>
+                _dbContext.AffiliateProductPolicies.IgnoreQueryFilters().Any(policy =>
+                    policy.TenantId == tenantId &&
+                    policy.ProductId == product.Id &&
+                    policy.IsEnabled &&
+                    !policy.IsDeleted &&
+                    policy.AffiliateCategoryId.HasValue &&
+                    _dbContext.AffiliateCategories.IgnoreQueryFilters().Any(category =>
+                        category.Id == policy.AffiliateCategoryId.Value &&
+                        category.IsActive &&
+                        !category.IsDeleted &&
+                        (category.Level == 1 && category.ParentId == null ||
+                         category.Level == 2 && category.ParentId.HasValue &&
+                         _dbContext.AffiliateCategories.IgnoreQueryFilters().Any(parent =>
+                             parent.Id == category.ParentId.Value &&
+                             parent.Level == 1 &&
+                             parent.IsActive &&
+                             !parent.IsDeleted)))));
+        }
+
+        var totalCount = await products.CountAsync(cancellationToken);
+        var productIds = await products
+            .OrderByDescending(product => product.CreatedAt)
+            .ThenBy(product => product.Id)
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(product => product.Id)
+            .ToListAsync(cancellationToken);
+
+        return new ProductListAuthorityPage(productIds, totalCount);
     }
 
     private async Task<ProductDocument?> ApplyCurrentSqlProductDetailAuthorityAsync(
@@ -876,6 +971,51 @@ public class StorefrontProductService : IStorefrontProductService
     {
         return document is { IsActive: true, IsOnlineVisible: true };
     }
+
+    private static ProductListFreshness ResolveProductListFreshness(
+        IReadOnlyCollection<ProductDocument> documents,
+        IReadOnlyDictionary<Guid, long> projectedGenerations)
+    {
+        if (documents.Count == 0)
+        {
+            return new ProductListFreshness(true, 0, 0);
+        }
+
+        long sourceVersion = 0;
+        foreach (var document in documents)
+        {
+            var documentSourceVersion = document.ProductGeneration;
+            if (document.LastEventOccurredAtUtc == null ||
+                document.LastEventVersion <= 0 ||
+                documentSourceVersion <= 0 ||
+                !projectedGenerations.TryGetValue(document.ProductId, out var projectedGeneration) ||
+                projectedGeneration <= 0)
+            {
+                return new ProductListFreshness(false, null, null);
+            }
+
+            // LastEventVersion can belong to a stock, variant, or product event
+            // namespace. ProductGeneration is the SQL-authored product revision on
+            // both sides and is therefore the only compatible correspondence proof.
+            if (projectedGeneration != documentSourceVersion)
+            {
+                return new ProductListFreshness(false, projectedGeneration, documentSourceVersion);
+            }
+
+            sourceVersion = Math.Max(sourceVersion, documentSourceVersion);
+        }
+
+        return new ProductListFreshness(true, sourceVersion, sourceVersion);
+    }
+
+    private readonly record struct ProductListFreshness(
+        bool HasProof,
+        long? ProjectionVersion,
+        long? SourceVersion);
+
+    private readonly record struct ProductListAuthorityPage(
+        IReadOnlyList<Guid> ProductIds,
+        int TotalCount);
 
     private static ProductVariantDto? ResolveDefaultVariant(ProductReadDto product) =>
         product.Variants.FirstOrDefault(variant => variant.Id == product.DefaultVariantId && variant.IsActive)

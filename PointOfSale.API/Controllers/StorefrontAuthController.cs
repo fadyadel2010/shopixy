@@ -106,6 +106,13 @@ public class StorefrontAuthController : ControllerBase
 
         if (!result.Success)
         {
+            if (result.Error == "REGISTRATION_FAILED")
+            {
+                return StatusCode(
+                    StatusCodes.Status503ServiceUnavailable,
+                    ApiErrorResponse.ServiceUnavailable(traceId));
+            }
+
             return BadRequest(new ApiErrorResponse(
                 result.Error ?? "REGISTRATION_FAILED",
                 result.Message ?? "Registration failed",
@@ -173,6 +180,25 @@ public class StorefrontAuthController : ControllerBase
 
         if (!result.Success)
         {
+            // A rejected credential submission must not leave an older browser identity active.
+            _cookieHelper.ClearAccessTokenCookie(Response);
+            _cookieHelper.ClearRefreshTokenCookie(Response);
+
+            if (result.Error == "LOGIN_FAILED")
+            {
+                return StatusCode(
+                    StatusCodes.Status503ServiceUnavailable,
+                    ApiErrorResponse.ServiceUnavailable(traceId));
+            }
+
+            if (result.Error == "PHONE_BLOCKED")
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(
+                    result.Error,
+                    result.Message ?? "This account is not allowed to sign in.",
+                    traceId));
+            }
+
             // Special handling for deactivated accounts
             if (result.Error == "ACCOUNT_DEACTIVATED")
             {

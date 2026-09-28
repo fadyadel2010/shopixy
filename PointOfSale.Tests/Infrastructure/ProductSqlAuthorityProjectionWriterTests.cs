@@ -141,6 +141,52 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
     }
 
     [Fact]
+    public async Task ApplyAsync_StampsProjectionIngestionTimeAtTheWriteBoundary()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var unitId = Guid.NewGuid();
+        var categoryId = Guid.NewGuid();
+
+        await using var dbContext = CreateDbContext();
+        SeedActiveTenantAndCategory(dbContext, tenantId, categoryId);
+        var product = CreateVisibleProduct(tenantId, productId, categoryId);
+        var unit = CreateUnit(tenantId, unitId, "Piece", "pc");
+        dbContext.Products.Add(product);
+        dbContext.Units.Add(unit);
+        dbContext.ProductUnits.Add(
+            CreateProductUnit(productId, unitId, unit, salePrice: 25m, conversionFactor: 1m, isDefault: true, isBaseUnit: true));
+        await dbContext.SaveChangesAsync();
+
+        ProductDocument? capturedProjection = null;
+        var repository = CreateRepositoryMock(captured => capturedProjection = captured);
+        var writer = new ProductSqlAuthorityProjectionWriter(
+            dbContext,
+            new StorefrontProductProjectionMutationBoundary(repository.Object));
+        var staleIngestionTime = DateTime.UtcNow.AddDays(-30);
+        var startedAtUtc = DateTime.UtcNow;
+
+        await writer.ApplyAsync(
+            new ProductSqlAuthorityProjectionWriteRequest(
+                tenantId,
+                productId,
+                new ProductDocument
+                {
+                    TenantId = tenantId,
+                    ProductId = productId,
+                    SyncedAtUtc = staleIngestionTime
+                },
+                Guid.NewGuid(),
+                DateTime.UtcNow.AddMinutes(-1),
+                EventVersion: 1));
+        var completedAtUtc = DateTime.UtcNow;
+
+        Assert.NotNull(capturedProjection);
+        Assert.InRange(capturedProjection!.SyncedAtUtc, startedAtUtc, completedAtUtc);
+        Assert.NotEqual(staleIngestionTime, capturedProjection.SyncedAtUtc);
+    }
+
+    [Fact]
     public void ProductSearchDocumentMapper_UsesDefaultVariantOnlinePriceForSimpleProducts()
     {
         var product = new ProductDocument

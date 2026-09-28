@@ -45,9 +45,8 @@ const CONTENT_TYPES = {
     Blocks: 'Blocks',
 }
 
-function createEmptyPageForm() {
+function createEmptyTranslation() {
     return {
-        slug: '',
         title: '',
         contentType: CONTENT_TYPES.RichText,
         content: '',
@@ -57,6 +56,16 @@ function createEmptyPageForm() {
             metaDescription: '',
             metaKeywords: '',
             openGraphImageUrl: '',
+        },
+    }
+}
+
+function createEmptyPageForm() {
+    return {
+        slug: '',
+        translations: {
+            en: createEmptyTranslation(),
+            ar: null,
         },
     }
 }
@@ -95,12 +104,13 @@ export function CmsPageEditor() {
     const { pageId } = useParams()
     const navigate = useNavigate()
     const storefrontFrame = useStorefrontAdminFrame()
-    const { i18n } = useTranslation()
+    const { t, i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const isNewPage = pageId === 'new'
 
     const [page, setPage] = useState(null)
     const [form, setForm] = useState(createEmptyPageForm())
+    const [activeLocale, setActiveLocale] = useState('en')
     const [acceptedFingerprint, setAcceptedFingerprint] = useState(() => getPageFormFingerprint(createEmptyPageForm()))
     const [isLoading, setIsLoading] = useState(!isNewPage)
     const [isSaving, setIsSaving] = useState(false)
@@ -123,13 +133,16 @@ export function CmsPageEditor() {
     const currentFingerprint = useMemo(() => getPageFormFingerprint(form), [form])
     const isDirty = currentFingerprint !== acceptedFingerprint
     const canPublish = !isSaving && !isPublishing && (isDirty || Boolean(page?.draft))
+    const activeTranslation = form.translations[activeLocale] || createEmptyTranslation()
+    const englishTranslation = form.translations.en
+    const arabicTranslation = form.translations.ar
 
     useEffect(() => {
         storefrontFrame.setStorefrontBreadcrumbLabel?.(
-            form.title.trim() || (isNewPage ? (isRTL ? 'صفحة جديدة' : 'New Page') : (isRTL ? 'صفحة' : 'Page')),
+            englishTranslation.title.trim() || t(isNewPage ? 'storefront.cms.pageEditor.newPageLabel' : 'storefront.cms.pageEditor.pageLabel'),
         )
         return () => storefrontFrame.setStorefrontBreadcrumbLabel?.('')
-    }, [form.title, isNewPage, isRTL, storefrontFrame.setStorefrontBreadcrumbLabel])
+    }, [englishTranslation.title, isNewPage, storefrontFrame.setStorefrontBreadcrumbLabel, t])
 
     useEffect(() => {
         if (isNewPage) {
@@ -154,29 +167,70 @@ export function CmsPageEditor() {
             adoptAuthoritativePage(data, id)
         } catch (err) {
             console.error('Failed to load CMS page', err)
-            setError(isRTL ? 'تعذر تحميل الصفحة.' : 'Unable to load page.')
+            setError(t('storefront.cms.loadFailed'))
         } finally {
             setIsLoading(false)
         }
     }
 
     function updateForm(patch) {
-        setForm((current) => ({ ...current, ...patch }))
+        setForm((current) => ({
+            ...current,
+            translations: {
+                ...current.translations,
+                [activeLocale]: {
+                    ...(current.translations[activeLocale] || createEmptyTranslation()),
+                    ...patch,
+                },
+            },
+        }))
     }
 
     function updateSeo(patch) {
         setForm((current) => ({
             ...current,
-            seo: {
-                ...current.seo,
-                ...patch,
+            translations: {
+                ...current.translations,
+                [activeLocale]: {
+                    ...(current.translations[activeLocale] || createEmptyTranslation()),
+                    seo: {
+                        ...(current.translations[activeLocale]?.seo || createEmptyTranslation().seo),
+                        ...patch,
+                    },
+                },
             },
         }))
     }
 
+    function selectLocale(locale) {
+        setForm((current) => locale === 'ar' && !current.translations.ar
+            ? {
+                ...current,
+                translations: {
+                    ...current.translations,
+                    ar: createEmptyTranslation(),
+                },
+            }
+            : current)
+        setActiveLocale(locale)
+    }
+
+    function removeArabicTranslation() {
+        setForm((current) => ({
+            ...current,
+            translations: { ...current.translations, ar: null },
+        }))
+        setActiveLocale('en')
+    }
+
     async function handleSave(expectedVersionOverride = null) {
-        if (!form.slug.trim() || !form.title.trim()) {
-            setError(isRTL ? 'العنوان والرابط مطلوبان.' : 'Title and slug are required.')
+        if (!form.slug.trim() || !hasTranslationContent(englishTranslation)) {
+            setError(t('storefront.cms.validation.titleAndSlugRequired'))
+            return null
+        }
+
+        if (arabicTranslation && !hasTranslationContent(arabicTranslation)) {
+            setError(t('storefront.cms.pageEditor.arabicIncomplete', { defaultValue: 'Arabic must include both title and content, or be removed.' }))
             return null
         }
 
@@ -205,10 +259,16 @@ export function CmsPageEditor() {
                 { preserveLocalCandidate: hasNewerLocalEdits },
             )
             setNotice(hasNewerLocalEdits
-                ? (isRTL ? 'تم حفظ المسودة مع الاحتفاظ بالتعديلات الأحدث غير المحفوظة.' : 'Draft saved. Newer unsaved edits were retained.')
-                : (isRTL ? 'تم حفظ المسودة واعتماد استجابة الخادم.' : 'Draft saved and backend response adopted.'))
+                ? t('storefront.cms.pageEditor.savedWithNewerEdits')
+                : t('storefront.cms.pageEditor.saved'))
 
             if (isNewPage) {
+                const returnTarget = new URLSearchParams(window.location.search).get('returnTo')
+                if (returnTarget === 'navigation' && window.opener) {
+                    window.opener.postMessage({ type: 'shopixy:cms-page-created', pageId: admittedPage.id }, window.location.origin)
+                    window.close()
+                    return admittedPage
+                }
                 navigate(`/storefront/content/pages/${admittedPage.id}`, { replace: true })
             }
 
@@ -249,8 +309,8 @@ export function CmsPageEditor() {
             const hasNewerLocalEdits = getPageFormFingerprint(formRef.current) !== publishedCandidateFingerprint
             adoptAuthoritativePage(published, targetPage.id, { preserveLocalCandidate: hasNewerLocalEdits })
             setNotice(hasNewerLocalEdits
-                ? (isRTL ? 'تم نشر المسودة المحفوظة مع الاحتفاظ بالتعديلات الأحدث غير المحفوظة.' : 'Saved draft published. Newer unsaved edits were retained.')
-                : (isRTL ? 'تم نشر الصفحة بنجاح.' : 'Page published successfully.'))
+                ? t('storefront.cms.pageEditor.publishedWithNewerEdits')
+                : t('storefront.cms.pageEditor.published'))
             setIsPublishConfirmOpen(false)
         } catch (err) {
             console.error('Failed to publish CMS page', err)
@@ -285,7 +345,7 @@ export function CmsPageEditor() {
             return admittedHistory
         } catch (err) {
             console.error('Failed to load CMS version history', err)
-            setError(isRTL ? 'تعذر تحميل سجل الإصدارات.' : 'Unable to load version history.')
+            setError(t('storefront.cms.pageEditor.historyLoadFailed'))
             return null
         } finally {
             setIsHistoryLoading(false)
@@ -338,7 +398,7 @@ export function CmsPageEditor() {
 
         const expectedVersion = page?.draft?.version ?? page?.published?.version
         if (!expectedVersion) {
-            setError(isRTL ? 'لا توجد نسخة حالية مقبولة للاستعادة.' : 'Rollback requires current backend version authority.')
+            setError(t('storefront.cms.pageEditor.rollbackRequiresVersion'))
             return
         }
 
@@ -366,7 +426,7 @@ export function CmsPageEditor() {
                 setConflict(conflictState)
                 setError(conflictState.message)
             } else {
-                setError(err?.response?.data?.message || (isRTL ? 'فشل استعادة النسخة.' : 'Failed to rollback version.'))
+                setError(err?.response?.data?.message || t('storefront.cms.pageEditor.rollbackFailed'))
             }
             setRollbackState((current) => ({ ...current, isRollingBack: false }))
         }
@@ -374,17 +434,17 @@ export function CmsPageEditor() {
 
     async function handlePreview() {
         if (!form.slug.trim()) {
-            setError(isRTL ? 'احفظ الصفحة أولاً أو أدخل رابطاً صالحاً للمعاينة.' : 'Add a valid slug before previewing.')
+            setError(t('storefront.cms.validation.previewSlugRequired'))
             return
         }
 
         if (isNewPage) {
-            setError(isRTL ? 'احفظ الصفحة أولاً لإنشاء مسودة قابلة للمعاينة.' : 'Save the page first so a preview draft exists.')
+            setError(t('storefront.cms.validation.previewSaveFirst'))
             return
         }
 
         if (isDirty) {
-            setError(isRTL ? 'احفظ تغييراتك قبل المعاينة. المعاينة لا تحفظ أو تغيّر الإصدارات.' : 'Save your changes before previewing. Preview never saves or changes versions.')
+            setError(t('storefront.cms.pageEditor.previewDirty'))
             return
         }
 
@@ -393,32 +453,28 @@ export function CmsPageEditor() {
             window.open(previewAccess.previewUrl, '_blank', 'noopener,noreferrer')
         } catch (err) {
             console.error('Failed to create CMS preview link', err)
-            setError(isRTL ? 'تعذر إنشاء رابط معاينة آمن.' : 'Unable to create a secure preview link.')
+            setError(t('storefront.cms.validation.previewLinkFailed'))
         }
     }
 
     function addBlock(kind) {
-        setForm((current) => {
-            const currentBlocks = Array.isArray(current.content) ? current.content : []
-            const nextBlock = kind === 'image'
-                ? createImageBlock()
-                : kind === 'faq'
-                    ? createFaqBlock()
-                    : createTextBlock()
+        const currentBlocks = Array.isArray(activeTranslation.content) ? activeTranslation.content : []
+        const nextBlock = kind === 'image'
+            ? createImageBlock()
+            : kind === 'faq'
+                ? createFaqBlock()
+                : createTextBlock()
 
-            return {
-                ...current,
-                contentType: CONTENT_TYPES.Blocks,
-                content: [...currentBlocks, nextBlock],
-            }
+        updateForm({
+            contentType: CONTENT_TYPES.Blocks,
+            content: [...currentBlocks, nextBlock],
         })
     }
 
     function updateBlock(index, nextBlock) {
-        setForm((current) => ({
-            ...current,
-            content: current.content.map((block, blockIndex) => blockIndex === index ? nextBlock : block),
-        }))
+        updateForm({
+            content: activeTranslation.content.map((block, blockIndex) => blockIndex === index ? nextBlock : block),
+        })
     }
 
     function removeBlock(index) {
@@ -426,28 +482,22 @@ export function CmsPageEditor() {
     }
 
     function confirmRemoveBlock() {
-        setForm((current) => ({
-            ...current,
-            content: current.content.filter((_, blockIndex) => blockIndex !== deleteBlockIndex),
-        }))
+        updateForm({
+            content: activeTranslation.content.filter((_, blockIndex) => blockIndex !== deleteBlockIndex),
+        })
         setDeleteBlockIndex(null)
     }
 
     function moveBlock(index, offset) {
         const targetIndex = index + offset
-        if (targetIndex < 0 || targetIndex >= form.content.length) {
+        if (targetIndex < 0 || targetIndex >= activeTranslation.content.length) {
             return
         }
 
-        setForm((current) => {
-            const blocks = [...current.content]
-            const [selected] = blocks.splice(index, 1)
-            blocks.splice(targetIndex, 0, selected)
-            return {
-                ...current,
-                content: blocks,
-            }
-        })
+        const blocks = [...activeTranslation.content]
+        const [selected] = blocks.splice(index, 1)
+        blocks.splice(targetIndex, 0, selected)
+        updateForm({ content: blocks })
     }
 
     function handleDiscard() {
@@ -455,7 +505,7 @@ export function CmsPageEditor() {
         setForm(acceptedForm)
         setAcceptedFingerprint(getPageFormFingerprint(acceptedForm))
         setError('')
-        setNotice('Changes discarded. The accepted draft has been restored.')
+        setNotice(t('storefront.cms.pageEditor.discarded'))
         setConflict(null)
         setIsDiscardConfirmOpen(false)
     }
@@ -472,9 +522,9 @@ export function CmsPageEditor() {
         try {
             adoptConflictLatestVersion(conflict, pageId)
             setError('')
-            setNotice('Latest accepted version loaded.')
+            setNotice(t('storefront.cms.pageEditor.latestLoaded'))
         } catch {
-            setError('Latest version was rejected by page identity admission.')
+            setError(t('storefront.cms.pageEditor.latestRejected'))
         }
     }
 
@@ -485,16 +535,16 @@ export function CmsPageEditor() {
     }
 
     if (isLoading) {
-        return <AuthoringLoadingState label="Loading CMS Page draft…" />
+        return <AuthoringLoadingState label={t('storefront.cms.pageEditor.loading')} />
     }
 
     if (!isNewPage && !page) {
         return (
             <div className="rounded-[28px] border border-rose-200 bg-white p-8 shadow-sm">
-                <h1 className="text-2xl font-semibold text-slate-900">{isRTL ? 'تعذر فتح محرر الصفحة' : 'Page editor unavailable'}</h1>
-                <p className="mt-2 text-sm text-rose-700">{error || (isRTL ? 'لم يتم تحميل نسخة موثوقة.' : 'No authoritative page response was loaded.')}</p>
+                <h1 className="text-2xl font-semibold text-slate-900">{t('storefront.cms.pageEditor.unavailable')}</h1>
+                <p className="mt-2 text-sm text-rose-700">{error || t('storefront.cms.pageEditor.unavailableMessage')}</p>
                 <button type="button" onClick={() => loadPage(pageId)} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">
-                    <RefreshCcw size={16} /> {isRTL ? 'إعادة المحاولة' : 'Retry loading'}
+                    <RefreshCcw size={16} /> {t('storefront.cms.pageEditor.retryLoading')}
                 </button>
             </div>
         )
@@ -503,63 +553,84 @@ export function CmsPageEditor() {
     return (
         <div className="space-y-6">
             <AuthoringActionBar
-                title={isNewPage ? 'Create Page' : form.title || 'Edit Page'}
-                subtitle={page?.publishedAtUtc ? `Last published ${new Date(page.publishedAtUtc).toLocaleString()}. Preview uses the saved draft.` : 'This Page is still in draft mode. Preview never saves changes.'}
-                backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront/content/pages') }}
+                title={isNewPage ? t('storefront.cms.pageEditor.create') : englishTranslation.title || t('storefront.cms.pageEditor.edit')}
+                subtitle={page?.publishedAtUtc ? t('storefront.cms.pageEditor.lastPublished', { time: new Date(page.publishedAtUtc).toLocaleString(isRTL ? 'ar' : 'en') }) : t('storefront.cms.pageEditor.draftSubtitle')}
+                backAction={{ label: t('storefront.cms.pageEditor.back'), onClick: () => requestNavigation('/storefront/content/pages') }}
                 status={<AuthoringStatusBadge state={isPublishing ? 'publishing' : isSaving ? 'saving' : isDirty ? 'dirty' : page?.published ? 'published' : 'draft'} />}
-                previewAction={{ label: 'Preview Saved Draft', onClick: handlePreview, disabled: isNewPage || isDirty || isSaving || isPublishing, title: isDirty ? 'Save Draft before previewing' : undefined }}
-                historyAction={{ label: 'Page History', onClick: openVersionHistory, disabled: isNewPage || isSaving || isPublishing }}
-                discardAction={{ label: 'Discard', onClick: () => setIsDiscardConfirmOpen(true), disabled: !isDirty || isSaving || isPublishing }}
-                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => handleSave(), disabled: !isDirty || isPublishing, busy: isSaving }}
-                publishAction={{ label: 'Publish Page', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: !canPublish || isSaving, busy: isPublishing }}
+                previewAction={{ label: t('storefront.cms.pageEditor.preview'), onClick: handlePreview, disabled: isNewPage || isDirty || isSaving || isPublishing, title: isDirty ? t('storefront.cms.pageEditor.saveBeforePreview') : undefined }}
+                historyAction={{ label: t('storefront.cms.pageEditor.history'), onClick: openVersionHistory, disabled: isNewPage || isSaving || isPublishing }}
+                discardAction={{ label: t('storefront.cms.pageEditor.discard'), onClick: () => setIsDiscardConfirmOpen(true), disabled: !isDirty || isSaving || isPublishing }}
+                saveAction={{ label: t('storefront.cms.pageEditor.saveDraft'), busyLabel: t('storefront.cms.pageEditor.saving'), onClick: () => handleSave(), disabled: !isDirty || isPublishing, busy: isSaving }}
+                publishAction={{ label: t('storefront.cms.pageEditor.publishPage'), busyLabel: t('storefront.cms.pageEditor.publishing'), onClick: () => setIsPublishConfirmOpen(true), disabled: !canPublish || isSaving, busy: isPublishing }}
             />
 
-            {error ? <AuthoringFeedback kind="error" title="Page action failed" message={error} /> : null}
-            {notice ? <AuthoringFeedback kind="success" title="Page updated" message={notice} /> : null}
+            {error ? <AuthoringFeedback kind="error" title={t('storefront.cms.pageEditor.actionFailed')} message={error} /> : null}
+            {notice ? <AuthoringFeedback kind="success" title={t('storefront.cms.pageEditor.updated')} message={notice} /> : null}
             <AuthoringValidationSummary
                 errors={[
-                    ...(!form.title.trim() ? ['Title is required.'] : []),
-                    ...(!form.slug.trim() ? ['Slug is required.'] : []),
+                    ...(!hasTranslationContent(englishTranslation) ? [t('storefront.cms.pageEditor.titleRequired')] : []),
+                    ...(!form.slug.trim() ? [t('storefront.cms.pageEditor.slugRequired')] : []),
+                    ...(arabicTranslation && (!arabicTranslation.title.trim() || !hasTranslationContent(arabicTranslation))
+                        ? [t('storefront.cms.pageEditor.arabicIncomplete', { defaultValue: 'Arabic must include both title and content, or be removed.' })]
+                        : []),
                 ]}
-                title="Resolve Page validation before saving"
+                title={t('storefront.cms.pageEditor.validationTitle')}
             />
 
-            <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+            <section className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex gap-2" role="tablist" aria-label={t('storefront.cms.pageEditor.languages', { defaultValue: 'Content languages' })}>
+                        <button type="button" role="tab" aria-selected={activeLocale === 'en'} onClick={() => selectLocale('en')} className={`rounded-xl px-4 py-2 text-sm font-semibold ${activeLocale === 'en' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                            {t('storefront.cms.pageEditor.englishRequired', { defaultValue: 'English (required)' })}
+                        </button>
+                        <button type="button" role="tab" aria-selected={activeLocale === 'ar'} onClick={() => selectLocale('ar')} className={`rounded-xl px-4 py-2 text-sm font-semibold ${activeLocale === 'ar' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                            {t('storefront.cms.pageEditor.arabicOptional', { defaultValue: 'Arabic (optional)' })}
+                        </button>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-500">
+                        <span>{hasTranslationContent(englishTranslation) ? t('storefront.cms.pageEditor.complete', { defaultValue: 'English complete' }) : t('storefront.cms.pageEditor.incomplete', { defaultValue: 'English incomplete' })}</span>
+                        <span>{arabicTranslation && hasTranslationContent(arabicTranslation) ? t('storefront.cms.pageEditor.arabicComplete', { defaultValue: 'Arabic complete' }) : t('storefront.cms.pageEditor.arabicMissing', { defaultValue: 'Arabic not supplied' })}</span>
+                        {arabicTranslation && <button type="button" onClick={removeArabicTranslation} className="rounded-lg border border-rose-200 px-3 py-1.5 font-medium text-rose-700">{t('storefront.cms.pageEditor.removeArabic', { defaultValue: 'Remove Arabic' })}</button>}
+                    </div>
+                </div>
+            </section>
+
+            <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]" dir={activeLocale === 'ar' ? 'rtl' : 'ltr'}>
                 <div className="space-y-6">
                     <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                         <h2 className="text-lg font-semibold text-slate-900">
-                            {isRTL ? 'معلومات الصفحة' : 'Page Details'}
+                            {t('storefront.cms.pageEditor.details')}
                         </h2>
                         <div className="mt-5 space-y-4">
                             <LabeledInput
-                                label={isRTL ? 'العنوان' : 'Title'}
-                                value={form.title}
+                                label={t('storefront.cms.pageEditor.titleLabel')}
+                                value={activeTranslation.title}
                                 onChange={(value) => updateForm({ title: value })}
-                                placeholder={isRTL ? 'مثال: من نحن' : 'Example: About Us'}
+                                placeholder={t('storefront.cms.pageEditor.titlePlaceholder')}
                             />
                             <LabeledInput
-                                label={isRTL ? 'الرابط' : 'Slug'}
+                                label={t('storefront.cms.pageEditor.slugLabel')}
                                 value={form.slug}
-                                onChange={(value) => updateForm({ slug: normalizeSlugInput(value) })}
-                                placeholder="about-us"
-                                helpText={isRTL ? 'سيظهر في المسار النهائي مثل /about-us' : 'This becomes the storefront path, for example /about-us'}
+                                onChange={(value) => setForm((current) => ({ ...current, slug: normalizeSlugInput(value) }))}
+                                placeholder={t('storefront.cms.pageEditor.slugPlaceholder')}
+                                helpText={t('storefront.cms.pageEditor.slugHelp')}
                             />
                             <label className="block">
                                 <span className="mb-2 block text-sm font-medium text-slate-700">
-                                    {isRTL ? 'نمط المحتوى' : 'Content Mode'}
+                                    {t('storefront.cms.pageEditor.contentMode')}
                                 </span>
                                 <select
-                                    value={form.contentType}
+                                    value={activeTranslation.contentType}
                                     onChange={(event) => updateForm({
                                         contentType: event.target.value,
                                         content: event.target.value === CONTENT_TYPES.Blocks
-                                            ? (Array.isArray(form.content) ? form.content : [])
-                                            : (typeof form.content === 'string' ? form.content : ''),
+                                            ? (Array.isArray(activeTranslation.content) ? activeTranslation.content : [])
+                                            : (typeof activeTranslation.content === 'string' ? activeTranslation.content : ''),
                                     })}
                                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
                                 >
-                                    <option value={CONTENT_TYPES.RichText}>{isRTL ? 'نص غني' : 'Rich text'}</option>
-                                    <option value={CONTENT_TYPES.Blocks}>{isRTL ? 'كتل مرنة' : 'Blocks'}</option>
+                                    <option value={CONTENT_TYPES.RichText}>{t('storefront.cms.pageEditor.richText')}</option>
+                                    <option value={CONTENT_TYPES.Blocks}>{t('storefront.cms.pageEditor.blocks')}</option>
                                 </select>
                             </label>
                         </div>
@@ -567,30 +638,30 @@ export function CmsPageEditor() {
 
                     <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                         <h2 className="text-lg font-semibold text-slate-900">
-                            {isRTL ? 'إعدادات SEO' : 'SEO Settings'}
+                            {t('storefront.cms.pageEditor.seoSettings')}
                         </h2>
                         <div className="mt-5 space-y-4">
                             <LabeledInput
-                                label={isRTL ? 'عنوان الميتا' : 'Meta title'}
-                                value={form.seo.metaTitle}
+                                label={t('storefront.cms.pageEditor.metaTitle')}
+                                value={activeTranslation.seo.metaTitle}
                                 onChange={(value) => updateSeo({ metaTitle: value })}
                             />
                             <LabeledTextarea
-                                label={isRTL ? 'وصف الميتا' : 'Meta description'}
-                                value={form.seo.metaDescription}
+                                label={t('storefront.cms.pageEditor.metaDescription')}
+                                value={activeTranslation.seo.metaDescription}
                                 onChange={(event) => updateSeo({ metaDescription: event.target.value })}
                                 rows={4}
                             />
                             <LabeledInput
-                                label={isRTL ? 'الكلمات المفتاحية' : 'Meta keywords'}
-                                value={form.seo.metaKeywords}
+                                label={t('storefront.cms.pageEditor.metaKeywords')}
+                                value={activeTranslation.seo.metaKeywords}
                                 onChange={(value) => updateSeo({ metaKeywords: value })}
                             />
                             <LabeledInput
-                                label={isRTL ? 'صورة Open Graph' : 'Open Graph image URL'}
-                                value={form.seo.openGraphImageUrl}
+                                label={t('storefront.cms.pageEditor.openGraphImage')}
+                                value={activeTranslation.seo.openGraphImageUrl}
                                 onChange={(value) => updateSeo({ openGraphImageUrl: value })}
-                                placeholder="https://cdn.example.com/page-cover.jpg"
+                                placeholder={t('storefront.cms.pageEditor.openGraphPlaceholder')}
                             />
                         </div>
                     </section>
@@ -600,56 +671,56 @@ export function CmsPageEditor() {
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                         <div>
                             <h2 className="text-lg font-semibold text-slate-900">
-                                {isRTL ? 'المحتوى' : 'Content'}
+                                {t('storefront.cms.pageEditor.content')}
                             </h2>
                             <p className="mt-1 text-sm text-slate-500">
-                                {form.contentType === CONTENT_TYPES.RichText
-                                    ? (isRTL ? 'استخدم محرر النصوص المنسق ثم راجع النتيجة في المعاينة.' : 'Use the rich text editor and preview the result before publishing.')
-                                    : (isRTL ? 'أنشئ الصفحة من كتل قابلة للتوسعة لتظل جاهزة للباني المرئي مستقبلاً.' : 'Build the page from reusable blocks so it stays ready for a future visual builder.')}
+                                {activeTranslation.contentType === CONTENT_TYPES.RichText
+                                    ? t('storefront.cms.pageEditor.richTextHelp')
+                                    : t('storefront.cms.pageEditor.blocksHelp')}
                             </p>
                         </div>
 
-                        {form.contentType === CONTENT_TYPES.Blocks && (
+                        {activeTranslation.contentType === CONTENT_TYPES.Blocks && (
                             <div className="flex flex-wrap gap-2">
                                 <button
                                     onClick={() => addBlock('text')}
                                     className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                                 >
                                     <Type size={16} />
-                                    {isRTL ? 'نص' : 'Text'}
+                                    {t('storefront.cms.pageEditor.textBlock')}
                                 </button>
                                 <button
                                     onClick={() => addBlock('image')}
                                     className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                                 >
                                     <ImageIcon size={16} />
-                                    {isRTL ? 'صورة' : 'Image'}
+                                    {t('storefront.cms.pageEditor.imageBlock')}
                                 </button>
                                 <button
                                     onClick={() => addBlock('faq')}
                                     className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                                 >
                                     <ListOrdered size={16} />
-                                    FAQ
+                                    {t('storefront.cms.pageEditor.faqBlock')}
                                 </button>
                             </div>
                         )}
                     </div>
 
                     <div className="mt-6">
-                        {form.contentType === CONTENT_TYPES.RichText ? (
+                        {activeTranslation.contentType === CONTENT_TYPES.RichText ? (
                             <RichTextEditor
-                                value={typeof form.content === 'string' ? form.content : ''}
+                                value={typeof activeTranslation.content === 'string' ? activeTranslation.content : ''}
                                 onChange={(value) => updateForm({ content: value })}
-                                isRTL={isRTL}
+                                t={t}
                             />
                         ) : (
                             <BlocksEditor
-                                blocks={Array.isArray(form.content) ? form.content : []}
+                                blocks={Array.isArray(activeTranslation.content) ? activeTranslation.content : []}
                                 onUpdate={updateBlock}
                                 onMove={moveBlock}
                                 onRemove={removeBlock}
-                                isRTL={isRTL}
+                                t={t}
                             />
                         )}
                     </div>
@@ -658,8 +729,8 @@ export function CmsPageEditor() {
 
             <AuthoringDialog
                 open={isHistoryOpen}
-                title={isRTL ? 'سجل إصدارات الصفحة' : 'Page Version History'}
-                description={isRTL ? 'المعاينة والاستعادة تستخدمان أدلة النسخ المقبولة من الخادم.' : 'Preview and rollback use backend-admitted version evidence.'}
+                title={t('storefront.cms.pageEditor.versionHistoryTitle')}
+                description={t('storefront.cms.pageEditor.versionHistoryDescription')}
                 onClose={rollbackState.isRollingBack ? undefined : () => setIsHistoryOpen(false)}
                 panelClassName="max-h-[90vh] !max-w-3xl overflow-hidden"
             >
@@ -670,12 +741,12 @@ export function CmsPageEditor() {
                                 disabled={rollbackState.isRollingBack}
                                 className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
                             >
-                                {isRTL ? 'إغلاق' : 'Close'}
+                                {t('storefront.cms.pageEditor.close')}
                             </button>
                         </div>
                         <div className="mt-4 max-h-[calc(90vh-180px)] overflow-y-auto">
                             {isHistoryLoading ? (
-                                <AuthoringLoadingState label={isRTL ? 'جارٍ تحميل سجل الصفحة...' : 'Loading Page History...'} />
+                                <AuthoringLoadingState label={t('storefront.cms.pageEditor.historyLoading')} />
                             ) : (
                                 <div className="space-y-4">
                                     {(versionHistory?.versions || []).map((entry) => (
@@ -684,10 +755,10 @@ export function CmsPageEditor() {
                                                 <div>
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         <span className="text-sm font-semibold text-slate-900">v{entry.version}</span>
-                                                        {entry.isPublished && <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{isRTL ? 'منشور' : 'Published'}</span>}
-                                                        {entry.isCurrentDraft && <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">{isRTL ? 'مسودة حالية' : 'Current draft'}</span>}
+                                                        {entry.isPublished && <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{t('storefront.cms.published')}</span>}
+                                                        {entry.isCurrentDraft && <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">{t('storefront.cms.pageEditor.currentDraft')}</span>}
                                                     </div>
-                                                    <p className="mt-1 text-sm text-slate-700">{entry.snapshot.title}</p>
+                                                    <p className="mt-1 text-sm text-slate-700">{entry.snapshot.translations?.en?.title || entry.snapshot.title}</p>
                                                     <p className="mt-1 text-xs text-slate-500">/{entry.snapshot.slug}</p>
                                                     <p className="mt-1 text-xs text-slate-400">
                                                         {new Date(entry.updatedAtUtc).toLocaleString()}
@@ -700,7 +771,7 @@ export function CmsPageEditor() {
                                                         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                                     >
                                                         <Eye size={14} />
-                                                        {isRTL ? 'تحميل اللقطة' : 'Load snapshot'}
+                                                        {t('storefront.cms.pageEditor.loadSnapshot')}
                                                     </button>
                                                     <button
                                                         type="button"
@@ -709,14 +780,14 @@ export function CmsPageEditor() {
                                                         className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
                                                     >
                                                         <Undo2 size={14} />
-                                                        {isRTL ? 'استعادة' : 'Rollback'}
+                                                        {t('storefront.cms.pageEditor.rollback')}
                                                     </button>
                                                 </div>
                                             </div>
                                             {rollbackState.version === entry.version && (
                                                 <div className="mt-4 rounded-2xl border border-rose-100 bg-rose-50 p-4">
                                                     <LabeledTextarea
-                                                        label={isRTL ? 'سبب الاستعادة (اختياري)' : 'Rollback reason (optional)'}
+                                                        label={t('storefront.cms.pageEditor.rollbackReason')}
                                                         value={rollbackState.reason}
                                                         onChange={(event) => setRollbackState((current) => ({ ...current, reason: event.target.value }))}
                                                         rows={3}
@@ -728,7 +799,7 @@ export function CmsPageEditor() {
                                                             onChange={(event) => setRollbackState((current) => ({ ...current, confirmed: event.target.checked }))}
                                                             className="mt-1"
                                                         />
-                                                        <span>{isRTL ? 'أفهم أن الخادم سيحل اللقطة وينشئ نسخة منشورة جديدة.' : 'I understand the backend will resolve the snapshot and create a new published version.'}</span>
+                                                        <span>{t('storefront.cms.pageEditor.rollbackAcknowledgment')}</span>
                                                     </label>
                                                     <button
                                                         type="button"
@@ -737,7 +808,7 @@ export function CmsPageEditor() {
                                                         className="mt-4 inline-flex items-center gap-2 rounded-xl bg-rose-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-800 disabled:opacity-50"
                                                     >
                                                         {rollbackState.isRollingBack ? <Loader2 size={16} className="animate-spin" /> : <Undo2 size={16} />}
-                                                        {isRTL ? 'استعادة الآن' : 'Rollback now'}
+                                                        {t('storefront.cms.pageEditor.rollbackNow')}
                                                     </button>
                                                 </div>
                                             )}
@@ -750,9 +821,9 @@ export function CmsPageEditor() {
 
             <AuthoringConfirmDialog
                 open={isPublishConfirmOpen}
-                title="Publish Page?"
-                description="The accepted Page draft will become live. This does not publish Homepage, Navigation, Footer, Theme, or Product Template."
-                confirmLabel="Publish Page"
+                title={t('storefront.cms.pageEditor.publishConfirmTitle')}
+                description={t('storefront.cms.pageEditor.publishConfirmDescription')}
+                confirmLabel={t('storefront.cms.pageEditor.publishPage')}
                 confirmTone="publish"
                 busy={isPublishing}
                 onClose={() => setIsPublishConfirmOpen(false)}
@@ -760,27 +831,27 @@ export function CmsPageEditor() {
             />
             <AuthoringConfirmDialog
                 open={isDiscardConfirmOpen}
-                title="Discard Page changes?"
-                description="The editor will return to the accepted Page draft."
-                confirmLabel="Discard Changes"
+                title={t('storefront.cms.pageEditor.discardConfirmTitle')}
+                description={t('storefront.cms.pageEditor.discardConfirmDescription')}
+                confirmLabel={t('storefront.cms.pageEditor.discardChanges')}
                 confirmTone="danger"
                 onClose={() => setIsDiscardConfirmOpen(false)}
                 onConfirm={handleDiscard}
             />
             <AuthoringConfirmDialog
                 open={deleteBlockIndex != null}
-                title="Delete Content Block?"
-                description="The block is removed from the local Page draft. Save Draft is still required."
-                confirmLabel="Delete Block"
+                title={t('storefront.cms.pageEditor.deleteBlockTitle')}
+                description={t('storefront.cms.pageEditor.deleteBlockDescription')}
+                confirmLabel={t('storefront.cms.pageEditor.deleteBlock')}
                 confirmTone="danger"
                 onClose={() => setDeleteBlockIndex(null)}
                 onConfirm={confirmRemoveBlock}
             />
             <AuthoringConfirmDialog
                 open={pendingHistorySnapshot != null}
-                title="Load historical Page snapshot?"
-                description="This replaces the local candidate in the editor. It does not roll back or publish until you explicitly choose those actions."
-                confirmLabel="Load Snapshot"
+                title={t('storefront.cms.pageEditor.loadSnapshotTitle')}
+                description={t('storefront.cms.pageEditor.loadSnapshotDescription')}
+                confirmLabel={t('storefront.cms.pageEditor.loadSnapshot')}
                 confirmTone="danger"
                 onClose={() => setPendingHistorySnapshot(null)}
                 onConfirm={() => {
@@ -811,17 +882,29 @@ function fromPageResponse(page) {
 
     return {
         slug: workingVersion.slug || '',
-        title: workingVersion.title || '',
-        contentType: workingVersion.contentType || CONTENT_TYPES.RichText,
-        content: workingVersion.contentType === CONTENT_TYPES.Blocks
-            ? (Array.isArray(workingVersion.content) ? workingVersion.content : [])
-            : sanitizeRichTextHtml(typeof workingVersion.content === 'string' ? workingVersion.content : ''),
-        schemaVersion: workingVersion.schemaVersion || 1,
+        translations: {
+            en: fromTranslationResponse(workingVersion.translations?.en || workingVersion),
+            ar: workingVersion.translations?.ar
+                ? fromTranslationResponse(workingVersion.translations.ar)
+                : null,
+        },
+    }
+}
+
+function fromTranslationResponse(translation) {
+    const contentType = translation.contentType || CONTENT_TYPES.RichText
+    return {
+        title: translation.title || '',
+        contentType,
+        content: contentType === CONTENT_TYPES.Blocks
+            ? (Array.isArray(translation.content) ? translation.content : [])
+            : sanitizeRichTextHtml(typeof translation.content === 'string' ? translation.content : ''),
+        schemaVersion: translation.schemaVersion || 1,
         seo: {
-            metaTitle: workingVersion.seo?.metaTitle || '',
-            metaDescription: workingVersion.seo?.metaDescription || '',
-            metaKeywords: workingVersion.seo?.metaKeywords || '',
-            openGraphImageUrl: workingVersion.seo?.openGraphImageUrl || '',
+            metaTitle: translation.seo?.metaTitle || '',
+            metaDescription: translation.seo?.metaDescription || '',
+            metaKeywords: translation.seo?.metaKeywords || '',
+            openGraphImageUrl: translation.seo?.openGraphImageUrl || '',
         },
     }
 }
@@ -831,21 +914,47 @@ function fromVersionSnapshot(snapshot) {
 }
 
 function toRequestPayload(form) {
+    const english = toTranslationPayload(form.translations.en)
+    const arabic = form.translations.ar ? toTranslationPayload(form.translations.ar) : null
     return {
         slug: form.slug.trim(),
-        title: form.title.trim(),
-        contentType: form.contentType,
-        content: form.contentType === CONTENT_TYPES.Blocks
-            ? (Array.isArray(form.content) ? form.content : [])
-            : sanitizeRichTextHtml(typeof form.content === 'string' ? form.content : ''),
-        schemaVersion: form.schemaVersion || 1,
-        seo: {
-            metaTitle: emptyToNull(form.seo.metaTitle),
-            metaDescription: emptyToNull(form.seo.metaDescription),
-            metaKeywords: emptyToNull(form.seo.metaKeywords),
-            openGraphImageUrl: emptyToNull(form.seo.openGraphImageUrl),
+        title: english.title,
+        contentType: english.contentType,
+        content: english.content,
+        schemaVersion: english.schemaVersion,
+        seo: english.seo,
+        translations: {
+            en: english,
+            ar: arabic,
         },
     }
+}
+
+function toTranslationPayload(translation) {
+    return {
+        title: translation.title.trim(),
+        contentType: translation.contentType,
+        content: translation.contentType === CONTENT_TYPES.Blocks
+            ? (Array.isArray(translation.content) ? translation.content : [])
+            : sanitizeRichTextHtml(typeof translation.content === 'string' ? translation.content : ''),
+        schemaVersion: translation.schemaVersion || 1,
+        seo: {
+            metaTitle: emptyToNull(translation.seo.metaTitle),
+            metaDescription: emptyToNull(translation.seo.metaDescription),
+            metaKeywords: emptyToNull(translation.seo.metaKeywords),
+            openGraphImageUrl: emptyToNull(translation.seo.openGraphImageUrl),
+        },
+    }
+}
+
+function hasTranslationContent(translation) {
+    if (!translation?.title?.trim()) {
+        return false
+    }
+
+    return translation.contentType === CONTENT_TYPES.Blocks
+        ? Array.isArray(translation.content) && translation.content.length > 0
+        : typeof translation.content === 'string' && translation.content.replace(/<[^>]*>/g, '').trim().length > 0
 }
 
 export function getPageFormFingerprint(form) {
@@ -890,7 +999,7 @@ function LabeledTextarea({ label, ...props }) {
     )
 }
 
-function RichTextEditor({ value, onChange, isRTL }) {
+function RichTextEditor({ value, onChange, t }) {
     const editorRef = useRef(null)
     const isEditingRef = useRef(false)
     const linkSelectionRef = useRef(null)
@@ -944,7 +1053,7 @@ function RichTextEditor({ value, onChange, isRTL }) {
                 <ToolbarButton label="H2" onClick={() => runCommand('formatBlock', '<h2>')} />
                 <ToolbarButton label="UL" onClick={() => runCommand('insertUnorderedList')} />
                 <ToolbarButton
-                    label={isRTL ? 'رابط' : 'Link'}
+                    label={t('storefront.cms.pageEditor.toolbarLink')}
                     onClick={() => {
                         linkSelectionRef.current = saveSelection()
                         setLinkUrl('')
@@ -981,12 +1090,12 @@ function RichTextEditor({ value, onChange, isRTL }) {
             />
             <AuthoringPromptDialog
                 open={isLinkPromptOpen}
-                title="Add Link"
-                description="Enter the destination for the selected Page text."
-                label="URL"
+                title={t('storefront.cms.pageEditor.addTextLink')}
+                description={t('storefront.cms.pageEditor.addTextLinkDescription')}
+                label={t('storefront.cms.linkUrlLabel')}
                 value={linkUrl}
-                placeholder="https://example.com or /page"
-                confirmLabel="Add Link"
+                placeholder={t('storefront.cms.pageEditor.linkPlaceholder')}
+                confirmLabel={t('storefront.cms.pageEditor.addTextLink')}
                 onChange={setLinkUrl}
                 onClose={() => setIsLinkPromptOpen(false)}
                 onConfirm={() => {
@@ -1011,11 +1120,11 @@ function ToolbarButton({ label, onClick }) {
     )
 }
 
-function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
+function BlocksEditor({ blocks, onUpdate, onMove, onRemove, t }) {
     if (blocks.length === 0) {
         return (
             <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center text-sm text-slate-500">
-                {isRTL ? 'أضف أول كتلة للبدء.' : 'Add your first block to start building the page.'}
+                {t('storefront.cms.pageEditor.blocksEmpty')}
             </div>
         )
     }
@@ -1027,7 +1136,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
                         <div className="flex items-center gap-3 text-sm font-medium text-slate-700">
                             <GripVertical size={16} className="text-slate-400" />
-                            <span>{block.type}</span>
+                            <span>{t(`storefront.cms.pageEditor.blockTypes.${block.type}`, { defaultValue: block.type })}</span>
                         </div>
                         <div className="flex gap-2">
                             <button
@@ -1035,14 +1144,14 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                                 onClick={() => onMove(index, -1)}
                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                             >
-                                {isRTL ? 'لأعلى' : 'Up'}
+                                {t('storefront.cms.pageEditor.moveUp')}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => onMove(index, 1)}
                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                             >
-                                {isRTL ? 'لأسفل' : 'Down'}
+                                {t('storefront.cms.pageEditor.moveDown')}
                             </button>
                             <button
                                 type="button"
@@ -1058,7 +1167,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                         {block.type === 'text' && (
                             <div className="space-y-4">
                                 <LabeledTextarea
-                                    label={isRTL ? 'النص' : 'Text'}
+                                    label={t('storefront.cms.pageEditor.text')}
                                     value={block.data?.text || ''}
                                     onChange={(event) => onUpdate(index, {
                                         ...block,
@@ -1071,7 +1180,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                                 />
                                 <label className="block">
                                     <span className="mb-2 block text-sm font-medium text-slate-700">
-                                        {isRTL ? 'المحاذاة' : 'Alignment'}
+                                        {t('storefront.cms.pageEditor.alignment')}
                                     </span>
                                     <select
                                         value={block.data?.alignment || 'left'}
@@ -1084,9 +1193,9 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                                         })}
                                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
                                     >
-                                        <option value="left">{isRTL ? 'يسار' : 'Left'}</option>
-                                        <option value="center">{isRTL ? 'وسط' : 'Center'}</option>
-                                        <option value="right">{isRTL ? 'يمين' : 'Right'}</option>
+                                        <option value="left">{t('storefront.cms.pageEditor.left')}</option>
+                                        <option value="center">{t('storefront.cms.pageEditor.center')}</option>
+                                        <option value="right">{t('storefront.cms.pageEditor.right')}</option>
                                     </select>
                                 </label>
                             </div>
@@ -1095,7 +1204,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                         {block.type === 'image' && (
                             <div className="space-y-4">
                                 <LabeledInput
-                                    label={isRTL ? 'رابط الصورة' : 'Image URL'}
+                                    label={t('storefront.cms.pageEditor.imageUrl')}
                                     value={block.data?.imageUrl || ''}
                                     onChange={(value) => onUpdate(index, {
                                         ...block,
@@ -1106,7 +1215,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                                     })}
                                 />
                                 <LabeledInput
-                                    label={isRTL ? 'النص البديل' : 'Alt text'}
+                                    label={t('storefront.cms.pageEditor.altText')}
                                     value={block.data?.alt || ''}
                                     onChange={(value) => onUpdate(index, {
                                         ...block,
@@ -1117,7 +1226,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                                     })}
                                 />
                                 <LabeledInput
-                                    label={isRTL ? 'التسمية' : 'Caption'}
+                                    label={t('storefront.cms.pageEditor.caption')}
                                     value={block.data?.caption || ''}
                                     onChange={(value) => onUpdate(index, {
                                         ...block,
@@ -1131,7 +1240,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
                         )}
 
                         {block.type === 'faq' && (
-                            <FaqEditor block={block} index={index} onUpdate={onUpdate} isRTL={isRTL} />
+                            <FaqEditor block={block} index={index} onUpdate={onUpdate} t={t} />
                         )}
                     </div>
                 </div>
@@ -1140,7 +1249,7 @@ function BlocksEditor({ blocks, onUpdate, onMove, onRemove, isRTL }) {
     )
 }
 
-function FaqEditor({ block, index, onUpdate, isRTL }) {
+function FaqEditor({ block, index, onUpdate, t }) {
     const items = Array.isArray(block.data?.items) ? block.data.items : []
 
     function updateFaqItem(itemIndex, patch) {
@@ -1183,24 +1292,24 @@ function FaqEditor({ block, index, onUpdate, isRTL }) {
                 <div key={itemIndex} className="rounded-2xl border border-slate-200 p-4">
                     <div className="mb-3 flex items-center justify-between">
                         <h4 className="text-sm font-semibold text-slate-700">
-                            {isRTL ? `سؤال ${itemIndex + 1}` : `FAQ Item ${itemIndex + 1}`}
+                            {t('storefront.cms.pageEditor.faqItem', { number: itemIndex + 1 })}
                         </h4>
                         <button
                             type="button"
                             onClick={() => removeFaqItem(itemIndex)}
                             className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-50"
                         >
-                            {isRTL ? 'حذف' : 'Remove'}
+                            {t('storefront.cms.pageEditor.remove')}
                         </button>
                     </div>
                     <div className="space-y-4">
                         <LabeledInput
-                            label={isRTL ? 'السؤال' : 'Question'}
+                            label={t('storefront.cms.pageEditor.question')}
                             value={item.question || ''}
                             onChange={(value) => updateFaqItem(itemIndex, { question: value })}
                         />
                         <LabeledTextarea
-                            label={isRTL ? 'الإجابة' : 'Answer'}
+                            label={t('storefront.cms.pageEditor.answer')}
                             value={item.answer || ''}
                             onChange={(event) => updateFaqItem(itemIndex, { answer: event.target.value })}
                             rows={4}
@@ -1215,7 +1324,7 @@ function FaqEditor({ block, index, onUpdate, isRTL }) {
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
             >
                 <Plus size={16} />
-                {isRTL ? 'إضافة سؤال' : 'Add FAQ Item'}
+                {t('storefront.cms.pageEditor.addFaqItem')}
             </button>
         </div>
     )

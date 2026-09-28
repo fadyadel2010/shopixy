@@ -65,7 +65,7 @@ public sealed class ShippingMethodFinalAuthorityCertificationTests
         Assert.Contains("shippingSelectionStatus === 'stale'", storefrontCheckoutStore, StringComparison.Ordinal);
         Assert.Contains("STALE_SHIPPING_SELECTION", storefrontCheckoutStore, StringComparison.Ordinal);
         Assert.Contains("expectedPricing: buildExpectedPricing(latestState.pricing)", storefrontCheckoutStore, StringComparison.Ordinal);
-        Assert.Contains("Retry shipping options", storefrontShippingStep, StringComparison.Ordinal);
+        Assert.Contains("t('checkout.shipping.retryMethods')", storefrontShippingStep, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: session.shippingMethod?.id ?? session.shippingMethodId ?? null", recoverCheckout, StringComparison.Ordinal);
         Assert.Contains("cartService.priceCart(request)", commerceHubPricing, StringComparison.Ordinal);
         Assert.Contains("const authoritativePricing = await cartService.priceCart", commerceHubCheckout, StringComparison.Ordinal);

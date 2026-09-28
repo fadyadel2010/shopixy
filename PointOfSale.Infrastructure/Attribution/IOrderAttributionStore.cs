@@ -44,6 +44,17 @@ public interface IOrderAttributionStore
         int take = 100,
         CancellationToken cancellationToken = default);
 
+    Task<OrderAttributionPage> GetAttributionPageAsync(
+        Guid tenantId,
+        DateTime startUtc,
+        DateTime endUtc,
+        AttributionModel? model = null,
+        string? source = null,
+        string? campaign = null,
+        int skip = 0,
+        int take = 100,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Gets aggregated revenue by source for a time range.
     /// </summary>
@@ -74,6 +85,10 @@ public interface IOrderAttributionStore
         AttributionModel model,
         CancellationToken cancellationToken = default);
 }
+
+public sealed record OrderAttributionPage(
+    IReadOnlyList<OrderAttribution> Items,
+    long TotalCount);
 
 /// <summary>
 /// Revenue summary per source.

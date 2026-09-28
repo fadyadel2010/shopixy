@@ -46,6 +46,14 @@ vi.mock('react-i18next', () => ({
             'storefront.homepageEditor.conflictHint': 'Choose Load Latest to adopt the accepted server version, or Retry My Draft to reapply your retained changes against it.',
             'storefront.homepageEditor.loadLatest': 'Load Latest',
             'storefront.homepageEditor.retryDraft': 'Retry My Draft',
+            'storefront.cms.pageEditor.preview': 'Preview Saved Draft',
+            'storefront.cms.pageEditor.saveDraft': 'Save Draft',
+            'storefront.cms.pageEditor.publishPage': 'Publish Page',
+            'storefront.cms.pageEditor.publishConfirmTitle': 'Publish Page?',
+            'storefront.cms.pageEditor.savedWithNewerEdits': 'Draft saved. Newer unsaved edits were retained.',
+            'storefront.cms.pageEditor.saved': 'Draft saved.',
+            'storefront.cms.pageEditor.published': 'Page published successfully.',
+            'storefront.cms.pageEditor.titleLabel': 'Title',
         }[key] || options?.defaultValue || key),
     }),
 }))
@@ -228,6 +236,32 @@ describe('CmsPageEditor authoring UX', () => {
         await waitFor(() => expect(cmsService.updatePage).toHaveBeenLastCalledWith(
             'page-1',
             expect.objectContaining({ title: 'Newer local title', expectedVersion: 2 }),
+        ))
+    })
+
+    it('authors Arabic with the shared slug and submits one aggregate snapshot', async () => {
+        render(<CmsPageEditor />)
+        await screen.findByText('Draft')
+
+        fireEvent.click(screen.getByRole('tab', { name: 'Arabic (optional)' }))
+        fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'من نحن' } })
+
+        const editor = document.querySelector('[contenteditable="true"]') as HTMLDivElement
+        editor.innerHTML = '<p>المحتوى العربي</p>'
+        fireEvent.blur(editor)
+        fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }))
+
+        await waitFor(() => expect(cmsService.updatePage).toHaveBeenCalledWith(
+            'page-1',
+            expect.objectContaining({
+                slug: 'about',
+                title: 'About',
+                expectedVersion: 1,
+                translations: {
+                    en: expect.objectContaining({ title: 'About', content: '<p>About</p>' }),
+                    ar: expect.objectContaining({ title: 'من نحن', content: '<p>المحتوى العربي</p>' }),
+                },
+            }),
         ))
     })
 })

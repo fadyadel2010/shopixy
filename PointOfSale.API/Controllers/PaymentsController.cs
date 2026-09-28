@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Payments;
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Localization;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Paymob;
@@ -130,7 +131,7 @@ public class PaymentsController : ControllerBase
                     StatusCodes.Status422UnprocessableEntity,
                     new ApiErrorResponse(
                         FawryFinancialAuthorityPolicy.Code,
-                        FawryFinancialAuthorityPolicy.Message,
+                        PaymentErrorLocalization.GetFawryUnavailableMessage(Request.Headers.AcceptLanguage),
                         traceId));
             }
 
@@ -204,7 +205,12 @@ public class PaymentsController : ControllerBase
                 "Fawry payment rejected without financial authority | OrderId: {OrderId} | TraceId: {TraceId}",
                 orderId,
                 traceId);
-            return StatusCode(StatusCodes.Status422UnprocessableEntity, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+            return StatusCode(
+                StatusCodes.Status422UnprocessableEntity,
+                new ApiErrorResponse(
+                    ex.ErrorCode,
+                    PaymentErrorLocalization.GetFawryUnavailableMessage(Request.Headers.AcceptLanguage),
+                    traceId));
         }
         catch (PaymentUnauthorizedAccessException ex)
         {

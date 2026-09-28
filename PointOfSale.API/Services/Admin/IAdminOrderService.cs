@@ -41,6 +41,16 @@ public interface IAdminOrderService
         string correlationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets a CommerceHub vendor sub-order owned by the current tenant.
+    /// This is intentionally separate from the Storefront order detail contract.
+    /// </summary>
+    Task<AdminOrderDetailsDto?> GetCommerceHubVendorOrderDetailsAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string correlationId,
+        CancellationToken cancellationToken = default);
+
     Task<AdminOrderAttachmentDownloadResult> OpenCheckoutAttachmentDownloadAsync(
         Guid tenantId,
         Guid orderId,

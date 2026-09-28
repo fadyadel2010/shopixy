@@ -65,7 +65,7 @@ public sealed class POSAdminCheckout3FrontendCertificationTests
         Assert.Contains("admitStorefrontShippingMethodsPreview(response.data)", store, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", store, StringComparison.Ordinal);
         Assert.Contains("shippingMethods.map", shippingStep, StringComparison.Ordinal);
-        Assert.Contains("name={method.name}", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("language === 'ar' && method.nameAr?.trim() ? method.nameAr : method.name", shippingStep, StringComparison.Ordinal);
         Assert.Contains("description={method.description}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("price={method.price}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("shippingSelectionStatus === 'stale'", store, StringComparison.Ordinal);
