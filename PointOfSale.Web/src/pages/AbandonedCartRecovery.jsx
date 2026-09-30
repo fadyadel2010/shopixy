@@ -1,83 +1,146 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, ShoppingCart, MessageSquare, Settings, AlertTriangle, CheckCircle, Clock, TrendingUp, Zap, Shield } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Clock, MessageSquare, RefreshCw, Settings, Shield, ShoppingCart, TrendingUp } from 'lucide-react'
 import { useToast } from '../components/Toast'
-import api from '../services/api' // Use configured api client with auth/context interceptors
+import api from '../services/api'
+
+const DEFAULT_FORM = {
+    enableAbandonedRecovery: false,
+    firstMessageDelayMinutes: 60,
+    secondMessageDelayMinutes: 1440,
+    workingHoursFrom: '09:00',
+    workingHoursTo: '21:00'
+}
+
+const READINESS_CODES = [
+    'recovery_disabled',
+    'whatsapp_not_configured',
+    'whatsapp_account_disabled',
+    'whatsapp_disconnected',
+    'native_recovery_disabled',
+    'native_database_unavailable',
+    'native_scheduler_unavailable',
+    'native_dispatcher_unavailable'
+]
+
+const ACCOUNT_READINESS_CODES = new Set([
+    'whatsapp_not_configured',
+    'whatsapp_account_disabled',
+    'whatsapp_disconnected'
+])
 
 export default function AbandonedCartRecovery() {
     const { t } = useTranslation()
     const { showSuccess, showError } = useToast()
-
-    // State
-    const [loading, setLoading] = useState(false)
-    const [settings, setSettings] = useState(null)
-    const [whatsAppAccount, setWhatsAppAccount] = useState(null)
-    const [stats, setStats] = useState(null)
+    const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
+    const [settings, setSettings] = useState(null)
+    const [eligibility, setEligibility] = useState(null)
+    const [stats, setStats] = useState(null)
+    const [configurationError, setConfigurationError] = useState(false)
+    const [statsError, setStatsError] = useState(false)
+    const [formData, setFormData] = useState(DEFAULT_FORM)
 
-    // Form state
-    const [formData, setFormData] = useState({
-        enableAbandonedRecovery: false,
-        firstMessageDelayMinutes: 60,
-        secondMessageDelayMinutes: 1440,
-        workingHoursFrom: '09:00',
-        workingHoursTo: '21:00'
-    })
-
-    // Fetch settings
-    const fetchSettings = async () => {
+    const load = async () => {
         setLoading(true)
-        try {
-            const response = await api.get('/admin/ecommerce/abandoned-cart-recovery/settings')
-            const data = response.data
+        setConfigurationError(false)
+        setStatsError(false)
+
+        const [settingsResult, eligibilityResult, statsResult] = await Promise.allSettled([
+            api.get('/admin/ecommerce/abandoned-cart-recovery/settings'),
+            api.get('/admin/ecommerce/abandoned-cart-recovery/eligibility'),
+            api.get('/admin/ecommerce/abandoned-cart-recovery/stats')
+        ])
+
+        if (settingsResult.status === 'fulfilled') {
+            const data = settingsResult.value.data
             setSettings(data)
             setFormData({
-                enableAbandonedRecovery: data.enableAbandonedRecovery || false,
-                firstMessageDelayMinutes: data.firstMessageDelayMinutes || 60,
-                secondMessageDelayMinutes: data.secondMessageDelayMinutes || 1440,
-                workingHoursFrom: data.workingHoursFrom || '09:00',
-                workingHoursTo: data.workingHoursTo || '21:00'
+                enableAbandonedRecovery: data.enableAbandonedRecovery ?? false,
+                firstMessageDelayMinutes: data.firstMessageDelayMinutes ?? 60,
+                secondMessageDelayMinutes: data.secondMessageDelayMinutes ?? 1440,
+                workingHoursFrom: data.workingHoursFrom ?? '09:00',
+                workingHoursTo: data.workingHoursTo ?? '21:00'
             })
-        } catch (err) {
-            console.error('Failed to fetch settings:', err)
-        } finally {
-            setLoading(false)
+        } else {
+            setConfigurationError(true)
         }
-    }
 
-    // Fetch WhatsApp account status
-    const fetchWhatsAppAccount = async () => {
-        try {
-            const response = await api.get('/admin/whatsapp/accounts')
-            const data = response.data
-            // Find an account that's enabled and connected
-            const connectedAccount = data.find(acc => acc.enabled && acc.status === 'Connected')
-            setWhatsAppAccount(connectedAccount || null)
-        } catch (err) {
-            console.error('Failed to fetch WhatsApp account:', err)
+        if (eligibilityResult.status === 'fulfilled') {
+            setEligibility(eligibilityResult.value.data)
+        } else {
+            setEligibility(null)
+            setConfigurationError(true)
         }
-    }
 
-    // Fetch stats
-    const fetchStats = async () => {
-        try {
-            const response = await api.get('/admin/ecommerce/abandoned-cart-recovery/stats')
-            setStats(response.data)
-        } catch (err) {
-            console.error('Failed to fetch stats:', err)
+        if (statsResult.status === 'fulfilled') {
+            setStats(statsResult.value.data)
+        } else {
+            setStats(null)
+            setStatsError(true)
         }
+
+        setLoading(false)
     }
 
     useEffect(() => {
-        fetchSettings()
-        fetchWhatsAppAccount()
-        fetchStats()
+        void load()
     }, [])
 
-    // Save settings
+    const dirty = settings !== null && (
+        formData.enableAbandonedRecovery !== settings.enableAbandonedRecovery ||
+        formData.firstMessageDelayMinutes !== settings.firstMessageDelayMinutes ||
+        formData.secondMessageDelayMinutes !== settings.secondMessageDelayMinutes ||
+        formData.workingHoursFrom !== settings.workingHoursFrom ||
+        formData.workingHoursTo !== settings.workingHoursTo
+    )
+
+    useEffect(() => {
+        const warnUnsaved = event => {
+            if (!dirty) return
+            event.preventDefault()
+            event.returnValue = ''
+        }
+        window.addEventListener('beforeunload', warnUnsaved)
+        return () => window.removeEventListener('beforeunload', warnUnsaved)
+    }, [dirty])
+
+    const recoveryPrerequisitesReady = Boolean(
+        eligibility?.hasWhatsAppAccount &&
+        eligibility?.whatsAppAccountEnabled &&
+        eligibility?.whatsAppAccountConnected &&
+        eligibility?.nativeSchedulerOperational &&
+        eligibility?.nativeDispatcherOperational
+    )
+    const operational = Boolean(settings?.enableAbandonedRecovery && eligibility?.isEligible)
+    const timeZoneId = eligibility?.timeZoneId || settings?.timeZoneId || 'UTC'
+
+    const derivedReadinessCode = !eligibility?.hasWhatsAppAccount
+            ? 'whatsapp_not_configured'
+            : !eligibility?.whatsAppAccountEnabled
+                ? 'whatsapp_account_disabled'
+                : !eligibility?.whatsAppAccountConnected
+                    ? 'whatsapp_disconnected'
+                    : !eligibility?.nativeSchedulerOperational
+                        ? 'native_scheduler_unavailable'
+                        : !eligibility?.nativeDispatcherOperational
+                            ? 'native_dispatcher_unavailable'
+                            : !eligibility?.automationEnabled
+                                ? 'recovery_disabled'
+                                : 'unavailable'
+    const readinessCode = READINESS_CODES.includes(eligibility?.ineligibilityCode)
+        ? eligibility.ineligibilityCode
+        : derivedReadinessCode
+    const showAccountSettingsLink = ACCOUNT_READINESS_CODES.has(readinessCode)
+    const showEnableRecoveryLink = readinessCode === 'recovery_disabled'
+
     const handleSave = async () => {
-        if (formData.enableAbandonedRecovery && !whatsAppAccount) {
-            showError(t('AbandonedCartRecovery.messages.connectWhatsAppBeforeEnable'))
+        if (formData.workingHoursFrom === formData.workingHoursTo) {
+            showError(t('AbandonedCartRecovery.messages.invalidWorkingHours'))
+            return
+        }
+        if (formData.enableAbandonedRecovery && !recoveryPrerequisitesReady) {
+            showError(t(`AbandonedCartRecovery.readiness.${readinessCode}`))
             return
         }
 
@@ -85,334 +148,202 @@ export default function AbandonedCartRecovery() {
         try {
             await api.put('/admin/ecommerce/abandoned-cart-recovery/settings', formData)
             showSuccess(t('AbandonedCartRecovery.messages.saveSuccess'))
-            fetchSettings()
-        } catch (err) {
-            showError(err.response?.data?.error || err.message)
+            await load()
+        } catch (error) {
+            const code = error.response?.data?.code
+            showError(READINESS_CODES.includes(code)
+                ? t(`AbandonedCartRecovery.readiness.${code}`)
+                : error.response?.data?.details || error.response?.data?.error || t('AbandonedCartRecovery.messages.saveError'))
         } finally {
             setSaving(false)
         }
     }
 
-    const canEnable = whatsAppAccount !== null
+    const statusItems = [
+        { ok: !configurationError && settings !== null, label: t(settings?.isPersisted ? 'AbandonedCartRecovery.status.configurationSaved' : 'AbandonedCartRecovery.status.configurationNotSaved') },
+        { ok: Boolean(eligibility?.hasWhatsAppAccount && eligibility?.whatsAppAccountEnabled), label: t('AbandonedCartRecovery.status.accountEnabled') },
+        { ok: Boolean(eligibility?.whatsAppAccountConnected), label: t('AbandonedCartRecovery.status.accountConnected') },
+        { ok: Boolean(settings?.enableAbandonedRecovery), label: t('AbandonedCartRecovery.status.recoveryEnabled') },
+        { ok: Boolean(eligibility?.nativeSchedulerOperational && eligibility?.nativeDispatcherOperational), label: t('AbandonedCartRecovery.status.nativeRuntime') },
+        { ok: operational, label: t('AbandonedCartRecovery.status.operational') }
+    ]
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex justify-between items-center">
+        <div className="space-y-6" aria-busy={loading}>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg">
-                            <ShoppingCart className="h-5 w-5 text-white" />
-                        </div>{t('AbandonedCartRecovery.header.title')}</h1>
-                    <p className="text-sm text-gray-500 mt-1">{t('AbandonedCartRecovery.header.subtitle')}</p>
+                    <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 shadow-lg">
+                            <ShoppingCart className="h-5 w-5 text-white" aria-hidden="true" />
+                        </span>
+                        {t('AbandonedCartRecovery.header.title')}
+                    </h1>
+                    <p className="mt-1 text-sm text-gray-500">{t('AbandonedCartRecovery.header.subtitle')}</p>
                 </div>
                 <button
-                    onClick={() => { fetchSettings(); fetchWhatsAppAccount(); fetchStats(); }}
-                    className="inline-flex items-center p-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    type="button"
+                    onClick={() => void load()}
+                    aria-label={t('AbandonedCartRecovery.actions.refresh')}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
                 >
-                    <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                    {t('AbandonedCartRecovery.actions.refresh')}
                 </button>
             </div>
 
-            {/* Hero Section - Feature Explanation */}
-            <div className="bg-gradient-to-br from-emerald-500 via-green-500 to-teal-500 rounded-2xl shadow-xl p-8 text-white relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32"></div>
-                <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/5 rounded-full -ml-24 -mb-24"></div>
-
-                <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Zap className="h-6 w-6" />
-                        <span className="text-lg font-semibold">{t('AbandonedCartRecovery.hero.badge')}</span>
-                    </div>
-
-                    <h2 className="text-3xl font-bold mb-4">{t('AbandonedCartRecovery.hero.title')}</h2>
-
-                    <p className="text-lg text-white/90 mb-6 max-w-2xl">
-                        {t('AbandonedCartRecovery.hero.descriptionPrefix')}
-                        <span className="font-bold">{t('AbandonedCartRecovery.hero.abandonedRate')}</span>
-                        {t('AbandonedCartRecovery.hero.descriptionMiddle')}
-                        <span className="font-bold">{t('AbandonedCartRecovery.hero.recoveredRate')}</span>
-                        {t('AbandonedCartRecovery.hero.descriptionSuffix')}
-                    </p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
-                            <div className="text-3xl font-bold">{'\u23F1'}</div>
-                            <h3 className="font-semibold mt-2">{t('AbandonedCartRecovery.hero.cards.smartTiming.title')}</h3>
-                            <p className="text-sm text-white/80 mt-1">{t('AbandonedCartRecovery.hero.cards.smartTiming.description')}</p>
-                        </div>
-                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
-                            <div className="text-3xl font-bold">{'\u{1F4AC}'}</div>
-                            <h3 className="font-semibold mt-2">{t('AbandonedCartRecovery.hero.cards.whatsAppDelivery.title')}</h3>
-                            <p className="text-sm text-white/80 mt-1">{t('AbandonedCartRecovery.hero.cards.whatsAppDelivery.description')}</p>
-                        </div>
-                        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
-                            <div className="text-3xl font-bold">{'\u{1F6E1}'}</div>
-                            <h3 className="font-semibold mt-2">{t('AbandonedCartRecovery.hero.cards.privacyFirst.title')}</h3>
-                            <p className="text-sm text-white/80 mt-1">{t('AbandonedCartRecovery.hero.cards.privacyFirst.description')}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Stats Cards */}
-            {stats && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center">
-                                <ShoppingCart className="h-6 w-6 text-yellow-600" />
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.stats.abandonedCarts')}</p>
-                                <p className="text-2xl font-bold text-gray-900">{stats.totalAbandoned || 0}</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                                <MessageSquare className="h-6 w-6 text-blue-600" />
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.stats.messagesSent')}</p>
-                                <p className="text-2xl font-bold text-gray-900">{stats.messagesSent || 0}</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                                <CheckCircle className="h-6 w-6 text-green-600" />
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.stats.recovered')}</p>
-                                <p className="text-2xl font-bold text-gray-900">{stats.recovered || 0}</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
-                                <TrendingUp className="h-6 w-6 text-emerald-600" />
-                            </div>
-                            <div>
-                                <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.stats.recoveryRate')}</p>
-                                <p className="text-2xl font-bold text-gray-900">{stats.recoveryRate || 0}%</p>
-                            </div>
-                        </div>
-                    </div>
+            {configurationError && (
+                <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+                    <p className="font-medium">{t('AbandonedCartRecovery.errors.configurationTitle')}</p>
+                    <p className="mt-1 text-sm">{t('AbandonedCartRecovery.errors.configurationDescription')}</p>
                 </div>
             )}
 
-            {/* WhatsApp Connection Status */}
-            {!canEnable && (
-                <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-lg">
+            <section aria-labelledby="recovery-status-title" className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm sm:p-6">
+                <div className="flex items-center gap-3">
+                    <Shield className="h-6 w-6 text-emerald-300" aria-hidden="true" />
+                    <div>
+                        <h2 id="recovery-status-title" className="text-lg font-semibold">{t('AbandonedCartRecovery.status.title')}</h2>
+                        <p className="text-sm text-slate-300">{t('AbandonedCartRecovery.status.timeZone', { timeZone: timeZoneId })}</p>
+                    </div>
+                </div>
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {statusItems.map(item => (
+                        <div key={item.label} className="flex items-center gap-2 rounded-lg bg-white/10 px-3 py-3 text-sm">
+                            {item.ok
+                                ? <CheckCircle className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
+                                : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />}
+                            <span>{item.label}</span>
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+            {!operational && !loading && !configurationError && eligibility && (
+                <div role="status" className="rounded-xl border-s-4 border-amber-400 bg-amber-50 p-4 text-amber-900">
                     <div className="flex items-start gap-3">
-                        <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5 flex-shrink-0" />
+                        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
                         <div>
-                            <h3 className="font-medium text-amber-800">{t('AbandonedCartRecovery.connection.requiredTitle')}</h3>
-                            <p className="text-sm text-amber-700 mt-1">
-                                {t('AbandonedCartRecovery.connection.requiredPrefix')}
-                                <a href="/ecommerce/whatsapp" className="underline font-medium hover:text-amber-900">{t('AbandonedCartRecovery.connection.settingsLink')}</a>
-                                {t('AbandonedCartRecovery.connection.requiredSuffix')}
-                            </p>
+                            <h2 className="font-medium">{t('AbandonedCartRecovery.connection.requiredTitle')}</h2>
+                            <p className="mt-1 text-sm">{t(`AbandonedCartRecovery.readiness.${readinessCode}`)}</p>
+                            {showAccountSettingsLink && (
+                                <a href="/ecommerce/whatsapp" className="mt-2 inline-block text-sm font-medium underline">{t('AbandonedCartRecovery.connection.settingsLink')}</a>
+                            )}
+                            {showEnableRecoveryLink && (
+                                <a href="#enable-recovery" className="mt-2 inline-block text-sm font-medium underline">{t('AbandonedCartRecovery.connection.enableLink')}</a>
+                            )}
                         </div>
                     </div>
                 </div>
             )}
 
-            {canEnable && (
-                <div className="bg-green-50 border-l-4 border-green-400 p-4 rounded-r-lg">
-                    <div className="flex items-start gap-3">
-                        <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
-                        <div>
-                            <h3 className="font-medium text-green-800">{t('AbandonedCartRecovery.connection.connectedTitle')}</h3>
-                            <p className="text-sm text-green-700 mt-1">{t('AbandonedCartRecovery.connection.connectedDescription', {
-                                name: whatsAppAccount?.displayName,
-                                phone: whatsAppAccount?.phoneNumber,
-                            })}
-                            </p>
-                        </div>
+            <section aria-labelledby="recovery-stats-title">
+                <h2 id="recovery-stats-title" className="sr-only">{t('AbandonedCartRecovery.stats.title')}</h2>
+                {statsError ? (
+                    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                        {t('AbandonedCartRecovery.errors.statsUnavailable')}
                     </div>
-                </div>
-            )}
+                ) : stats && (
+                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                        {[
+                            [ShoppingCart, 'abandonedCarts', stats.totalAbandoned ?? 0],
+                            [MessageSquare, 'messagesSent', stats.messagesSent ?? 0],
+                            [CheckCircle, 'recovered', stats.recovered ?? 0],
+                            [TrendingUp, 'recoveryRate', `${stats.recoveryRate ?? 0}%`]
+                        ].map(([Icon, key, value]) => (
+                            <div key={key} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5">
+                                <Icon className="mb-3 h-5 w-5 text-emerald-600" aria-hidden="true" />
+                                <p className="text-xs text-gray-500 sm:text-sm">{t(`AbandonedCartRecovery.stats.${key}`)}</p>
+                                <p className="mt-1 text-2xl font-bold text-gray-900">{value}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
 
-            {/* Settings Card */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-                <div className="p-6 border-b border-gray-100">
+            <section aria-labelledby="recovery-settings-title" className="rounded-xl border border-gray-100 bg-white shadow-sm">
+                <div className="border-b border-gray-100 p-5 sm:p-6">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                            <Settings className="h-5 w-5 text-indigo-600" />
-                        </div>
+                        <Settings className="h-5 w-5 text-indigo-600" aria-hidden="true" />
                         <div>
-                            <h2 className="text-lg font-semibold text-gray-900">{t('AbandonedCartRecovery.settings.title')}</h2>
+                            <h2 id="recovery-settings-title" className="text-lg font-semibold text-gray-900">{t('AbandonedCartRecovery.settings.title')}</h2>
                             <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.settings.subtitle')}</p>
                         </div>
                     </div>
                 </div>
 
-                <div className="p-6 space-y-6">
-                    {/* Enable Toggle */}
-                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                <div className="space-y-6 p-5 sm:p-6">
+                    <div className="flex flex-col gap-4 rounded-xl bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                            <h3 className="font-medium text-gray-900">{t('AbandonedCartRecovery.settings.enableTitle')}</h3>
-                            <p className="text-sm text-gray-500 mt-1">{t('AbandonedCartRecovery.settings.enableDescription')}</p>
+                            <label htmlFor="enable-recovery" className="font-medium text-gray-900">{t('AbandonedCartRecovery.settings.enableTitle')}</label>
+                            <p className="mt-1 text-sm text-gray-500">{t('AbandonedCartRecovery.settings.enableDescription')}</p>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input
-                                type="checkbox"
-                                className="sr-only peer"
-                                checked={formData.enableAbandonedRecovery}
-                                disabled={!canEnable}
-                                onChange={e => setFormData(prev => ({ ...prev, enableAbandonedRecovery: e.target.checked }))}
-                            />
-                            <div className={`w-14 h-7 rounded-full peer peer-focus:ring-4 transition-colors duration-200
-                                ${!canEnable ? 'bg-gray-200 cursor-not-allowed' :
-                                    formData.enableAbandonedRecovery ? 'bg-green-500 peer-focus:ring-green-300' : 'bg-gray-300 peer-focus:ring-gray-300'}
-                                after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all after:shadow-md
-                                ${formData.enableAbandonedRecovery ? 'after:translate-x-7' : ''}`}
-                            ></div>
-                        </label>
+                        <input
+                            id="enable-recovery"
+                            type="checkbox"
+                            checked={formData.enableAbandonedRecovery}
+                            disabled={loading || (!formData.enableAbandonedRecovery && !recoveryPrerequisitesReady)}
+                            onChange={event => setFormData(previous => ({ ...previous, enableAbandonedRecovery: event.target.checked }))}
+                            className="h-6 w-6 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                        />
                     </div>
 
-                    {/* Timing Settings */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                <Clock className="inline h-4 w-4 mr-1 text-gray-400" />{t('AbandonedCartRecovery.settings.firstMessageDelay')}</label>
-                            <select
-                                value={formData.firstMessageDelayMinutes}
-                                onChange={e => setFormData(prev => ({ ...prev, firstMessageDelayMinutes: parseInt(e.target.value) }))}
-                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            >
-                                <option value={30}>{t('AbandonedCartRecovery.options.30Minutes')}</option>
-                                <option value={60}>{t('AbandonedCartRecovery.options.1Hour')}</option>
-                                <option value={120}>{t('AbandonedCartRecovery.options.2Hours')}</option>
-                                <option value={180}>{t('AbandonedCartRecovery.options.3Hours')}</option>
-                                <option value={360}>{t('AbandonedCartRecovery.options.6Hours')}</option>
-                                <option value={720}>{t('AbandonedCartRecovery.options.12Hours')}</option>
-                                <option value={1440}>{t('AbandonedCartRecovery.options.24Hours')}</option>
-                            </select>
-                            <p className="text-xs text-gray-500 mt-1">{t('AbandonedCartRecovery.settings.firstMessageHelp')}</p>
-                        </div>
+                    <p className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900">
+                        {t('AbandonedCartRecovery.settings.scheduleSummary', {
+                            first: t(`AbandonedCartRecovery.duration.${formData.firstMessageDelayMinutes}`),
+                            second: formData.secondMessageDelayMinutes === 0
+                                ? t('AbandonedCartRecovery.options.disabledNoSecondMessage')
+                                : t(`AbandonedCartRecovery.duration.${formData.secondMessageDelayMinutes}`),
+                            from: formData.workingHoursFrom,
+                            to: formData.workingHoursTo,
+                            timeZone: timeZoneId
+                        })}
+                    </p>
 
+                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                <Clock className="inline h-4 w-4 mr-1 text-gray-400" />{t('AbandonedCartRecovery.settings.secondMessageDelay')}</label>
-                            <select
-                                value={formData.secondMessageDelayMinutes}
-                                onChange={e => setFormData(prev => ({ ...prev, secondMessageDelayMinutes: parseInt(e.target.value) }))}
-                                className="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            >
+                            <label htmlFor="first-delay" className="mb-2 block text-sm font-medium text-gray-700">
+                                <Clock className="me-1 inline h-4 w-4" aria-hidden="true" />
+                                {t('AbandonedCartRecovery.settings.firstMessageDelay')}
+                            </label>
+                            <select id="first-delay" value={formData.firstMessageDelayMinutes} onChange={event => setFormData(previous => ({ ...previous, firstMessageDelayMinutes: Number(event.target.value) }))} className="w-full rounded-lg border-gray-300 shadow-sm">
+                                {[30, 60, 120, 180, 360, 720, 1440].map(value => <option key={value} value={value}>{t(`AbandonedCartRecovery.duration.${value}`)}</option>)}
+                            </select>
+                            <p className="mt-1 text-xs text-gray-500">{t('AbandonedCartRecovery.settings.firstMessageHelp')}</p>
+                        </div>
+                        <div>
+                            <label htmlFor="second-delay" className="mb-2 block text-sm font-medium text-gray-700">
+                                <Clock className="me-1 inline h-4 w-4" aria-hidden="true" />
+                                {t('AbandonedCartRecovery.settings.secondMessageDelay')}
+                            </label>
+                            <select id="second-delay" value={formData.secondMessageDelayMinutes} onChange={event => setFormData(previous => ({ ...previous, secondMessageDelayMinutes: Number(event.target.value) }))} className="w-full rounded-lg border-gray-300 shadow-sm">
                                 <option value={0}>{t('AbandonedCartRecovery.options.disabledNoSecondMessage')}</option>
-                                <option value={720}>{t('AbandonedCartRecovery.options.12HoursAfterFirst')}</option>
-                                <option value={1440}>{t('AbandonedCartRecovery.options.24HoursAfterFirst')}</option>
-                                <option value={2880}>{t('AbandonedCartRecovery.options.48HoursAfterFirst')}</option>
-                                <option value={4320}>{t('AbandonedCartRecovery.options.72HoursAfterFirst')}</option>
+                                {[720, 1440, 2880, 4320].map(value => <option key={value} value={value}>{t(`AbandonedCartRecovery.duration.${value}`)}</option>)}
                             </select>
-                            <p className="text-xs text-gray-500 mt-1">{t('AbandonedCartRecovery.settings.secondMessageHelp')}</p>
+                            <p className="mt-1 text-xs text-gray-500">{t('AbandonedCartRecovery.settings.secondMessageHelp')}</p>
                         </div>
                     </div>
 
-                    {/* Working Hours */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            <Clock className="inline h-4 w-4 mr-1 text-gray-400" />{t('AbandonedCartRecovery.settings.workingHoursLabel')}</label>
-                        <div className="flex items-center gap-4">
-                            <div className="flex-1">
-                                <label className="text-xs text-gray-500">{t('AbandonedCartRecovery.settings.from')}</label>
-                                <input
-                                    type="time"
-                                    value={formData.workingHoursFrom}
-                                    onChange={e => setFormData(prev => ({ ...prev, workingHoursFrom: e.target.value }))}
-                                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                />
-                            </div>
-                            <span className="text-gray-400 mt-4">{t('AbandonedCartRecovery.settings.to')}</span>
-                            <div className="flex-1">
-                                <label className="text-xs text-gray-500">{t('AbandonedCartRecovery.settings.to')}</label>
-                                <input
-                                    type="time"
-                                    value={formData.workingHoursTo}
-                                    onChange={e => setFormData(prev => ({ ...prev, workingHoursTo: e.target.value }))}
-                                    className="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                />
-                            </div>
+                    <fieldset>
+                        <legend className="mb-2 text-sm font-medium text-gray-700">{t('AbandonedCartRecovery.settings.workingHoursLabel')}</legend>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <label className="text-xs text-gray-500">{t('AbandonedCartRecovery.settings.from')}
+                                <input type="time" value={formData.workingHoursFrom} onChange={event => setFormData(previous => ({ ...previous, workingHoursFrom: event.target.value }))} className="mt-1 block min-h-11 w-full rounded-lg border-gray-300 shadow-sm" />
+                            </label>
+                            <label className="text-xs text-gray-500">{t('AbandonedCartRecovery.settings.to')}
+                                <input type="time" value={formData.workingHoursTo} onChange={event => setFormData(previous => ({ ...previous, workingHoursTo: event.target.value }))} className="mt-1 block min-h-11 w-full rounded-lg border-gray-300 shadow-sm" />
+                            </label>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">{t('AbandonedCartRecovery.settings.workingHoursHelp')}</p>
-                    </div>
+                        <p className="mt-2 text-xs text-gray-500">{t('AbandonedCartRecovery.settings.workingHoursHelp', { timeZone: timeZoneId })}</p>
+                    </fieldset>
 
-                    {/* Save Button */}
-                    <div className="flex justify-end pt-4 border-t border-gray-100">
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="inline-flex items-center px-6 py-2.5 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                        >
-                            {saving ? (
-                                <>
-                                    <RefreshCw className="animate-spin -ml-1 mr-2 h-4 w-4" />{t('AbandonedCartRecovery.settings.saving')}</>
-                            ) : (
-                                t('AbandonedCartRecovery.settings.save')
-                            )}
+                    <div className="flex flex-col-reverse gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                        <p aria-live="polite" className="text-sm text-gray-500">{dirty ? t('AbandonedCartRecovery.settings.unsaved') : t('AbandonedCartRecovery.settings.saved')}</p>
+                        <button type="button" onClick={() => void handleSave()} disabled={saving || loading || !dirty} className="min-h-11 rounded-lg bg-indigo-600 px-6 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+                            {saving ? t('AbandonedCartRecovery.settings.saving') : t('AbandonedCartRecovery.settings.save')}
                         </button>
                     </div>
                 </div>
-            </div>
-
-            {/* How It Works */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-indigo-500" />{t('AbandonedCartRecovery.howItWorks.title')}</h2>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    <div className="text-center">
-                        <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <span className="text-2xl">{'\u{1F6D2}'}</span>
-                        </div>
-                        <h3 className="font-medium text-gray-900 mb-2">{t('AbandonedCartRecovery.howItWorks.step1.title')}</h3>
-                        <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.howItWorks.step1.description')}</p>
-                    </div>
-                    <div className="text-center">
-                        <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <span className="text-2xl">{'\u23F3'}</span>
-                        </div>
-                        <h3 className="font-medium text-gray-900 mb-2">{t('AbandonedCartRecovery.howItWorks.step2.title')}</h3>
-                        <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.howItWorks.step2.description')}</p>
-                    </div>
-                    <div className="text-center">
-                        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <span className="text-2xl">{'\u{1F4F2}'}</span>
-                        </div>
-                        <h3 className="font-medium text-gray-900 mb-2">{t('AbandonedCartRecovery.howItWorks.step3.title')}</h3>
-                        <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.howItWorks.step3.description')}</p>
-                    </div>
-                    <div className="text-center">
-                        <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <span className="text-2xl">{'\u{1F4B8}'}</span>
-                        </div>
-                        <h3 className="font-medium text-gray-900 mb-2">{t('AbandonedCartRecovery.howItWorks.step4.title')}</h3>
-                        <p className="text-sm text-gray-500">{t('AbandonedCartRecovery.howItWorks.step4.description')}</p>
-                    </div>
-                </div>
-            </div>
-
-            {/* Safety & Privacy Note */}
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-start gap-3">
-                    <Shield className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                    <div>
-                        <h3 className="font-medium text-blue-900">{t('AbandonedCartRecovery.safety.title')}</h3>
-                        <ul className="text-sm text-blue-800 mt-2 space-y-1">
-                            <li><strong>{t('AbandonedCartRecovery.safety.rateLimitingLabel')}</strong> {t('AbandonedCartRecovery.safety.rateLimitingDescription')}</li>
-                            <li><strong>{t('AbandonedCartRecovery.safety.optOutLabel')}</strong> {t('AbandonedCartRecovery.safety.optOutDescription')}</li>
-                            <li><strong>{t('AbandonedCartRecovery.safety.workingHoursLabel')}</strong> {t('AbandonedCartRecovery.safety.workingHoursDescription')}</li>
-                            <li><strong>{t('AbandonedCartRecovery.safety.duplicatePreventionLabel')}</strong> {t('AbandonedCartRecovery.safety.duplicatePreventionDescription')}</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
+            </section>
         </div>
     )
 }

@@ -136,6 +136,7 @@ public interface IStorefrontPhoneVerificationService
 public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationService
 {
     private const int OtpLength = 6;
+    private const int OtpHashIterations = 100_000;
     private const int OtpExpiryMinutes = 5;
     private const int MaxOtpRequestsPerWindow = 3;
     private const int RateLimitWindowMinutes = 5;
@@ -422,20 +423,20 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
                     retryAfterSeconds: exceededRateLimit.Value.RetryAfterSeconds);
             }
 
-            var isNewOtp = existingOtp == null;
-            var otpRecord = existingOtp ?? new CheckoutPhoneOtpRecord
+            var previousOtp = existingOtp;
+            var otpCode = GenerateOtp();
+            var otpRecord = new CheckoutPhoneOtpRecord
             {
-                Code = GenerateOtp(),
                 CreatedAtUtc = nowUtc,
                 ExpiresAtUtc = nowUtc.AddMinutes(OtpExpiryMinutes),
                 DeliveryChannel = "whatsapp",
-                MaxVerificationAttempts = 5
+                MaxVerificationAttempts = existingOtp?.MaxVerificationAttempts ?? 5,
+                DispatchCount = (existingOtp?.DispatchCount ?? 0) + 1,
+                State = CheckoutPhoneOtpStates.Sent,
+                LastRequestedAtUtc = nowUtc,
+                CodeSalt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             };
-
-            otpRecord.State = CheckoutPhoneOtpStates.Sent;
-            otpRecord.LastRequestedAtUtc = nowUtc;
-            otpRecord.DispatchCount += 1;
-            otpRecord.VerifiedAtUtc = null;
+            otpRecord.CodeHash = HashOtp(tenantId, sessionId, phone, otpCode, otpRecord.CodeSalt);
 
             var otpTtl = otpRecord.ExpiresAtUtc - nowUtc;
             if (otpTtl <= TimeSpan.Zero)
@@ -446,24 +447,21 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
                     "Verification code has expired. Please request a new one.");
             }
 
-            if (isNewOtp)
+            var stored = await _otpStore.SaveOtpAsync(tenantId, sessionId, phone, otpRecord, otpTtl, ct);
+            if (!stored)
             {
-                var stored = await _otpStore.SaveOtpAsync(tenantId, sessionId, phone, otpRecord, otpTtl, ct);
-                if (!stored)
-                {
-                    _logger.LogError(
-                        "[CheckoutPhoneOtp] Failed to persist OTP before publish | TenantId: {TenantId} | SessionId: {SessionId} | Phone: {Phone} | TraceId: {TraceId}",
-                        tenantId,
-                        sessionId,
-                        MaskPhone(phone),
-                        traceId);
+                _logger.LogError(
+                    "[CheckoutPhoneOtp] Failed to persist OTP before publish | TenantId: {TenantId} | SessionId: {SessionId} | Phone: {Phone} | TraceId: {TraceId}",
+                    tenantId,
+                    sessionId,
+                    MaskPhone(phone),
+                    traceId);
 
-                    _telemetry.RecordOtpRequest(tenantId, "whatsapp", "rejected", "otp_persist_failed");
+                _telemetry.RecordOtpRequest(tenantId, "whatsapp", "rejected", "otp_persist_failed");
 
-                    return CreateFailureResult(
-                        "OTP_REQUEST_FAILED",
-                        "Verification service is currently unavailable. Please try again later.");
-                }
+                return CreateFailureResult(
+                    "OTP_REQUEST_FAILED",
+                    "Verification service is currently unavailable. Please try again later.");
             }
 
             try
@@ -473,7 +471,7 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
                     TenantId = tenantId,
                     CustomerId = Guid.Empty,
                     Phone = phone,
-                    OtpCode = otpRecord.Code,
+                    OtpCode = otpCode,
                     ExpiryMinutes = Math.Max(1, (int)Math.Ceiling(otpTtl.TotalMinutes)),
                     Purpose = "CHECKOUT_VERIFICATION"
                 };
@@ -489,9 +487,21 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
             }
             catch (Exception ex)
             {
-                if (isNewOtp)
+                if (previousOtp == null)
                 {
                     await _otpStore.DeleteOtpAsync(tenantId, sessionId, phone, ct);
+                }
+                else
+                {
+                    var previousTtl = previousOtp.ExpiresAtUtc - DateTime.UtcNow;
+                    if (previousTtl > TimeSpan.Zero)
+                    {
+                        await _otpStore.SaveOtpAsync(tenantId, sessionId, phone, previousOtp, previousTtl, ct);
+                    }
+                    else
+                    {
+                        await _otpStore.DeleteOtpAsync(tenantId, sessionId, phone, ct);
+                    }
                 }
 
                 _logger.LogError(
@@ -510,19 +520,6 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
                     "Verification service is currently unavailable. Please try again later.");
             }
 
-            if (!isNewOtp)
-            {
-                var updated = await _otpStore.SaveOtpAsync(tenantId, sessionId, phone, otpRecord, otpTtl, ct);
-                if (!updated)
-                {
-                    _logger.LogWarning(
-                        "[CheckoutPhoneOtp] Failed to update existing OTP metadata after publish | TenantId: {TenantId} | SessionId: {SessionId} | Phone: {Phone}",
-                        tenantId,
-                        sessionId,
-                        MaskPhone(phone));
-                }
-            }
-
             foreach (var rateLimitKey in rateLimitKeys)
             {
                 await _otpStore.IncrementRateLimitAsync(
@@ -536,7 +533,7 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
                 tenantId,
                 "whatsapp",
                 "accepted",
-                isNewOtp ? "new_code" : "existing_code_resent");
+                previousOtp == null ? "new_code" : "existing_code_resent");
 
             _logger.LogInformation(
                 "[CheckoutPhoneOtp] OTP request accepted | TenantId: {TenantId} | SessionId: {SessionId} | Phone: {Phone} | DispatchCount: {DispatchCount} | TraceId: {TraceId}",
@@ -549,7 +546,7 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
             return new PhoneVerificationResult
             {
                 Success = true,
-                Message = isNewOtp
+                Message = previousOtp == null
                     ? "Verification code sent to your WhatsApp."
                     : "Verification code resent to your WhatsApp.",
                 ExpiresInSeconds = GetExpiresInSeconds(otpRecord, nowUtc),
@@ -716,9 +713,32 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
                     "Verification code is not available. Please request a new one.");
             }
 
-            if (!CryptographicOperations.FixedTimeEquals(
-                    System.Text.Encoding.UTF8.GetBytes(otpCode),
-                    System.Text.Encoding.UTF8.GetBytes(otpRecord.Code)))
+            if (string.IsNullOrWhiteSpace(otpRecord.CodeHash) ||
+                string.IsNullOrWhiteSpace(otpRecord.CodeSalt))
+            {
+                await _otpStore.DeleteOtpAsync(tenantId, sessionId, phone, ct);
+                return CreateFailureResult(
+                    "OTP_NOT_AVAILABLE",
+                    "Verification code is not available. Please request a new one.");
+            }
+
+            bool hashMatches;
+            try
+            {
+                var submittedHash = HashOtp(tenantId, sessionId, phone, otpCode, otpRecord.CodeSalt);
+                hashMatches = CryptographicOperations.FixedTimeEquals(
+                    Convert.FromBase64String(submittedHash),
+                    Convert.FromBase64String(otpRecord.CodeHash));
+            }
+            catch (FormatException)
+            {
+                await _otpStore.DeleteOtpAsync(tenantId, sessionId, phone, ct);
+                return CreateFailureResult(
+                    "OTP_NOT_AVAILABLE",
+                    "Verification code is not available. Please request a new one.");
+            }
+
+            if (!hashMatches)
             {
                 otpRecord.VerificationAttempts += 1;
                 var otpTtl = otpRecord.ExpiresAtUtc - nowUtc;
@@ -808,7 +828,8 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
             }
 
             otpRecord.State = CheckoutPhoneOtpStates.Verified;
-            otpRecord.Code = string.Empty;
+            otpRecord.CodeHash = string.Empty;
+            otpRecord.CodeSalt = string.Empty;
             otpRecord.VerifiedAtUtc = nowUtc;
             otpRecord.VerificationAttempts = 0;
 
@@ -973,6 +994,23 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
         var bytes = RandomNumberGenerator.GetBytes(4);
         var number = BitConverter.ToUInt32(bytes) % 1_000_000;
         return number.ToString($"D{OtpLength}");
+    }
+
+    private static string HashOtp(
+        Guid tenantId,
+        string sessionId,
+        string phone,
+        string code,
+        string salt)
+    {
+        var saltBytes = Convert.FromBase64String(salt);
+        var value = System.Text.Encoding.UTF8.GetBytes($"{tenantId:N}\n{sessionId}\n{phone}\n{code}");
+        return Convert.ToBase64String(Rfc2898DeriveBytes.Pbkdf2(
+            value,
+            saltBytes,
+            OtpHashIterations,
+            HashAlgorithmName.SHA256,
+            32));
     }
 
     private static string NormalizePhoneFallback(string phone)

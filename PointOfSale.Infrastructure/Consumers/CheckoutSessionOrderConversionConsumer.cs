@@ -2,6 +2,7 @@ using MassTransit;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Enums;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -42,6 +43,15 @@ public class CheckoutSessionOrderConversionConsumer : IConsumer<OrderCreatedEven
 
         if (!@event.CartId.HasValue || @event.CartId.Value == Guid.Empty)
             return;
+
+        if (@event.Source != OrderSource.Ecommerce)
+        {
+            _logger.LogDebug(
+                "[AbandonedCheckout] Non-storefront order source rejected | OrderId: {OrderId} | Source: {Source}",
+                @event.OrderId,
+                @event.Source);
+            return;
+        }
 
         try
         {

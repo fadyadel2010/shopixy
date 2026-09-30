@@ -10,7 +10,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.API.Controllers;
-using PointOfSale.API.Controllers.Admin;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.RateLimiting;
 using PointOfSale.API.Security;
@@ -128,7 +127,6 @@ public sealed class WebhookRequestHardeningTests
         { typeof(ShippingWebhooksController), nameof(ShippingWebhooksController.ReceiveBostaWebhook), WebhookRequestLimits.ShippingProviderMaxBytes },
         { typeof(ShippingWebhooksController), nameof(ShippingWebhooksController.ReceiveAramexWebhook), WebhookRequestLimits.ShippingProviderMaxBytes },
         { typeof(ShippingWebhooksController), nameof(ShippingWebhooksController.ReceiveMylerzWebhook), WebhookRequestLimits.ShippingProviderMaxBytes },
-        { typeof(ShippingWebhooksController), nameof(ShippingWebhooksController.ReceiveDhlWebhook), WebhookRequestLimits.ShippingProviderMaxBytes },
-        { typeof(AdminAbandonedCartRecoveryController), nameof(AdminAbandonedCartRecoveryController.LogRecoveryResult), WebhookRequestLimits.ShippingProviderMaxBytes }
+        { typeof(ShippingWebhooksController), nameof(ShippingWebhooksController.ReceiveDhlWebhook), WebhookRequestLimits.ShippingProviderMaxBytes }
     };
 }

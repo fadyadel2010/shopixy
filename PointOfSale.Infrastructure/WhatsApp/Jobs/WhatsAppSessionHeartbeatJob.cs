@@ -127,6 +127,15 @@ public class WhatsAppSessionHeartbeatJob
             
             // Check status via HTTP call to Baileys service
             var statusResult = await baileysTransport.GetStatusAsync(account.TenantId.ToString(), ct);
+
+            if (!statusResult.Success || statusResult.Status == WhatsAppConnectionStatus.Unknown)
+            {
+                _logger.LogWarning(
+                    "[WhatsApp Heartbeat] Baileys status unavailable, skipping status update | AccountId: {AccountId} | TenantId: {TenantId}",
+                    account.Id,
+                    account.TenantId);
+                return;
+            }
             
             var isConnected = statusResult.Success &&
                               statusResult.Status == WhatsAppConnectionStatus.Connected &&
@@ -189,9 +198,10 @@ public class WhatsAppSessionHeartbeatJob
         CancellationToken ct)
     {
         var oldStatus = account.Status;
-        
-        // Status changed?
-        if (newStatus != oldStatus)
+        var statusChanged = newStatus != oldStatus;
+        var mustDisable = newStatus == WhatsAppAccountStatus.Disconnected && account.Enabled;
+
+        if (statusChanged || mustDisable)
         {
             if (isConnected)
             {
@@ -205,7 +215,7 @@ public class WhatsAppSessionHeartbeatJob
                 account.UpdatedAtUtc = DateTime.UtcNow;
                 account.StatusReason = $"Reconnected via {transport} persistent session";
             }
-            else
+            else if (newStatus == WhatsAppAccountStatus.Disconnected)
             {
                 // Disconnected
                 _logger.LogWarning(
@@ -213,23 +223,32 @@ public class WhatsAppSessionHeartbeatJob
                     transport, account.Id, account.TenantId);
 
                 account.Status = newStatus;
+                account.Enabled = false;
                 account.LastDisconnectedAtUtc = DateTime.UtcNow;
                 account.UpdatedAtUtc = DateTime.UtcNow;
                 account.StatusReason = $"Heartbeat check failed ({transport})";
             }
+            else
+            {
+                account.Status = newStatus;
+                account.UpdatedAtUtc = DateTime.UtcNow;
+                account.StatusReason = $"Awaiting QR scan ({transport})";
+            }
 
             await _dbContext.SaveChangesAsync(ct);
 
-            // Publish status change event
-            await _eventPublisher.PublishAsync(new WhatsAppAccountStatusChangedEvent
+            if (statusChanged)
             {
-                TenantId = account.TenantId,
-                AccountId = account.Id,
-                OldStatus = oldStatus,
-                NewStatus = account.Status,
-                Reason = account.StatusReason,
-                OccurredAtUtc = DateTime.UtcNow
-            }, ct);
+                await _eventPublisher.PublishAsync(new WhatsAppAccountStatusChangedEvent
+                {
+                    TenantId = account.TenantId,
+                    AccountId = account.Id,
+                    OldStatus = oldStatus,
+                    NewStatus = account.Status,
+                    Reason = account.StatusReason,
+                    OccurredAtUtc = DateTime.UtcNow
+                }, ct);
+            }
         }
         else if (isConnected)
         {

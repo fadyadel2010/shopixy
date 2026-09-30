@@ -219,8 +219,8 @@
             "fullName": "Full Name",
             "fullNamePlaceholder": "Enter your full name",
             "phoneNumber": "Phone Number",
-            "phonePlaceholder": "e.g. 01022174803",
-            "phoneHelp": "Enter your local number. Country code is optional.",
+            "phonePlaceholder": "Enter your local phone number",
+            "phoneHelp": "The country code is selected automatically from the store's country.",
             "emailAddress": "Email Address",
             "city": "City",
             "cityPlaceholder": "Enter city",
@@ -884,6 +884,12 @@
         "priceHighToLow": "Price: High to Low",
         "newest": "Newest",
         "highestDiscount": "Biggest Discount"
+    },
+    "cartRecovery": {
+        "restoring": "Restoring your cart...",
+        "unavailableTitle": "Recovery link unavailable",
+        "unavailableMessage": "This recovery link is invalid, expired, belongs to another store, or the order is already complete. Return to the cart to continue safely.",
+        "goToCart": "Go to cart"
     },
     "chat": {
         "title": "Shopping Assistant",

@@ -9309,6 +9309,7 @@ public class CheckoutService : ICheckoutService
                 PaymentMethodName = order.PaymentMethodName,
                 SessionId = order.SessionId,
                 IsPaid = order.IsPaid,
+                CartId = snapshot.CartId,
                 // FULFILLMENT OWNERSHIP SNAPSHOT
                 FulfillmentMode = order.FulfillmentMode,
                 FulfillmentCarrierCode = order.FulfillmentCarrierCode,

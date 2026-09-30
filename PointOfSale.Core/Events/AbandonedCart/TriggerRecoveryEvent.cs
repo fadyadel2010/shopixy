@@ -10,11 +10,11 @@ namespace PointOfSale.Core.Events.AbandonedCart;
 /// - AbandonedCartScannerJob (background job)
 /// 
 /// CONSUMED BY:
-/// - RecoveryOrchestrationConsumer (calls n8n webhook)
+/// - RecoveryOrchestrationConsumer (persists a native durable schedule)
 /// 
 /// IDEMPOTENCY:
-/// - Only emitted once per cart (RecoveryStatus != Triggered check)
-/// - Consumer checks status before calling n8n
+/// - Repeated events are harmless because the SQL schedule uses a deterministic
+///   tenant/cart idempotency key.
 /// </summary>
 public class TriggerRecoveryEvent : IntegrationEvent
 {
@@ -29,72 +29,4 @@ public class TriggerRecoveryEvent : IntegrationEvent
     /// Cart identifier.
     /// </summary>
     public Guid CartId { get; set; }
-
-    /// <summary>
-    /// Storefront session identifier for guest recovery.
-    /// </summary>
-    public string? SessionId { get; set; }
-
-    /// <summary>
-    /// Authenticated customer ID when available.
-    /// </summary>
-    public Guid? CustomerId { get; set; }
-    
-    /// <summary>
-    /// Customer phone number for WhatsApp.
-    /// </summary>
-    public string? PhoneNumber { get; set; }
-    
-    /// <summary>
-    /// Customer email (optional).
-    /// </summary>
-    public string? Email { get; set; }
-
-    /// <summary>
-    /// Verified contact channel selected for recovery.
-    /// Expected values: "phone" or "email".
-    /// </summary>
-    public string? ContactChannel { get; set; }
-    
-    /// <summary>
-    /// Snapshot of cart contents.
-    /// </summary>
-    public string CartSnapshotJson { get; set; } = "{}";
-    
-    /// <summary>
-    /// Delay before first message (from tenant settings).
-    /// </summary>
-    public int FirstMessageDelayMinutes { get; set; }
-    
-    /// <summary>
-    /// Delay before second message (from tenant settings).
-    /// </summary>
-    public int SecondMessageDelayMinutes { get; set; }
-    
-    /// <summary>
-    /// Working hours start (from tenant settings).
-    /// </summary>
-    public TimeSpan WorkingHoursFrom { get; set; }
-    
-    /// <summary>
-    /// Working hours end (from tenant settings).
-    /// </summary>
-    public TimeSpan WorkingHoursTo { get; set; }
-    
-    /// <summary>
-    /// Store name for branding in messages.
-    /// </summary>
-    public string StoreName { get; set; } = string.Empty;
-    
-    /// <summary>
-    /// Storefront base URL for constructing full recovery links.
-    /// Example: https://mystore.example.com
-    /// </summary>
-    public string StorefrontBaseUrl { get; set; } = string.Empty;
-    
-    /// <summary>
-    /// Signed recovery link for cart restoration.
-    /// Format: https://storefront/cart/recover/{token}
-    /// </summary>
-    public string RecoveryLink { get; set; } = string.Empty;
 }

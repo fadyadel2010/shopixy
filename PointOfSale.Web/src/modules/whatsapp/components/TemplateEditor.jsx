@@ -23,7 +23,8 @@ export default function TemplateEditor({ template, onSave, onCancel, type }) {
         if (type === 'Otp' && !content.includes('{{otp_code}}')) {
             newErrors.content = t('whatsapp.templates.validation.otpRequiresCode')
         }
-        if (type === 'OrderConfirmation' && !content.includes('{{order_number}}')) {
+        if (type === 'OrderConfirmation' &&
+            (!content.includes('{{order_number}}') || !content.includes('{{total}}'))) {
             newErrors.content = t('whatsapp.templates.validation.orderRecommendedNumber')
         }
 

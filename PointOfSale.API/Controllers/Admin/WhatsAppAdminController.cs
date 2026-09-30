@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
+using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
@@ -30,6 +32,7 @@ public class WhatsAppAdminController : ControllerBase
     private readonly ITenantContext _tenantContext; 
     private readonly IWhatsAppKillSwitch _killSwitch;
     private readonly IWhatsAppMessageLogService _logService;
+    private readonly IPhoneNumberNormalizer _phoneNumberNormalizer;
     private readonly ILogger<WhatsAppAdminController> _logger;
     private Guid TenantId => _tenantContext.RequiredTenantId;
 
@@ -41,6 +44,7 @@ public class WhatsAppAdminController : ControllerBase
         ITenantContext tenantContext,
         IWhatsAppKillSwitch killSwitch,
         IWhatsAppMessageLogService logService,
+        IPhoneNumberNormalizer phoneNumberNormalizer,
         ILogger<WhatsAppAdminController> logger)
     {
         _accountService = accountService;
@@ -50,6 +54,7 @@ public class WhatsAppAdminController : ControllerBase
         _tenantContext = tenantContext;
         _killSwitch = killSwitch;
         _logService = logService;
+        _phoneNumberNormalizer = phoneNumberNormalizer;
         _logger = logger;
     }
 
@@ -91,22 +96,63 @@ public class WhatsAppAdminController : ControllerBase
     [HttpPost("accounts")]
     public async Task<ActionResult<WhatsAppAccountDto>> CreateAccount(CreateWhatsAppAccountDto dto, CancellationToken ct)
     {
+        var normalizedPhone = await TryNormalizeConfiguredPhoneAsync(dto.PhoneNumber, dto.CountryCode, ct);
+        if (normalizedPhone == null)
+        {
+            return BadRequest(new ApiErrorResponse(
+                "WHATSAPP_INVALID_PHONE",
+                "Enter a valid phone number for the selected or configured country.",
+                HttpContext.TraceIdentifier));
+        }
+
+        var displayName = dto.DisplayName.Trim();
+        var existing = (await _accountService.GetAccountsAsync(TenantId, ct)).FirstOrDefault();
+        if (existing != null)
+        {
+            if (AccountMatches(existing, displayName, normalizedPhone, dto))
+            {
+                return Ok(MapAccount(existing));
+            }
+
+            return Conflict(new ApiErrorResponse(
+                "WHATSAPP_ACCOUNT_EXISTS",
+                "This store already has a WhatsApp account. Delete it before creating another account.",
+                HttpContext.TraceIdentifier));
+        }
+
         var account = new WhatsAppAccount
         {
             TenantId = TenantId,
-            DisplayName = dto.DisplayName,
-            PhoneNumber = dto.PhoneNumber,
+            DisplayName = displayName,
+            PhoneNumber = normalizedPhone,
             UseForOrderConfirmation = dto.UseForOrderConfirmation,
             UseForOtpVerification = dto.UseForOtpVerification,
             UseForPaymentApproval = dto.UseForPaymentApproval,
-            UseForAbandonedCartRecovery = dto.UseForAbandonedCartRecovery,
             Status = WhatsAppAccountStatus.PendingQR,
             Enabled = false,
             CreatedAtUtc = DateTime.UtcNow
         };
         
-        var created = await _accountService.CreateAccountAsync(account, ct);
-        return CreatedAtAction(nameof(GetAccount), new { id = created.Id }, MapAccount(created));
+        try
+        {
+            var created = await _accountService.CreateAccountAsync(account, ct);
+            return CreatedAtAction(nameof(GetAccount), new { id = created.Id }, MapAccount(created));
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("one WhatsApp account", StringComparison.OrdinalIgnoreCase))
+        {
+            return Conflict(new ApiErrorResponse(
+                "WHATSAPP_ACCOUNT_EXISTS",
+                ex.Message,
+                HttpContext.TraceIdentifier));
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return Conflict(new ApiErrorResponse(
+                "WHATSAPP_ACCOUNT_EXISTS",
+                "This WhatsApp account already exists for the store.",
+                HttpContext.TraceIdentifier));
+        }
     }
 
     [HttpPut("accounts/{id}")]
@@ -115,12 +161,20 @@ public class WhatsAppAdminController : ControllerBase
         var account = await _accountService.GetTenantAccountAsync(TenantId, id, ct);
         if (account == null) return NotFound();
 
-        account.DisplayName = dto.DisplayName;
-        account.PhoneNumber = dto.PhoneNumber;
+        var normalizedPhone = await TryNormalizeConfiguredPhoneAsync(dto.PhoneNumber, dto.CountryCode, ct);
+        if (normalizedPhone == null)
+        {
+            return BadRequest(new ApiErrorResponse(
+                "WHATSAPP_INVALID_PHONE",
+                "Enter a valid phone number for the selected or configured country.",
+                HttpContext.TraceIdentifier));
+        }
+
+        account.DisplayName = dto.DisplayName.Trim();
+        account.PhoneNumber = normalizedPhone;
         account.UseForOrderConfirmation = dto.UseForOrderConfirmation;
         account.UseForOtpVerification = dto.UseForOtpVerification;
         account.UseForPaymentApproval = dto.UseForPaymentApproval;
-        account.UseForAbandonedCartRecovery = dto.UseForAbandonedCartRecovery;
         
         var updated = await _accountService.UpdateAccountAsync(account, ct);
         return Ok(MapAccount(updated));
@@ -138,7 +192,14 @@ public class WhatsAppAdminController : ControllerBase
         {
             _logger.LogInformation("[WhatsApp Admin] Disconnecting via Baileys | AccountId: {AccountId}", id);
             var transport = GetBaileysTransport();
-            await transport.DisconnectAsync(tenantId.ToString(), ct);
+            var disconnected = await transport.DisconnectAsync(tenantId.ToString(), ct);
+            if (!disconnected.Success)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiErrorResponse(
+                    "WHATSAPP_PROVIDER_UNAVAILABLE",
+                    "WhatsApp is temporarily unavailable. The account was not deleted so its session remains recoverable.",
+                    HttpContext.TraceIdentifier));
+            }
         }
         else
         {
@@ -167,6 +228,39 @@ public class WhatsAppAdminController : ControllerBase
             _logger.LogInformation("[WhatsApp Admin] Generating QR via Baileys | AccountId: {AccountId}", id);
             var transport = GetBaileysTransport();
             var result = await transport.GetQrCodeAsync(tenantId.ToString(), ct);
+
+            if (!result.Success)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiErrorResponse(
+                    "WHATSAPP_PROVIDER_UNAVAILABLE",
+                    "WhatsApp linking is temporarily unavailable. Please try again.",
+                    HttpContext.TraceIdentifier));
+            }
+
+            if (result.AlreadyConnected)
+            {
+                var status = await transport.GetStatusAsync(tenantId.ToString(), ct);
+                if (!status.Success || status.Status == WhatsAppConnectionStatus.Unknown)
+                {
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiErrorResponse(
+                        "WHATSAPP_PROVIDER_UNAVAILABLE",
+                        "WhatsApp connection status is temporarily unavailable.",
+                        HttpContext.TraceIdentifier));
+                }
+
+                if (!ConnectedPhoneMatches(account.PhoneNumber, status.ConnectedPhone))
+                {
+                    return Conflict(new ApiErrorResponse(
+                        "WHATSAPP_CONNECTED_PHONE_MISMATCH",
+                        "The linked WhatsApp session belongs to a different phone number. Disconnect it, then scan a new QR code.",
+                        HttpContext.TraceIdentifier));
+                }
+
+                account.Status = WhatsAppAccountStatus.Connected;
+                account.LastConnectedAtUtc = DateTime.UtcNow;
+                account.StatusReason = null;
+                await _accountService.UpdateAccountAsync(account, ct);
+            }
             
             return Ok(new QrCodeResult(
                 Success: result.Success,
@@ -196,7 +290,14 @@ public class WhatsAppAdminController : ControllerBase
         {
             _logger.LogInformation("[WhatsApp Admin] Disconnecting via Baileys | AccountId: {AccountId}", id);
             var transport = GetBaileysTransport();
-            await transport.DisconnectAsync(tenantId.ToString(), ct);
+            var disconnected = await transport.DisconnectAsync(tenantId.ToString(), ct);
+            if (!disconnected.Success)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiErrorResponse(
+                    "WHATSAPP_PROVIDER_UNAVAILABLE",
+                    "WhatsApp is temporarily unavailable and the account could not be disconnected.",
+                    HttpContext.TraceIdentifier));
+            }
         }
         else
         {
@@ -204,6 +305,12 @@ public class WhatsAppAdminController : ControllerBase
             await _webEngine.DisconnectAsync(id, ct);
         }
         
+        account.Status = WhatsAppAccountStatus.Disconnected;
+        account.Enabled = false;
+        account.LastDisconnectedAtUtc = DateTime.UtcNow;
+        account.StatusReason = "Disconnected by admin";
+        await _accountService.UpdateAccountAsync(account, ct);
+
         return Ok();
     }
 
@@ -219,6 +326,7 @@ public class WhatsAppAdminController : ControllerBase
         if (account == null) return NotFound();
         
         ConnectionStatus status;
+        var previousStatusReason = account.StatusReason;
         
         // TRANSPORT-AWARE: Check status using appropriate backend
         if (await UseBaileysAsync(ct))
@@ -226,6 +334,13 @@ public class WhatsAppAdminController : ControllerBase
             _logger.LogDebug("[WhatsApp Admin] Checking status via Baileys | AccountId: {AccountId}", id);
             var transport = GetBaileysTransport();
             var result = await transport.GetStatusAsync(tenantId.ToString(), ct);
+            if (!result.Success || result.Status == WhatsAppConnectionStatus.Unknown)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiErrorResponse(
+                    "WHATSAPP_PROVIDER_UNAVAILABLE",
+                    "WhatsApp connection status is temporarily unavailable.",
+                    HttpContext.TraceIdentifier));
+            }
             var identityMatches = result.Status == WhatsAppConnectionStatus.Connected &&
                                   ConnectedPhoneMatches(account.PhoneNumber, result.ConnectedPhone);
             
@@ -233,14 +348,40 @@ public class WhatsAppAdminController : ControllerBase
                 IsConnected: identityMatches,
                 Status: identityMatches
                     ? WhatsAppAccountStatus.Connected
-                    : WhatsAppAccountStatus.Disconnected,
-                LastActivity: DateTime.UtcNow
+                    : result.Status == WhatsAppConnectionStatus.QrPending
+                        ? WhatsAppAccountStatus.PendingQR
+                        : WhatsAppAccountStatus.Disconnected,
+                LastActivity: DateTime.UtcNow,
+                ConnectedPhone: result.ConnectedPhone
             );
+
+            if (result.Status == WhatsAppConnectionStatus.Connected && !identityMatches)
+            {
+                account.StatusReason = "Linked WhatsApp phone does not match the configured phone number";
+            }
+            else
+            {
+                account.StatusReason = null;
+            }
         }
         else
         {
             _logger.LogDebug("[WhatsApp Admin] Checking status via Playwright | AccountId: {AccountId}", id);
-            var playwrightStatus = await _webEngine.CheckConnectionAsync(id, ct);
+            ConnectionStatus playwrightStatus;
+            try
+            {
+                playwrightStatus = await _webEngine.CheckConnectionAsync(id, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "[WhatsApp Admin] Playwright status unavailable | AccountId: {AccountId}",
+                    id);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiErrorResponse(
+                    "WHATSAPP_PROVIDER_UNAVAILABLE",
+                    "WhatsApp connection status is temporarily unavailable.",
+                    HttpContext.TraceIdentifier));
+            }
             var identityMatches = playwrightStatus.IsConnected &&
                                   ConnectedPhoneMatches(account.PhoneNumber, playwrightStatus.ConnectedPhone);
 
@@ -256,12 +397,20 @@ public class WhatsAppAdminController : ControllerBase
         }
         
         // Persist status change to database if different
-        if (account.Status != status.Status)
+        var statusChanged = account.Status != status.Status;
+        var reasonChanged = account.StatusReason != previousStatusReason;
+        var mustDisable = status.Status == WhatsAppAccountStatus.Disconnected && account.Enabled;
+        if (statusChanged || reasonChanged || mustDisable)
         {
             account.Status = status.Status;
             if (status.IsConnected)
             {
                 account.LastConnectedAtUtc = DateTime.UtcNow;
+            }
+            else if (status.Status == WhatsAppAccountStatus.Disconnected)
+            {
+                account.Enabled = false;
+                account.LastDisconnectedAtUtc = DateTime.UtcNow;
             }
             account.UpdatedAtUtc = DateTime.UtcNow;
             await _accountService.UpdateAccountAsync(account, ct);
@@ -417,7 +566,33 @@ public class WhatsAppAdminController : ControllerBase
     public async Task<ActionResult<List<WhatsAppTemplateDto>>> GetTemplates(CancellationToken ct)
     {
         var templates = await _accountService.GetTemplatesAsync(TenantId, ct);
-        return Ok(templates.Select(MapTemplate).ToList());
+        var result = templates.Select(MapTemplate).ToList();
+
+        foreach (var systemTemplate in WhatsAppSystemTemplates.All)
+        {
+            var hasOverride = result.Any(template =>
+                string.Equals(template.Type, systemTemplate.Type, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(template.Language, systemTemplate.Language, StringComparison.OrdinalIgnoreCase));
+            if (!hasOverride)
+            {
+                result.Add(new WhatsAppTemplateDto
+                {
+                    Id = systemTemplate.Id,
+                    Type = systemTemplate.Type,
+                    Language = systemTemplate.Language,
+                    Content = systemTemplate.Content,
+                    IsActive = true,
+                    IsDefault = true,
+                    CreatedAtUtc = DateTime.UnixEpoch,
+                    UpdatedAtUtc = DateTime.UnixEpoch
+                });
+            }
+        }
+
+        return Ok(result
+            .OrderBy(template => template.Type)
+            .ThenBy(template => template.Language)
+            .ToList());
     }
 
     [HttpGet("templates/{id}")]
@@ -444,8 +619,18 @@ public class WhatsAppAdminController : ControllerBase
             UpdatedAtUtc = DateTime.UtcNow
         };
 
-        var created = await _accountService.CreateTemplateAsync(template, ct);
-        return CreatedAtAction(nameof(GetTemplate), new { id = created.Id }, MapTemplate(created));
+        try
+        {
+            var created = await _accountService.CreateTemplateAsync(template, ct);
+            return CreatedAtAction(nameof(GetTemplate), new { id = created.Id }, MapTemplate(created));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(
+                "WHATSAPP_TEMPLATE_INVALID",
+                ex.Message,
+                HttpContext.TraceIdentifier));
+        }
     }
 
     [HttpPut("templates/{id}")]
@@ -460,8 +645,18 @@ public class WhatsAppAdminController : ControllerBase
         existing.IsActive = dto.IsActive;
         existing.UpdatedAtUtc = DateTime.UtcNow;
 
-        var updated = await _accountService.UpdateTemplateAsync(existing, ct);
-        return Ok(MapTemplate(updated));
+        try
+        {
+            var updated = await _accountService.UpdateTemplateAsync(existing, ct);
+            return Ok(MapTemplate(updated));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(
+                "WHATSAPP_TEMPLATE_INVALID",
+                ex.Message,
+                HttpContext.TraceIdentifier));
+        }
     }
 
     [HttpDelete("templates/{id}")]
@@ -507,7 +702,6 @@ public class WhatsAppAdminController : ControllerBase
             UseForOrderConfirmation = account.UseForOrderConfirmation,
             UseForOtpVerification = account.UseForOtpVerification,
             UseForPaymentApproval = account.UseForPaymentApproval,
-            UseForAbandonedCartRecovery = account.UseForAbandonedCartRecovery,
             LastConnectedAtUtc = account.LastConnectedAtUtc,
             LastDisconnectedAtUtc = account.LastDisconnectedAtUtc,
             StatusReason = account.StatusReason,
@@ -516,12 +710,44 @@ public class WhatsAppAdminController : ControllerBase
         };
     }
 
+    private async Task<string?> TryNormalizeConfiguredPhoneAsync(
+        string input,
+        string? countryCode,
+        CancellationToken ct)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(countryCode)
+                ? await _phoneNumberNormalizer.NormalizeAsync(input, TenantId, ct)
+                : _phoneNumberNormalizer.Normalize(input, countryCode);
+        }
+        catch (PhoneNumberNormalizationException ex)
+        {
+            _logger.LogWarning(
+                "[WhatsApp Admin] Invalid account phone | TenantId: {TenantId} | Reason: {Reason}",
+                TenantId,
+                ex.Reason);
+            return null;
+        }
+    }
+
+    private static bool AccountMatches(
+        WhatsAppAccount account,
+        string displayName,
+        string phoneNumber,
+        CreateWhatsAppAccountDto dto) =>
+        account.DisplayName == displayName &&
+        account.PhoneNumber == phoneNumber &&
+        account.UseForOrderConfirmation == dto.UseForOrderConfirmation &&
+        account.UseForOtpVerification == dto.UseForOtpVerification &&
+        account.UseForPaymentApproval == dto.UseForPaymentApproval;
+
     private static WhatsAppTemplateDto MapTemplate(WhatsAppMessageTemplate template)
     {
         return new WhatsAppTemplateDto
         {
             Id = template.Id,
-            Type = template.Type,
+            Type = template.Type.Equals("OTP", StringComparison.OrdinalIgnoreCase) ? "Otp" : template.Type,
             Language = template.Language,
             Content = template.Content,
             IsActive = template.IsActive,
@@ -534,53 +760,67 @@ public class WhatsAppAdminController : ControllerBase
 
 public record KillSwitchRequest(string Reason);
 
-public record CreateWhatsAppAccountDto(
-    [property: Required]
-    [property: StringLength(100)]
-    string DisplayName,
-    [property: Required]
-    [property: StringLength(32)]
-    string PhoneNumber,
-    bool UseForOrderConfirmation,
-    bool UseForOtpVerification,
-    bool UseForPaymentApproval,
-    bool UseForAbandonedCartRecovery);
+public sealed class CreateWhatsAppAccountDto
+{
+    [Required, StringLength(100, MinimumLength = 1)]
+    public string DisplayName { get; set; } = string.Empty;
 
-public record UpdateWhatsAppAccountDto(
-    [property: Required]
-    [property: StringLength(100)]
-    string DisplayName,
-    [property: Required]
-    [property: StringLength(32)]
-    string PhoneNumber,
-    bool UseForOrderConfirmation,
-    bool UseForOtpVerification,
-    bool UseForPaymentApproval,
-    bool UseForAbandonedCartRecovery);
+    [Required, StringLength(32, MinimumLength = 7)]
+    public string PhoneNumber { get; set; } = string.Empty;
 
-public record CreateWhatsAppTemplateDto(
-    [property: Required]
-    [property: StringLength(100)]
-    string Type,
-    [property: Required]
-    [property: StringLength(10)]
-    string Language,
-    [property: Required]
-    [property: StringLength(4000)]
-    string Content,
-    bool IsActive);
+    [StringLength(2, MinimumLength = 2)]
+    [RegularExpression(@"^[A-Za-z]{2}$", ErrorMessage = "Country code must use ISO alpha-2 format.")]
+    public string? CountryCode { get; set; }
 
-public record UpdateWhatsAppTemplateDto(
-    [property: Required]
-    [property: StringLength(100)]
-    string Type,
-    [property: Required]
-    [property: StringLength(10)]
-    string Language,
-    [property: Required]
-    [property: StringLength(4000)]
-    string Content,
-    bool IsActive);
+    public bool UseForOrderConfirmation { get; set; }
+    public bool UseForOtpVerification { get; set; }
+    public bool UseForPaymentApproval { get; set; }
+}
+
+public sealed class UpdateWhatsAppAccountDto
+{
+    [Required, StringLength(100, MinimumLength = 1)]
+    public string DisplayName { get; set; } = string.Empty;
+
+    [Required, StringLength(32, MinimumLength = 7)]
+    public string PhoneNumber { get; set; } = string.Empty;
+
+    [StringLength(2, MinimumLength = 2)]
+    [RegularExpression(@"^[A-Za-z]{2}$", ErrorMessage = "Country code must use ISO alpha-2 format.")]
+    public string? CountryCode { get; set; }
+
+    public bool UseForOrderConfirmation { get; set; }
+    public bool UseForOtpVerification { get; set; }
+    public bool UseForPaymentApproval { get; set; }
+}
+
+public sealed class CreateWhatsAppTemplateDto
+{
+    [Required, StringLength(100)]
+    public string Type { get; set; } = string.Empty;
+
+    [Required, StringLength(10)]
+    public string Language { get; set; } = string.Empty;
+
+    [Required, StringLength(4000)]
+    public string Content { get; set; } = string.Empty;
+
+    public bool IsActive { get; set; }
+}
+
+public sealed class UpdateWhatsAppTemplateDto
+{
+    [Required, StringLength(100)]
+    public string Type { get; set; } = string.Empty;
+
+    [Required, StringLength(10)]
+    public string Language { get; set; } = string.Empty;
+
+    [Required, StringLength(4000)]
+    public string Content { get; set; } = string.Empty;
+
+    public bool IsActive { get; set; }
+}
 
 public sealed class WhatsAppAccountDto
 {
@@ -592,7 +832,6 @@ public sealed class WhatsAppAccountDto
     public bool UseForOrderConfirmation { get; set; }
     public bool UseForOtpVerification { get; set; }
     public bool UseForPaymentApproval { get; set; }
-    public bool UseForAbandonedCartRecovery { get; set; }
     public DateTime? LastConnectedAtUtc { get; set; }
     public DateTime? LastDisconnectedAtUtc { get; set; }
     public string? StatusReason { get; set; }
@@ -631,4 +870,3 @@ public class WhatsAppAnalytics
     public decimal SuccessRate { get; set; }
     public Dictionary<string, int> MessagesByType { get; set; } = new();
 }
-

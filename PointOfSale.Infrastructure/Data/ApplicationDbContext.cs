@@ -1588,6 +1588,7 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.TenantId).IsUnique(); // One settings record per tenant
             entity.HasIndex(e => e.EnableAbandonedRecovery); // For finding enabled tenants
+            entity.Property(e => e.TimeZoneId).HasMaxLength(96).IsRequired();
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
 
@@ -1595,6 +1596,9 @@ public class ApplicationDbContext : DbContext
         // Tracks cart lifecycle from active → abandoned → triggered → recovered
         modelBuilder.Entity<AbandonedCart>(entity =>
         {
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_AbandonedCarts_RecoveryStatus",
+                "\"RecoveryStatus\" IN ('Active', 'Abandoned', 'Pending', 'Triggered', 'Recovered', 'Expired', 'Failed', 'Canceled')"));
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.CartId);
@@ -1632,6 +1636,15 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => new { e.TenantId, e.IdempotencyKey })
                 .IsUnique()
                 .HasDatabaseName("IX_AbandonedCartRecoveryLogs_TenantId_IdempotencyKey_Unique");
+            entity.HasIndex(e => new { e.FirstMessageStatus, e.FirstMessageDueAtUtc });
+            entity.HasIndex(e => new { e.SecondMessageStatus, e.SecondMessageDueAtUtc });
+            entity.Property(e => e.FirstMessageStatus).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.SecondMessageStatus).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.FirstMessageLeaseId).HasMaxLength(64);
+            entity.Property(e => e.SecondMessageLeaseId).HasMaxLength(64);
+            entity.Property(e => e.FirstMessageDispatchLogId).HasMaxLength(64);
+            entity.Property(e => e.SecondMessageDispatchLogId).HasMaxLength(64);
+            entity.Property(e => e.TimeZoneId).HasMaxLength(96).IsRequired();
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
 

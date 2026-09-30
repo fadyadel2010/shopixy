@@ -248,7 +248,6 @@ public class AbandonedCheckoutDetail
 
     // Status
     public string Status { get; set; } = string.Empty;
-    public string RecoveryToken { get; set; } = string.Empty;
     public string? DeviceType { get; set; }
     public string? Source { get; set; }
     public DateTime CreatedAtUtc { get; set; }

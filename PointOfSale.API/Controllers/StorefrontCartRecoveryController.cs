@@ -34,6 +34,7 @@ public class StorefrontCartRecoveryController : ControllerBase
 {
     private readonly IAbandonedCartService _cartService;
     private readonly ICartService _liveCartService;
+    private readonly ITenantContext _tenantContext;
     private readonly AbandonedCartRecoveryTelemetry _telemetry;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<StorefrontCartRecoveryController> _logger;
@@ -41,12 +42,14 @@ public class StorefrontCartRecoveryController : ControllerBase
     public StorefrontCartRecoveryController(
         IAbandonedCartService cartService,
         ICartService liveCartService,
+        ITenantContext tenantContext,
         AbandonedCartRecoveryTelemetry telemetry,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<StorefrontCartRecoveryController> logger)
     {
         _cartService = cartService;
         _liveCartService = liveCartService;
+        _tenantContext = tenantContext;
         _telemetry = telemetry;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
@@ -90,6 +93,17 @@ public class StorefrontCartRecoveryController : ControllerBase
 
             var tenantId = validation.TenantId!.Value;
             var cartId = validation.CartId!.Value;
+
+            if (!_tenantContext.TenantId.HasValue || _tenantContext.TenantId.Value != tenantId)
+            {
+                _telemetry.RecordRecoveryTokenInvalid(tenantId, "storefront_tenant_mismatch");
+                _reliabilityTelemetry.RecordRecoveryCartRestoreFailed(tenantId, "storefront_tenant_mismatch");
+                return NotFound(new CartRecoveryErrorResponse
+                {
+                    Error = "Cart not found",
+                    Message = "This cart is not available for this store."
+                });
+            }
 
             var cart = await _cartService.GetByCartIdAsync(tenantId, cartId, ct);
             if (cart == null || IsTerminal(cart.RecoveryStatus))
@@ -215,7 +229,8 @@ public class StorefrontCartRecoveryController : ControllerBase
     private static bool IsTerminal(AbandonedCartRecoveryStatus status) =>
         status is AbandonedCartRecoveryStatus.Recovered or
             AbandonedCartRecoveryStatus.Expired or
-            AbandonedCartRecoveryStatus.Failed;
+            AbandonedCartRecoveryStatus.Failed or
+            AbandonedCartRecoveryStatus.Canceled;
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

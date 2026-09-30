@@ -1254,6 +1254,78 @@
     "cardAmount": "Card Amount:",
     "optionalNotes": "Optional notes..."
   },
+  "abandonedCheckouts": {
+    "title": "Abandoned Checkouts",
+    "subtitle": "Track checkout sessions that started but did not complete",
+    "totalSessions": "Total sessions",
+    "abandoned": "Abandoned",
+    "converted": "Converted",
+    "lostRevenue": "Estimated abandoned value",
+    "estimatedValueHint": "Cart snapshot value, not confirmed lost revenue",
+    "refreshing": "Refreshing checkout data...",
+    "loading": "Loading checkout sessions",
+    "loadingDetails": "Loading checkout details",
+    "searchLabel": "Search checkout sessions",
+    "searchPlaceholder": "Search by name, phone, or email...",
+    "statusFilter": "Checkout status",
+    "empty": "No checkout sessions found",
+    "emptyHint": "Checkout sessions will appear after a customer starts checkout.",
+    "noMatches": "No sessions match this search or filter",
+    "noMatchesHint": "Clear the search or choose another status to see other sessions.",
+    "cartTotal": "Cart total",
+    "device": "Device",
+    "source": "Source",
+    "timeSpent": "Time spent",
+    "lastActivity": "Last activity",
+    "details": "Checkout details",
+    "checkoutInfo": "Checkout information",
+    "paymentMethod": "Payment method",
+    "recoveryLink": "Checkout recovery link",
+    "recoveryLinkHint": "This restores the checkout only. It does not make the session eligible for Smart Cart Recovery or send a WhatsApp message.",
+    "copied": "Copied",
+    "started": "Started",
+    "duration": "Checkout duration",
+    "cartItems": "Cart items ({{count}})",
+    "itemsUnavailable": "No cart item snapshot is available for this session.",
+    "item": "Item",
+    "unknownItem": "Unknown item",
+    "unknownCustomer": "Unknown customer",
+    "itemQuantity": "x{{count}}",
+    "convertedOrder": "Converted to order #{{orderNumber}}",
+    "durationSeconds": "{{count}} sec",
+    "durationMinutesSeconds": "{{minutes}} min {{seconds}} sec",
+    "durationHoursMinutes": "{{hours}} hr {{minutes}} min",
+    "pagination": "Showing {{from}} to {{to}} of {{total}}",
+    "statuses": {
+      "all": "All",
+      "abandoned": "Abandoned",
+      "active": "Active",
+      "converted": "Converted",
+      "unknown": "Unknown"
+    },
+    "devices": {
+      "mobile": "Mobile",
+      "desktop": "Desktop",
+      "tablet": "Tablet",
+      "unknown": "Unknown"
+    },
+    "sources": {
+      "direct": "Direct",
+      "storefront": "Storefront",
+      "instagram": "Instagram",
+      "affiliate": "Affiliate",
+      "googleads": "Google Ads",
+      "unknown": "Unknown"
+    },
+    "errors": {
+      "list": "Checkout sessions could not be loaded. This is not an empty result.",
+      "refresh": "Refresh failed. The previously loaded results are still shown.",
+      "stats": "Checkout statistics could not be loaded.",
+      "detail": "Checkout details could not be loaded.",
+      "permission": "You do not have permission to view abandoned checkouts.",
+      "authentication": "Your session expired. Sign in again to continue."
+    }
+  },
   "common": {
     "search": "Search",
     "searchPlaceholder": "Search...",
@@ -1275,7 +1347,16 @@
     "total": "Total",
     "status": "Status",
     "description": "Description",
+    "customer": "Customer",
     "name": "Name",
+    "phone": "Phone",
+    "email": "Email",
+    "city": "City",
+    "address": "Address",
+    "notes": "Notes",
+    "timeline": "Timeline",
+    "copy": "Copy",
+    "notAvailable": "Not available",
     "code": "Code",
     "price": "Price",
     "quantity": "Quantity",
@@ -3433,12 +3514,14 @@
       "otpVerification": "OTP Verification",
       "fields": {
         "displayName": "Display Name",
+        "country": "Country",
         "phoneNumber": "Phone Number"
       },
       "placeholders": {
         "displayName": "e.g. Main Business Line",
-        "phoneNumber": "+20 1XX XXXX XXX"
+        "phoneNumber": "10X XXX XXXX"
       },
+      "phonePrefixHint": "{{prefix}} is added automatically. You may enter the local number with or without its leading zero.",
       "actions": {
         "addAccount": "Add Account",
         "createAccount": "Create Account",
@@ -3508,8 +3591,10 @@
       "supportedVariables": "Supported variables: see sidebar.",
       "livePreview": "Live Preview",
       "empty": "No templates defined. Default system template will be used.",
+      "systemDefault": "System default",
       "actions": {
         "create": "Create",
+        "customize": "Customize default",
         "saveTemplate": "Save Template",
         "editTemplate": "Edit Template",
         "newTemplate": "New {{type}} Template"
@@ -3526,7 +3611,7 @@
         "contentRequired": "Message content is required",
         "contentTooLong": "Message too long (max 1024 chars)",
         "otpRequiresCode": "OTP templates must contain {{otp_code}}",
-        "orderRecommendedNumber": "Order templates recommended to have {{order_number}}"
+        "orderRecommendedNumber": "Order templates must contain {{order_number}} and {{total}}"
       }
     },
     "safety": {
@@ -3622,6 +3707,8 @@
         "currency": "Currency code (e.g. USD)",
         "itemsCount": "Number of items in cart",
         "storeName": "Your store name",
+        "shippingAddress": "Committed shipping address",
+        "paymentStatus": "Authoritative payment status",
         "otpCode": "One-time password (OTP templates only)"
       }
     },
@@ -3661,6 +3748,28 @@
         "timestamp": "Timestamp",
         "retryCount": "(Retry #{{count}})"
       }
+    },
+    "errors": {
+      "WHATSAPP_INVALID_PHONE": "Enter a valid phone number for the selected country.",
+      "WHATSAPP_ACCOUNT_EXISTS": "This store already has a WhatsApp account. Delete it before creating another account.",
+      "WHATSAPP_PROVIDER_UNAVAILABLE": "WhatsApp is temporarily unavailable. Please try again.",
+      "WHATSAPP_CONNECTED_PHONE_MISMATCH": "The linked session uses a different phone number. Disconnect it, then scan a new QR code.",
+      "WHATSAPP_TEMPLATE_INVALID": "Check the template content and required variables.",
+      "VALIDATION_ERROR": "Check the entered values and try again.",
+      "fetchAccounts": "Failed to load WhatsApp accounts.",
+      "fetchAccount": "Failed to load the WhatsApp account.",
+      "fetchAccountStatus": "Failed to check the WhatsApp connection status.",
+      "createAccount": "Failed to create the WhatsApp account.",
+      "updateAccount": "Failed to update the WhatsApp account.",
+      "enableAccount": "Failed to enable the WhatsApp account.",
+      "disableAccount": "Failed to disable the WhatsApp account.",
+      "disconnectAccount": "Failed to disconnect the WhatsApp account.",
+      "deleteAccount": "Failed to delete the WhatsApp account.",
+      "generateQr": "Failed to generate the QR code.",
+      "fetchTemplates": "Failed to load message templates.",
+      "createTemplate": "Failed to create the message template.",
+      "updateTemplate": "Failed to update the message template.",
+      "deleteTemplate": "Failed to delete the message template."
     }
   },
   "languageSwitcher": {
@@ -3674,6 +3783,7 @@
     "companyProfile": "Company Profile",
     "taxAndCurrency": "Tax & Currency",
     "receiptSettings": "Receipt Settings",
+    "messaging": "Messaging",
     "companyName": "Company Name",
     "companyAddress": "Company Address",
     "companyPhone": "Company Phone",
@@ -3689,7 +3799,37 @@
     "saveSettings": "Save Settings",
     "settingsSaved": "Settings saved successfully",
     "failedToLoadSettings": "Failed to load settings",
-    "failedToSaveSettings": "Failed to save settings"
+    "failedToSaveSettings": "Failed to save settings",
+    "defaultCountryTitle": "Default country for phone numbers",
+    "defaultCountryDescription": "Local phone numbers are normalized using this country before transactional WhatsApp delivery.",
+    "defaultCountryExampleIntro": "For example,",
+    "defaultCountryCountrylessExample": "is normalized to",
+    "defaultCountryUpdated": "Default country updated",
+    "failedToUpdateDefaultCountry": "Failed to update the default country",
+    "selectCountry": "Select a country",
+    "configured": "Configured",
+    "example": "Example",
+    "messagingInfoTitle": "Transactional messaging",
+    "messagingInfoDescription": "WhatsApp is used only for enabled transactional store workflows.",
+    "messagingUseCaseOtp": "Checkout phone verification codes",
+    "messagingUseCaseOrderConfirmation": "Order confirmations after committed order creation",
+    "messagingUseCaseShippingUpdates": "Shipping status updates when enabled",
+    "goToWhatsAppSettings": "Open WhatsApp settings",
+    "countries": {
+      "egypt": "Egypt",
+      "saudiArabia": "Saudi Arabia",
+      "uae": "United Arab Emirates",
+      "kuwait": "Kuwait",
+      "qatar": "Qatar",
+      "bahrain": "Bahrain",
+      "oman": "Oman",
+      "jordan": "Jordan",
+      "lebanon": "Lebanon",
+      "unitedStates": "United States",
+      "unitedKingdom": "United Kingdom",
+      "germany": "Germany",
+      "france": "France"
+    }
   },
   "databaseReset": {
     "title": "Database Reset",
@@ -6289,11 +6429,13 @@
   "AbandonedCartRecovery": {
     "messages": {
       "connectWhatsAppBeforeEnable": "Please connect a WhatsApp account before enabling this feature.",
-      "saveSuccess": "Settings saved successfully!"
+      "saveSuccess": "Recovery settings saved.",
+      "saveError": "Recovery settings could not be saved.",
+      "invalidWorkingHours": "The sending window start and end must be different."
     },
     "header": {
       "title": "Smart cart recovery",
-      "subtitle": "Automatically recover abandoned carts with smart WhatsApp messages."
+      "subtitle": "Configure and monitor native WhatsApp cart recovery."
     },
     "hero": {
       "badge": "AI-powered recovery engine",
@@ -6319,18 +6461,50 @@
       }
     },
     "stats": {
+      "title": "Recovery statistics",
       "abandonedCarts": "Abandoned carts",
       "messagesSent": "Messages sent",
       "recovered": "Recovered",
       "recoveryRate": "Recovery rate"
     },
     "connection": {
-      "requiredTitle": "WhatsApp account required",
+      "requiredTitle": "Recovery setup required",
       "requiredPrefix": "To enable smart cart recovery, you need to first connect a WhatsApp account. Go to ",
       "settingsLink": "WhatsApp settings",
+      "enableLink": "Enable recovery below",
       "requiredSuffix": " to set up your account.",
       "connectedTitle": "WhatsApp connected",
       "connectedDescription": "Your WhatsApp account {{name}} ({{phone}}) is ready to send recovery messages."
+    },
+    "actions": {
+      "refresh": "Refresh"
+    },
+    "errors": {
+      "configurationTitle": "Recovery configuration is unavailable",
+      "configurationDescription": "Settings or readiness could not be loaded. Existing values have not been replaced with defaults.",
+      "statsUnavailable": "Recovery statistics are temporarily unavailable. Zero values are not being shown as a substitute."
+    },
+    "status": {
+      "title": "Operational readiness",
+      "timeZone": "Sending hours are interpreted in {{timeZone}}.",
+      "configurationSaved": "Saved configuration loaded",
+      "configurationNotSaved": "Defaults loaded, not saved",
+      "accountEnabled": "Account enabled",
+      "accountConnected": "Account connected",
+      "recoveryEnabled": "Recovery enabled",
+      "nativeRuntime": "Native worker healthy",
+      "operational": "Recovery operational"
+    },
+    "readiness": {
+      "recovery_disabled": "Recovery is saved as disabled. No recovery workflow can start.",
+      "whatsapp_not_configured": "No tenant WhatsApp account is configured.",
+      "whatsapp_account_disabled": "The tenant WhatsApp account is disabled.",
+      "whatsapp_disconnected": "The WhatsApp account is not currently connected or usable. Open WhatsApp settings to reconnect it if the session is unpaired.",
+      "native_recovery_disabled": "Native recovery dispatch is disabled by application configuration.",
+      "native_database_unavailable": "The native recovery database is unavailable.",
+      "native_scheduler_unavailable": "No healthy native recovery worker is available. Recovery remains paused.",
+      "native_dispatcher_unavailable": "The audited WhatsApp dispatcher is unavailable. Recovery remains paused.",
+      "unavailable": "Recovery readiness could not be verified. Recovery remains fail-closed."
     },
     "settings": {
       "title": "Recovery settings",
@@ -6338,15 +6512,29 @@
       "enableTitle": "Enable smart cart recovery",
       "enableDescription": "When enabled, customers who abandon their cart will receive WhatsApp recovery messages.",
       "firstMessageDelay": "First message delay",
-      "firstMessageHelp": "Time to wait after cart abandonment before sending the first message.",
+      "firstMessageHelp": "Inactivity threshold measured from the cart's last verified activity. The workflow must not add this delay again.",
       "secondMessageDelay": "Second message delay",
       "secondMessageHelp": "Time to wait after the first message before sending a follow-up.",
       "workingHoursLabel": "Working hours (messages only sent during this time)",
-      "workingHoursHelp": "Messages will only be sent during these hours to respect customer time.",
+      "workingHoursHelp": "Both messages may be sent only inside this window in {{timeZone}}.",
+      "scheduleSummary": "After {{first}} without cart activity, the first message becomes due inside {{from}}-{{to}} {{timeZone}}. The second delay is {{second}} after the first message is actually sent.",
       "from": "From",
       "to": "To",
       "save": "Save Settings",
-      "saving": "Saving..."
+      "saving": "Saving...",
+      "unsaved": "Unsaved changes",
+      "saved": "No unsaved changes"
+    },
+    "duration": {
+      "30": "30 minutes",
+      "60": "1 hour",
+      "120": "2 hours",
+      "180": "3 hours",
+      "360": "6 hours",
+      "720": "12 hours",
+      "1440": "24 hours",
+      "2880": "48 hours",
+      "4320": "72 hours"
     },
     "options": {
       "30Minutes": "30 minutes",

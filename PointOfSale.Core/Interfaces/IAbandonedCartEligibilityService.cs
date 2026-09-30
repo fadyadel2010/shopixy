@@ -12,9 +12,10 @@ namespace PointOfSale.Core.Interfaces;
 /// 
 /// ELIGIBILITY RULES (evaluated in order):
 /// 1. Tenant has WhatsApp enabled
-/// 2. Tenant has active WhatsApp account for AbandonedCartRecovery use case
+/// 2. Tenant has an enabled WhatsApp account
 /// 3. Tenant has enabled abandoned cart recovery in automation settings
 /// 4. WhatsApp account is connected and healthy
+/// 5. Native scheduler and dispatcher are operational
 /// 
 /// DOES NOT:
 /// - Send messages (that's Phase 2)
@@ -29,7 +30,7 @@ public interface IAbandonedCartEligibilityService
     /// 
     /// Returns true ONLY if ALL conditions are met:
     /// - Tenant has WhatsApp enabled
-    /// - Tenant has active WhatsApp account for AbandonedCartRecovery
+    /// - Tenant has an enabled WhatsApp account
     /// - Tenant has enabled abandoned cart recovery in settings
     /// - WhatsApp account is connected
     /// 
@@ -59,18 +60,47 @@ public class AbandonedCartEligibilityStatus
     /// <summary>Tenant has WhatsApp account configured</summary>
     public bool HasWhatsAppAccount { get; set; }
     
-    /// <summary>WhatsApp account is enabled for abandoned cart recovery</summary>
-    public bool WhatsAppAccountEnabledForRecovery { get; set; }
+    /// <summary>WhatsApp account itself is enabled</summary>
+    public bool WhatsAppAccountEnabled { get; set; }
     
     /// <summary>WhatsApp account is connected</summary>
     public bool WhatsAppAccountConnected { get; set; }
     
     /// <summary>Abandoned cart recovery is enabled in automation settings</summary>
     public bool AutomationEnabled { get; set; }
+
+    /// <summary>Native Hangfire scheduling can discover and claim work.</summary>
+    public bool NativeSchedulerOperational { get; set; }
+
+    /// <summary>The central audited WhatsApp dispatcher is available.</summary>
+    public bool NativeDispatcherOperational { get; set; }
+
+    /// <summary>Current persisted account status for actionable UI diagnostics.</summary>
+    public string? WhatsAppAccountStatus { get; set; }
+
+    /// <summary>Current persisted account status reason, if available.</summary>
+    public string? WhatsAppStatusReason { get; set; }
+
+    /// <summary>Time zone used to interpret the permitted sending window</summary>
+    public string TimeZoneId { get; set; } = "UTC";
+
+    /// <summary>Stable machine-readable reason if not eligible</summary>
+    public string? IneligibilityCode { get; set; }
     
     /// <summary>Human-readable reason if not eligible</summary>
     public string? IneligibilityReason { get; set; }
     
     /// <summary>When this status was checked</summary>
     public DateTime CheckedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public sealed record AbandonedCartRecoveryRuntimeHealth(
+    bool SchedulerOperational,
+    bool DispatcherOperational,
+    string? FailureCode = null,
+    string? FailureReason = null);
+
+public interface IAbandonedCartRecoveryRuntimeHealthService
+{
+    Task<AbandonedCartRecoveryRuntimeHealth> GetHealthAsync(CancellationToken ct = default);
 }

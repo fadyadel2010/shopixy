@@ -1,15 +1,9 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using PointOfSale.API.DTOs.Admin;
-using PointOfSale.API.Infrastructure.RateLimiting;
-using PointOfSale.API.Security;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -32,8 +26,6 @@ namespace PointOfSale.API.Controllers.Admin;
 [Authorize(Roles = "Owner,Admin,Manager")]
 public class AdminAbandonedCartRecoveryController : ControllerBase
 {
-    private const string RecoveryApiKeyHeader = "X-Recovery-Api-Key";
-
     private readonly ITenantContext _tenantContext;
     private readonly ITenantAutomationSettingsService _settingsService;
     private readonly IAbandonedCartEligibilityService _eligibilityService;
@@ -79,6 +71,7 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
         try
         {
             var settings = await _settingsService.GetSettingsAsync(tenantId, ct);
+            var isPersisted = await _settingsService.ExistsAsync(tenantId, ct);
 
             var response = new AutomationSettingsResponse
             {
@@ -87,6 +80,8 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
                 SecondMessageDelayMinutes = settings.SecondMessageDelayMinutes,
                 WorkingHoursFrom = settings.WorkingHoursFrom.ToString(@"hh\:mm"),
                 WorkingHoursTo = settings.WorkingHoursTo.ToString(@"hh\:mm"),
+                TimeZoneId = settings.TimeZoneId,
+                IsPersisted = isPersisted,
                 UpdatedAtUtc = settings.UpdatedAtUtc,
                 CreatedAtUtc = settings.CreatedAtUtc
             };
@@ -139,13 +134,26 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
 
         try
         {
+            if (request.EnableAbandonedRecovery)
+            {
+                var readiness = await _eligibilityService.GetEligibilityStatusAsync(tenantId, ct);
+                var activationFailure = GetActivationFailure(readiness);
+                if (activationFailure != null)
+                {
+                    return BadRequest(AutomationApiErrorResponse.ValidationError(
+                        activationFailure.Value.Reason,
+                        traceId,
+                        activationFailure.Value.Code));
+                }
+            }
+
             var workingHoursFrom = TimeSpan.Parse(request.WorkingHoursFrom);
             var workingHoursTo = TimeSpan.Parse(request.WorkingHoursTo);
 
-            if (workingHoursFrom >= workingHoursTo)
+            if (workingHoursFrom == workingHoursTo)
             {
                 return BadRequest(AutomationApiErrorResponse.ValidationError(
-                    "Working hours 'from' must be before 'to'", traceId));
+                    "Working hours must define a non-empty sending window", traceId));
             }
 
             var settings = new TenantAutomationSettings
@@ -167,6 +175,8 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
                 SecondMessageDelayMinutes = updated.SecondMessageDelayMinutes,
                 WorkingHoursFrom = updated.WorkingHoursFrom.ToString(@"hh\:mm"),
                 WorkingHoursTo = updated.WorkingHoursTo.ToString(@"hh\:mm"),
+                TimeZoneId = updated.TimeZoneId,
+                IsPersisted = true,
                 UpdatedAtUtc = updated.UpdatedAtUtc,
                 CreatedAtUtc = updated.CreatedAtUtc
             };
@@ -213,9 +223,15 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
             {
                 IsEligible = status.IsEligible,
                 HasWhatsAppAccount = status.HasWhatsAppAccount,
-                WhatsAppAccountEnabledForRecovery = status.WhatsAppAccountEnabledForRecovery,
+                WhatsAppAccountEnabled = status.WhatsAppAccountEnabled,
                 WhatsAppAccountConnected = status.WhatsAppAccountConnected,
                 AutomationEnabled = status.AutomationEnabled,
+                NativeSchedulerOperational = status.NativeSchedulerOperational,
+                NativeDispatcherOperational = status.NativeDispatcherOperational,
+                WhatsAppAccountStatus = status.WhatsAppAccountStatus,
+                WhatsAppStatusReason = status.WhatsAppStatusReason,
+                TimeZoneId = status.TimeZoneId,
+                IneligibilityCode = status.IneligibilityCode,
                 IneligibilityReason = status.IneligibilityReason,
                 CheckedAtUtc = status.CheckedAtUtc
             };
@@ -229,194 +245,6 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
                 tenantId, traceId);
             return StatusCode(StatusCodes.Status500InternalServerError,
                 AutomationApiErrorResponse.InternalError(traceId));
-        }
-    }
-
-    /// <summary>
-    /// Logs recovery workflow results from automation callbacks.
-    /// Accepts either an authenticated admin principal or a valid callback API key.
-    /// </summary>
-    [HttpPost("recovery-log")]
-    [AllowAnonymous]
-    [Consumes("application/json")]
-    [RequestSizeLimit(WebhookRequestLimits.ShippingProviderMaxBytes)]
-    [EnableRateLimiting(WebhookRateLimiterPolicy.PolicyName)]
-    [ProducesResponseType(typeof(AbandonedCartRecoveryLogResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(AbandonedCartRecoveryLogResponse), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(AbandonedCartRecoveryLogResponse), StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(typeof(AbandonedCartRecoveryLogResponse), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status413PayloadTooLarge)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status415UnsupportedMediaType)]
-    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
-    [ProducesResponseType(typeof(AbandonedCartRecoveryLogResponse), StatusCodes.Status500InternalServerError)]
-    [ProducesResponseType(typeof(AbandonedCartRecoveryLogResponse), StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> LogRecoveryResult(
-        [FromBody] AbandonedCartRecoveryLogRequest request,
-        CancellationToken ct = default)
-    {
-        var traceId = GetTraceId();
-
-        if (request.TenantId == Guid.Empty)
-        {
-            _operationalTelemetry.RecordCallbackValidationFailure(Guid.Empty, "missing_tenant_id");
-            return BadRequest(new AbandonedCartRecoveryLogResponse
-            {
-                Success = false,
-                Message = "TenantId is required"
-            });
-        }
-
-        if (request.AbandonedCartId == Guid.Empty)
-        {
-            _operationalTelemetry.RecordCallbackValidationFailure(request.TenantId, "missing_abandoned_cart_id");
-            return BadRequest(new AbandonedCartRecoveryLogResponse
-            {
-                Success = false,
-                Message = "AbandonedCartId is required"
-            });
-        }
-
-        var isPrivilegedCaller = IsPrivilegedRecoveryPrincipal();
-        if (isPrivilegedCaller &&
-            (!_tenantContext.TenantId.HasValue || _tenantContext.TenantId.Value != request.TenantId))
-        {
-            _operationalTelemetry.RecordCallbackAuthFailure(request.TenantId, "admin_tenant_scope_mismatch");
-            _logger.LogWarning(
-                "[Abandoned Cart Recovery] Rejected cross-tenant admin recovery log | RequestedTenantId: {RequestedTenantId} | TrustedTenantId: {TrustedTenantId} | TraceId: {TraceId}",
-                request.TenantId,
-                _tenantContext.TenantId,
-                traceId);
-            return StatusCode(StatusCodes.Status403Forbidden, new AbandonedCartRecoveryLogResponse
-            {
-                Success = false,
-                Message = "Tenant scope mismatch"
-            });
-        }
-
-        _logger.LogInformation(
-            "[Abandoned Cart Recovery] Recovery log received | TenantId: {TenantId} | AbandonedCartId: {AbandonedCartId} | TraceId: {TraceId}",
-            request.TenantId,
-            request.AbandonedCartId,
-            traceId);
-
-        try
-        {
-            var settings = await _settingsService.GetSettingsAsync(request.TenantId, ct);
-
-            if (!isPrivilegedCaller)
-            {
-                if (string.IsNullOrWhiteSpace(settings.N8nWebhookApiKey))
-                {
-                    _operationalTelemetry.RecordCallbackAuthFailure(request.TenantId, "missing_callback_api_key_configuration");
-                    return StatusCode(StatusCodes.Status503ServiceUnavailable, new AbandonedCartRecoveryLogResponse
-                    {
-                        Success = false,
-                        Message = "Recovery callback API key is not configured"
-                    });
-                }
-
-                var providedApiKey = ResolveRecoveryApiKey(request);
-                if (!IsValidApiKey(settings.N8nWebhookApiKey, providedApiKey))
-                {
-                    _operationalTelemetry.RecordCallbackAuthFailure(request.TenantId, "invalid_api_key");
-                    _logger.LogWarning(
-                        "[Abandoned Cart Recovery] Invalid callback authentication | TenantId: {TenantId} | AbandonedCartId: {AbandonedCartId} | TraceId: {TraceId}",
-                        request.TenantId,
-                        request.AbandonedCartId,
-                        traceId);
-
-                    return Unauthorized(new AbandonedCartRecoveryLogResponse
-                    {
-                        Success = false,
-                        Message = "Invalid API key"
-                    });
-                }
-            }
-
-            if (!TryParseOptionalUtcTimestamp(request.FirstMessageSentAt, out var firstMessageSentAtUtc))
-            {
-                _operationalTelemetry.RecordCallbackValidationFailure(request.TenantId, "invalid_first_message_timestamp");
-                return BadRequest(new AbandonedCartRecoveryLogResponse
-                {
-                    Success = false,
-                    Message = "FirstMessageSentAt must be a valid timestamp"
-                });
-            }
-
-            if (!TryParseOptionalUtcTimestamp(request.SecondMessageSentAt, out var secondMessageSentAtUtc))
-            {
-                _operationalTelemetry.RecordCallbackValidationFailure(request.TenantId, "invalid_second_message_timestamp");
-                return BadRequest(new AbandonedCartRecoveryLogResponse
-                {
-                    Success = false,
-                    Message = "SecondMessageSentAt must be a valid timestamp"
-                });
-            }
-
-            if (!TryParseOptionalUtcTimestamp(request.CompletedAt, out var completedAtUtc))
-            {
-                _operationalTelemetry.RecordCallbackValidationFailure(request.TenantId, "invalid_completion_timestamp");
-                return BadRequest(new AbandonedCartRecoveryLogResponse
-                {
-                    Success = false,
-                    Message = "CompletedAt must be a valid timestamp"
-                });
-            }
-
-            var command = new AbandonedCartRecoveryLogCommand(
-                request.TenantId,
-                request.AbandonedCartId,
-                request.FirstMessageSent,
-                firstMessageSentAtUtc,
-                request.FirstMessageError,
-                request.SecondMessageSent,
-                secondMessageSentAtUtc,
-                request.SecondMessageError,
-                completedAtUtc,
-                BuildIdempotencyKey(request, completedAtUtc, firstMessageSentAtUtc, secondMessageSentAtUtc));
-
-            var result = await _telemetryService.RecordWorkflowResultAsync(command, ct);
-            if (result.NotFound)
-            {
-                _operationalTelemetry.RecordCallbackValidationFailure(request.TenantId, "abandoned_cart_not_found");
-                return NotFound(new AbandonedCartRecoveryLogResponse
-                {
-                    Success = false,
-                    Message = "Abandoned cart not found"
-                });
-            }
-
-            if (result.IsDuplicate)
-            {
-                _operationalTelemetry.RecordCallbackDuplicate(request.TenantId);
-                return Ok(new AbandonedCartRecoveryLogResponse
-                {
-                    Success = true,
-                    Message = "Recovery log already recorded"
-                });
-            }
-
-            _operationalTelemetry.RecordCallbackSuccess(request.TenantId);
-            return Ok(new AbandonedCartRecoveryLogResponse
-            {
-                Success = true,
-                Message = "Recovery log recorded successfully"
-            });
-        }
-        catch (Exception ex)
-        {
-            _operationalTelemetry.RecordCallbackPersistenceFailure(request.TenantId, "unhandled_exception");
-            _logger.LogError(ex,
-                "[Abandoned Cart Recovery] Error logging recovery result | TenantId: {TenantId} | AbandonedCartId: {AbandonedCartId} | TraceId: {TraceId}",
-                request.TenantId,
-                request.AbandonedCartId,
-                traceId);
-
-            return StatusCode(StatusCodes.Status500InternalServerError, new AbandonedCartRecoveryLogResponse
-            {
-                Success = false,
-                Message = "Recovery log processing failed"
-            });
         }
     }
 
@@ -463,84 +291,39 @@ public class AdminAbandonedCartRecoveryController : ControllerBase
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
     }
 
-    private bool IsPrivilegedRecoveryPrincipal()
+    private static (string Code, string Reason)? GetActivationFailure(AbandonedCartEligibilityStatus status)
     {
-        if (User.Identity?.IsAuthenticated != true)
+        if (!status.HasWhatsAppAccount)
         {
-            return false;
+            return ("whatsapp_not_configured", "No WhatsApp account is configured.");
         }
 
-        return User.IsInRole("Owner") ||
-               User.IsInRole("Admin") ||
-               User.IsInRole("Manager");
+        if (!status.WhatsAppAccountEnabled)
+        {
+            return ("whatsapp_account_disabled", "The WhatsApp account is disabled.");
+        }
+
+        if (!status.WhatsAppAccountConnected)
+        {
+            return ("whatsapp_disconnected", "The WhatsApp account is not connected.");
+        }
+
+        if (!status.NativeSchedulerOperational)
+        {
+            var hasNativeFailure = status.IneligibilityCode is "native_recovery_disabled" or "native_database_unavailable" or "native_scheduler_unavailable";
+            var code = hasNativeFailure ? status.IneligibilityCode! : "native_scheduler_unavailable";
+            var reason = hasNativeFailure
+                ? status.IneligibilityReason ?? "The native recovery scheduler is unavailable."
+                : "The native recovery scheduler is unavailable.";
+            return (code, reason);
+        }
+
+        if (!status.NativeDispatcherOperational)
+        {
+            return ("native_dispatcher_unavailable", status.IneligibilityReason ?? "The audited WhatsApp dispatcher is unavailable.");
+        }
+
+        return null;
     }
 
-    private string? ResolveRecoveryApiKey(AbandonedCartRecoveryLogRequest request)
-    {
-        if (Request.Headers.TryGetValue(RecoveryApiKeyHeader, out var headerValue))
-        {
-            var headerApiKey = headerValue.FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(headerApiKey))
-            {
-                return headerApiKey.Trim();
-            }
-        }
-
-        return string.IsNullOrWhiteSpace(request.ApiKey)
-            ? null
-            : request.ApiKey.Trim();
-    }
-
-    private static bool IsValidApiKey(string expectedApiKey, string? providedApiKey)
-    {
-        if (string.IsNullOrWhiteSpace(providedApiKey))
-        {
-            return false;
-        }
-
-        var expectedBytes = Encoding.UTF8.GetBytes(expectedApiKey.Trim());
-        var providedBytes = Encoding.UTF8.GetBytes(providedApiKey.Trim());
-
-        if (expectedBytes.Length != providedBytes.Length)
-        {
-            return false;
-        }
-
-        return CryptographicOperations.FixedTimeEquals(expectedBytes, providedBytes);
-    }
-
-    private static bool TryParseOptionalUtcTimestamp(string? input, out DateTime? value)
-    {
-        value = null;
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return true;
-        }
-
-        if (!DateTimeOffset.TryParse(
-                input,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                out var parsed))
-        {
-            return false;
-        }
-
-        value = parsed.UtcDateTime;
-        return true;
-    }
-
-    private static string BuildIdempotencyKey(
-        AbandonedCartRecoveryLogRequest request,
-        DateTime? completedAtUtc,
-        DateTime? firstMessageSentAtUtc,
-        DateTime? secondMessageSentAtUtc)
-    {
-        var stableTimestamp = completedAtUtc?.ToString("O")
-            ?? firstMessageSentAtUtc?.ToString("O")
-            ?? secondMessageSentAtUtc?.ToString("O")
-            ?? "no-timestamp";
-
-        return $"recovery:{request.TenantId:D}:{request.AbandonedCartId:D}:{stableTimestamp}:{request.FirstMessageSent}:{request.SecondMessageSent}";
-    }
 }

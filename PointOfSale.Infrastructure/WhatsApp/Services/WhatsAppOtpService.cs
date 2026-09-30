@@ -18,6 +18,7 @@ public class WhatsAppOtpService : IWhatsAppOtpService
     private const string KeyPrefix = "whatsapp:otp:";
     private const int MaxAttempts = 3;
     private const int OtpLength = 6;
+    private const int OtpHashIterations = 100_000;
 
     public WhatsAppOtpService(
         IConnectionMultiplexer redis,
@@ -40,11 +41,12 @@ public class WhatsAppOtpService : IWhatsAppOtpService
         var key = BuildKey(tenantId, phone, purpose);
         var data = new OtpData
         {
-            Code = code,
+            Salt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             Attempts = 0,
             MaxAttempts = MaxAttempts,
             CreatedAtUtc = DateTime.UtcNow
         };
+        data.CodeHash = HashOtp(tenantId, phone, purpose, code, data.Salt);
         
         var db = _redis.GetDatabase();
         var json = JsonSerializer.Serialize(data);
@@ -93,8 +95,22 @@ public class WhatsAppOtpService : IWhatsAppOtpService
             return new OtpValidationResult(false, "Max attempts exceeded", 0);
         }
         
-        // Validate code
-        if (!string.Equals(data.Code, code, StringComparison.Ordinal))
+        bool hashMatches;
+        try
+        {
+            var submittedHash = HashOtp(tenantId, phone, purpose, code, data.Salt);
+            hashMatches = !string.IsNullOrWhiteSpace(data.CodeHash) &&
+                CryptographicOperations.FixedTimeEquals(
+                    Convert.FromBase64String(submittedHash),
+                    Convert.FromBase64String(data.CodeHash));
+        }
+        catch (FormatException)
+        {
+            await db.KeyDeleteAsync(key);
+            return new OtpValidationResult(false, "Invalid OTP data", 0);
+        }
+
+        if (!hashMatches)
         {
             // Increment attempts
             data.Attempts++;
@@ -157,6 +173,18 @@ public class WhatsAppOtpService : IWhatsAppOtpService
         return value.ToString("D6");
     }
 
+    private static string HashOtp(Guid tenantId, string phone, string purpose, string code, string salt)
+    {
+        var saltBytes = Convert.FromBase64String(salt);
+        var value = System.Text.Encoding.UTF8.GetBytes($"{tenantId:N}\n{phone}\n{purpose}\n{code}");
+        return Convert.ToBase64String(Rfc2898DeriveBytes.Pbkdf2(
+            value,
+            saltBytes,
+            OtpHashIterations,
+            HashAlgorithmName.SHA256,
+            32));
+    }
+
     private static string MaskPhone(string phone)
     {
         if (string.IsNullOrEmpty(phone) || phone.Length < 7)
@@ -167,7 +195,8 @@ public class WhatsAppOtpService : IWhatsAppOtpService
 
     private class OtpData
     {
-        public string Code { get; set; } = string.Empty;
+        public string CodeHash { get; set; } = string.Empty;
+        public string Salt { get; set; } = string.Empty;
         public int Attempts { get; set; }
         public int MaxAttempts { get; set; }
         public DateTime CreatedAtUtc { get; set; }

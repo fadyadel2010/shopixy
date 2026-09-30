@@ -290,7 +290,7 @@ public class PlaywrightWhatsAppEngine : IWhatsAppWebEngine, IAsyncDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking connection for Account {AccountId}", accountId);
-            return new ConnectionStatus(false, WhatsAppAccountStatus.Disconnected, null);
+            throw;
         }
     }
 

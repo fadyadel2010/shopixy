@@ -13,20 +13,17 @@ public class WhatsAppOrderConfirmationConsumer : IConsumer<WhatsAppOrderConfirma
     private readonly IWhatsAppFeatureGateService _featureGate;
     private readonly IWhatsAppMessageDispatcher _dispatcher;
     private readonly IWhatsAppMessageLogService _logService;
-    private readonly IWhatsAppTemplateResolver _templateResolver;
     private readonly ILogger<WhatsAppOrderConfirmationConsumer> _logger;
 
     public WhatsAppOrderConfirmationConsumer(
         IWhatsAppFeatureGateService featureGate,
         IWhatsAppMessageDispatcher dispatcher,
         IWhatsAppMessageLogService logService,
-        IWhatsAppTemplateResolver templateResolver,
         ILogger<WhatsAppOrderConfirmationConsumer> logger)
     {
         _featureGate = featureGate;
         _dispatcher = dispatcher;
         _logService = logService;
-        _templateResolver = templateResolver;
         _logger = logger;
     }
 
@@ -55,20 +52,7 @@ public class WhatsAppOrderConfirmationConsumer : IConsumer<WhatsAppOrderConfirma
              return;
         }
 
-        // 3. Compose Message using Template Resolver
-        var messageText = await _templateResolver.ResolveOrderConfirmationAsync(
-            msg.TenantId.Value,
-            new OrderConfirmationData
-            {
-                OrderNumber = msg.OrderNumber,
-                CustomerName = msg.CustomerName,
-                Total = msg.OrderTotal,
-                Currency = msg.Currency,
-                ItemsCount = msg.Items.Count,
-                StoreName = msg.StoreName
-            });
-        
-        // 4. Create Log
+        // 3. Create a work log. The dispatcher rebuilds message content from current SQL authority.
         var log = new WhatsAppMessageLogDocument
         {
             TenantId = msg.TenantId.ToString(),
@@ -80,16 +64,15 @@ public class WhatsAppOrderConfirmationConsumer : IConsumer<WhatsAppOrderConfirma
             Status = "PENDING",
             PayloadSnapshot = new BsonDocument 
             { 
-                { "text", messageText },
                 { "orderNumber", msg.OrderNumber },
                 { "amount", (double)msg.OrderTotal }
             },
             IdempotencyKey = $"whatsapp:order-confirmation:{msg.TenantId.Value:N}:{msg.OrderId:N}"
         };
 
-        await _logService.CreateLogAsync(log);
+        log = await _logService.CreateLogAsync(log);
 
-        // 5. Dispatch
+        // 4. Dispatch
         await _dispatcher.DispatchAsync(log.Id);
     }
 }

@@ -33,7 +33,6 @@ Test configuration has been hardened to prevent committing credentials to versio
    dotnet user-secrets set "MongoDB:ConnectionString" "mongodb://127.0.0.1:27017" --project PointOfSale.API
    dotnet user-secrets set "CommerceHub:OrderAccessSigningKey" "YourTestOrderAccessSigningKeyMustBeAtLeast32Chars!!" --project PointOfSale.API
    dotnet user-secrets set "AbandonedCart:TokenSecret" "YourTestAbandonedCartTokenSecretMustBeAtLeast32Chars!!" --project PointOfSale.API
-   dotnet user-secrets set "AbandonedCart:N8nWebhookUrl" "http://127.0.0.1:5678/webhook/abandoned-cart" --project PointOfSale.API
    ```
 
 3. If you prefer a file-based override, copy the example file:
@@ -79,10 +78,9 @@ Test configuration has been hardened to prevent committing credentials to versio
      "CommerceHub": {
        "OrderAccessSigningKey": "YourTestOrderAccessSigningKeyMustBeAtLeast32Chars!!"
      },
-     "AbandonedCart": {
-       "TokenSecret": "YourTestAbandonedCartTokenSecretMustBeAtLeast32Chars!!",
-       "N8nWebhookUrl": "http://127.0.0.1:5678/webhook/abandoned-cart"
-     }
+      "AbandonedCart": {
+        "TokenSecret": "YourTestAbandonedCartTokenSecretMustBeAtLeast32Chars!!"
+      }
    }
    ```
 
@@ -105,7 +103,6 @@ export RabbitMQ__Password="guest"
 export MongoDB__ConnectionString="mongodb://127.0.0.1:27017"
 export CommerceHub__OrderAccessSigningKey="YourCIOrderSigningKey32CharsMin!!"
 export AbandonedCart__TokenSecret="YourCIAbandonedCartSecret32CharsMin!!"
-export AbandonedCart__N8nWebhookUrl="http://127.0.0.1:5678/webhook/abandoned-cart"
 ```
 
 Or in your CI configuration:
@@ -124,7 +121,6 @@ env:
   MongoDB__ConnectionString: ${{ secrets.TEST_MONGO_CONNECTION_STRING }}
   CommerceHub__OrderAccessSigningKey: ${{ secrets.TEST_ORDER_SIGNING_KEY }}
   AbandonedCart__TokenSecret: ${{ secrets.TEST_ABANDONED_CART_SECRET }}
-  AbandonedCart__N8nWebhookUrl: ${{ secrets.TEST_ABANDONED_CART_WEBHOOK_URL }}
 ```
 
 ## Running Tests

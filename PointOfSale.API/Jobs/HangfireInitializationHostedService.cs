@@ -256,6 +256,11 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
             job => job.ExecuteAsync(System.Threading.CancellationToken.None),
             Cron.MinuteInterval(5));
 
+        RecurringJob.AddOrUpdate<PointOfSale.Infrastructure.Jobs.AbandonedCartRecoveryDispatchJob>(
+            "abandoned-cart-native-dispatcher",
+            job => job.ExecuteAsync(System.Threading.CancellationToken.None),
+            Cron.Minutely);
+
         RecurringJob.AddOrUpdate<PointOfSale.Infrastructure.Jobs.AbandonedCartCleanupJob>(
             "abandoned-cart-cleanup",
             job => job.ExecuteAsync(),

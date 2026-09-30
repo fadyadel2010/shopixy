@@ -196,7 +196,7 @@ The architectural pattern is:
 - Payments: Stripe, Paymob, Fawry/manual wallet flows.
 - Shipping/carriers: Bosta, Aramex, DHL, Mylerz.
 - Messaging: WhatsApp via Baileys, with transport abstraction preserving fallback/migration paths.
-- Automation: n8n abandoned-cart recovery webhook.
+- Automation: native Hangfire/MassTransit abandoned-cart recovery with audited WhatsApp dispatch.
 - Email: SMTP.
 - AI: Commerce/admin assistant routing through external LLM HTTP adapters.
 - Observability: Prometheus and OTLP-compatible collectors.

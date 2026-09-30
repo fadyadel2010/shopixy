@@ -57,7 +57,7 @@ public sealed class ProductionSecurityHardeningTests
 
     private static readonly HashSet<string> ApprovedAnonymousActions = new(StringComparer.Ordinal)
     {
-        "SuperAdminAuthController.Login", "SuperAdminAuthController.Refresh", "AdminAbandonedCartRecoveryController.LogRecoveryResult",
+        "SuperAdminAuthController.Login", "SuperAdminAuthController.Refresh",
         "AffiliatePortalController.DiscoverCategories", "AffiliatePortalController.DiscoverPublicProductDetail",
         "AffiliatePortalController.DiscoverPublicProducts",
         "AuthController.Login", "AuthController.RefreshToken", "AuthController.VerifyEmail",

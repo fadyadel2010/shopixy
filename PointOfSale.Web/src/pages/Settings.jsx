@@ -578,7 +578,7 @@ export default function Settings() {
 
                 <div className="mt-4 border-t border-gray-200 pt-4">
                     <a
-                        href="/whatsapp"
+                        href="/ecommerce/whatsapp"
                         className={`inline-flex items-center gap-2 text-sm font-medium text-green-600 hover:text-green-700 ${isRTL ? 'flex-row-reverse' : ''}`}
                     >
                         {t('settings.goToWhatsAppSettings')}

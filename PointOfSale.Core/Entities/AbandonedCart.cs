@@ -8,8 +8,8 @@ namespace PointOfSale.Core.Entities;
 /// LIFECYCLE:
 /// 1. Active: Customer is shopping, cart updated recently
 /// 2. Abandoned: Cart idle beyond threshold (FirstMessageDelayMinutes)
-/// 3. Pending: n8n webhook call in progress (HARDENING)
-/// 4. Triggered: n8n webhook succeeded, workflow executing
+/// 3. Pending: native WhatsApp dispatch is in progress (HARDENING)
+/// 4. Triggered: the first audited recovery message was sent
 /// 5. Recovered: Customer completed order (success!)
 /// 6. Expired: Recovery window closed without conversion
 /// 7. Failed: Max retries exhausted (HARDENING)
@@ -92,13 +92,13 @@ public class AbandonedCart : TenantEntity
     public Enums.AbandonedCartRecoveryStatus RecoveryStatus { get; set; } = Enums.AbandonedCartRecoveryStatus.Active;
     
     /// <summary>
-    /// HARDENING: When cart entered Pending state (n8n call started).
+    /// HARDENING: When cart entered Pending state (native dispatch started).
     /// Used to detect stuck Pending carts (timeout recovery).
     /// </summary>
     public DateTime? PendingAtUtc { get; set; }
     
     /// <summary>
-    /// When recovery workflow was triggered (n8n webhook succeeded).
+    /// When recovery workflow was triggered (first audited message sent).
     /// Used for idempotency and analytics.
     /// Null until RecoveryStatus = Triggered.
     /// </summary>
@@ -124,14 +124,14 @@ public class AbandonedCart : TenantEntity
     public DateTime? ExpiredAtUtc { get; set; }
     
     /// <summary>
-    /// HARDENING: Number of n8n call retry attempts.
+    /// HARDENING: Number of native dispatch retry attempts.
     /// Incremented on each failure, reset on success.
     /// Max retries defined by MaxRetryCount.
     /// </summary>
     public int RetryCount { get; set; } = 0;
     
     /// <summary>
-    /// HARDENING: Last error message from n8n call failure.
+    /// HARDENING: Last error message from native dispatch failure.
     /// Used for debugging and alerting.
     /// </summary>
     public string? LastErrorMessage { get; set; }
@@ -156,4 +156,3 @@ public class AbandonedCart : TenantEntity
     public virtual OnlineCustomer? Customer { get; set; }
     public virtual ICollection<AbandonedCartRecoveryLog> RecoveryLogs { get; set; } = new List<AbandonedCartRecoveryLog>();
 }
-

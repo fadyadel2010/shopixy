@@ -34,12 +34,7 @@ public class WhatsAppTemplateResolver : IWhatsAppTemplateResolver
         }
         else
         {
-            // Default Fallback
-            content = "📦 *Order Confirmed!* \n\n" +
-                      "Hello {{customer_name}}, thank you for shopping with {{store_name}}!\n\n" +
-                      "Order: *{{order_number}}*\n" +
-                      "Total: *{{currency}} {{total}}* ({{items_count}} items)\n\n" +
-                      "We verify your order and will notify you when it ships.";
+            content = WhatsAppSystemTemplates.GetContent("OrderConfirmation", language);
         }
 
         return ReplaceVariables(content, new Dictionary<string, string>
@@ -49,7 +44,9 @@ public class WhatsAppTemplateResolver : IWhatsAppTemplateResolver
             { "total", data.Total.ToString("N2") },
             { "currency", data.Currency },
             { "items_count", data.ItemsCount.ToString() },
-            { "store_name", string.IsNullOrEmpty(data.StoreName) ? "us" : data.StoreName }
+            { "store_name", string.IsNullOrEmpty(data.StoreName) ? "us" : data.StoreName },
+            { "shipping_address", data.ShippingAddress },
+            { "payment_status", data.PaymentStatus }
         });
     }
 
@@ -59,7 +56,8 @@ public class WhatsAppTemplateResolver : IWhatsAppTemplateResolver
         string language = "en",
         CancellationToken ct = default)
     {
-        var template = await GetTemplateAsync(tenantId, "OTP", language, ct);
+        var template = await GetTemplateAsync(tenantId, "Otp", language, ct);
+        var storeName = await GetStoreNameAsync(tenantId, language, ct);
         string content;
 
         if (template != null)
@@ -68,15 +66,58 @@ public class WhatsAppTemplateResolver : IWhatsAppTemplateResolver
         }
         else
         {
-            // Default Fallback
-            content = "🔐 Your verification code is: *{{otp_code}}*\n\n" +
-                      "Do not share this code with anyone. It expires in 5 minutes.";
+            content = WhatsAppSystemTemplates.GetContent("Otp", language);
         }
 
         return ReplaceVariables(content, new Dictionary<string, string>
         {
-            { "otp_code", otpCode }
+            { "otp_code", otpCode },
+            { "store_name", storeName }
         });
+    }
+
+    public async Task<string> ResolveAbandonedCartRecoveryAsync(
+        Guid tenantId,
+        AbandonedCartRecoveryMessageData data,
+        string language = "en",
+        CancellationToken ct = default)
+    {
+        var type = data.Sequence == 2
+            ? "AbandonedCartRecoverySecond"
+            : "AbandonedCartRecoveryFirst";
+        var template = await GetTemplateAsync(tenantId, type, language, ct);
+        var content = template?.Content ?? WhatsAppSystemTemplates.GetContent(type, language);
+
+        return ReplaceVariables(content, new Dictionary<string, string>
+        {
+            { "customer_name", string.IsNullOrWhiteSpace(data.CustomerName) ? "Customer" : data.CustomerName },
+            { "store_name", data.StoreName },
+            { "recovery_link", data.RecoveryLink }
+        });
+    }
+
+    private async Task<string> GetStoreNameAsync(Guid tenantId, string language, CancellationToken ct)
+    {
+        var storeName = await _context.StoreConfigs
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(config => config.TenantId == tenantId)
+            .Select(config => config.StoreName)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(storeName))
+        {
+            storeName = await _context.Tenants
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(tenant => tenant.Id == tenantId)
+                .Select(tenant => tenant.Name)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return string.IsNullOrWhiteSpace(storeName)
+            ? language.Equals("ar", StringComparison.OrdinalIgnoreCase) ? "متجرنا" : "Our store"
+            : storeName.Trim();
     }
 
     private async Task<WhatsAppMessageTemplate?> GetTemplateAsync(
@@ -86,11 +127,12 @@ public class WhatsAppTemplateResolver : IWhatsAppTemplateResolver
         CancellationToken ct)
     {
         // 1. Try Tenant-specific with language
+        var canonicalType = type.Equals("OTP", StringComparison.OrdinalIgnoreCase) ? "Otp" : type;
         var template = await _context.WhatsAppMessageTemplates
             .AsNoTracking()
             .FirstOrDefaultAsync(t => 
                 t.TenantId == tenantId && 
-                t.Type == type && 
+                (t.Type == canonicalType || (canonicalType == "Otp" && t.Type == "OTP")) &&
                 t.Language == language && 
                 t.IsActive, ct);
 
@@ -103,7 +145,7 @@ public class WhatsAppTemplateResolver : IWhatsAppTemplateResolver
                 .AsNoTracking()
                 .FirstOrDefaultAsync(t => 
                     t.TenantId == tenantId && 
-                    t.Type == type && 
+                    (t.Type == canonicalType || (canonicalType == "Otp" && t.Type == "OTP")) &&
                     t.Language == "en" && 
                     t.IsActive, ct);
              

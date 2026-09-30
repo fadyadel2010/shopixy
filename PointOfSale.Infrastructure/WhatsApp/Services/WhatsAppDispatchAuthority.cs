@@ -5,6 +5,8 @@ using PointOfSale.Core.Interfaces.WhatsApp;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Reliability;
+using Microsoft.Extensions.Configuration;
+using PointOfSale.Core.Tenancy;
 
 namespace PointOfSale.Infrastructure.WhatsApp.Services;
 
@@ -23,15 +25,24 @@ public sealed class WhatsAppDispatchAuthority
     private readonly ApplicationDbContext _dbContext;
     private readonly IWhatsAppTemplateResolver _templateResolver;
     private readonly IWhatsAppRateLimitService _consentService;
+    private readonly ITenantAutomationSettingsService _settingsService;
+    private readonly IAbandonedCartService _cartService;
+    private readonly IConfiguration _configuration;
 
     public WhatsAppDispatchAuthority(
         ApplicationDbContext dbContext,
         IWhatsAppTemplateResolver templateResolver,
-        IWhatsAppRateLimitService consentService)
+        IWhatsAppRateLimitService consentService,
+        ITenantAutomationSettingsService settingsService,
+        IAbandonedCartService cartService,
+        IConfiguration configuration)
     {
         _dbContext = dbContext;
         _templateResolver = templateResolver;
         _consentService = consentService;
+        _settingsService = settingsService;
+        _cartService = cartService;
+        _configuration = configuration;
     }
 
     public async Task<WhatsAppAuthorizedDispatch?> AuthorizeAsync(
@@ -67,11 +78,119 @@ public sealed class WhatsAppDispatchAuthority
             "PAYMENTAPPROVED" => await AuthorizePaymentApprovedAsync(log, tenantId, accountId, ct),
             "PAYMENTREJECTED" => await AuthorizePaymentRejectedAsync(log, tenantId, accountId, ct),
             "PAYMENTAPPROVALREQUEST" => null,
+            "ABANDONEDCARTRECOVERYFIRST" => await AuthorizeRecoveryAsync(log, tenantId, accountId, 1, ct),
+            "ABANDONEDCARTRECOVERYSECOND" => await AuthorizeRecoveryAsync(log, tenantId, accountId, 2, ct),
             "OTP" => string.IsNullOrWhiteSpace(ephemeralMessageText)
                 ? null
                 : new WhatsAppAuthorizedDispatch(tenantId, accountId, log.TargetPhone, ephemeralMessageText),
             _ => null
         };
+    }
+
+    private async Task<WhatsAppAuthorizedDispatch?> AuthorizeRecoveryAsync(
+        WhatsAppMessageLogDocument log,
+        Guid tenantId,
+        Guid accountId,
+        int sequence,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParse(log.RelatedEntityId, out var abandonedCartId))
+        {
+            return null;
+        }
+
+        var settings = await _settingsService.GetSettingsAsync(tenantId, ct);
+        if (!settings.EnableAbandonedRecovery)
+        {
+            return null;
+        }
+
+        var cart = await _dbContext.AbandonedCarts
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                item => item.Id == abandonedCartId &&
+                        item.TenantId == tenantId &&
+                        item.PhoneVerified &&
+                        item.PhoneNumber != "" &&
+                        item.RecoveredOrderId == null,
+                ct);
+        if (cart == null)
+        {
+            return null;
+        }
+
+        var canonicalOrderExists = await _dbContext.Orders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .AnyAsync(order =>
+                order.TenantId == tenantId &&
+                order.CartId == cart.CartId &&
+                order.Source == OrderSource.Ecommerce &&
+                !order.IsDeleted,
+                ct);
+        if (canonicalOrderExists)
+        {
+            return null;
+        }
+
+        var schedule = await _dbContext.AbandonedCartRecoveryLogs
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item => item.TenantId == tenantId && item.AbandonedCartId == cart.Id)
+            .OrderByDescending(item => item.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (schedule == null ||
+            (sequence == 1 && cart.RecoveryStatus is not (AbandonedCartRecoveryStatus.Abandoned or AbandonedCartRecoveryStatus.Pending)) ||
+            (sequence == 2 &&
+             (cart.RecoveryStatus != AbandonedCartRecoveryStatus.Triggered ||
+              !schedule.FirstMessageSentAtUtc.HasValue ||
+              cart.LastActivityAtUtc > schedule.FirstMessageSentAtUtc.Value)))
+        {
+            return null;
+        }
+
+        var tenant = await _dbContext.Tenants
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item => item.Id == tenantId)
+            .Select(item => new { item.Name, item.Slug, item.StorefrontBaseUrl, item.Country })
+            .SingleAsync(ct);
+        var storeName = await _dbContext.StoreConfigs
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item => item.TenantId == tenantId && item.StoreName != "")
+            .Select(item => item.StoreName)
+            .FirstOrDefaultAsync(ct) ?? tenant.Name;
+        var customerName = cart.CustomerId.HasValue
+            ? await _dbContext.OnlineCustomers
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(customer => customer.Id == cart.CustomerId && customer.TenantId == tenantId)
+                .Select(customer => customer.DisplayName)
+                .SingleOrDefaultAsync(ct)
+            : null;
+        var origin = StorefrontUrlAuthority.ResolveOrigin(
+            tenant.StorefrontBaseUrl,
+            tenant.Slug,
+            _configuration["Storefront:UrlTemplate"]);
+        var recoveryLink = $"{origin}/recover-cart/{Uri.EscapeDataString(_cartService.GenerateRecoveryToken(cart))}";
+        var language = tenant.Country is "EG" or "SA" or "AE" or "KW" or "QA" or "BH" or "OM" or "JO" or "LB"
+            ? "ar"
+            : "en";
+        var text = await _templateResolver.ResolveAbandonedCartRecoveryAsync(
+            tenantId,
+            new AbandonedCartRecoveryMessageData
+            {
+                CustomerName = customerName ?? string.Empty,
+                StoreName = storeName,
+                RecoveryLink = recoveryLink,
+                Sequence = sequence
+            },
+            language,
+            ct);
+
+        return new WhatsAppAuthorizedDispatch(tenantId, accountId, cart.PhoneNumber, text);
     }
 
     public async Task<bool> HasMessagingEligibilityAsync(
@@ -132,7 +251,15 @@ public sealed class WhatsAppDispatchAuthority
                 Total = order.Total,
                 Currency = order.Currency,
                 ItemsCount = order.Items.Count,
-                StoreName = tenantName
+                StoreName = tenantName,
+                ShippingAddress = string.Join(", ", new[]
+                {
+                    order.ShippingAddress,
+                    order.ShippingCity,
+                    order.ShippingState,
+                    order.ShippingZipCode
+                }.Where(value => !string.IsNullOrWhiteSpace(value))),
+                PaymentStatus = order.PaymentStatus.ToString()
             },
             ct: ct);
 
@@ -215,6 +342,7 @@ public sealed class WhatsAppDispatchAuthority
         {
             "ORDERCONFIRMATION" => account.UseForOrderConfirmation,
             "OTP" => account.UseForOtpVerification,
+            "ABANDONEDCARTRECOVERYFIRST" or "ABANDONEDCARTRECOVERYSECOND" => true,
             "PAYMENTAPPROVALREQUEST" or "PAYMENTAPPROVED" or "PAYMENTREJECTED" => account.UseForPaymentApproval,
             _ => false
         };

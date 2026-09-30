@@ -15,12 +15,15 @@ export default function WhatsAppTemplatesPage() {
     const [isEditorOpen, setIsEditorOpen] = useState(false)
     const [editingTemplate, setEditingTemplate] = useState(null)
     const [newTemplateType, setNewTemplateType] = useState('OrderConfirmation') // Default for new templates
+    const [loadError, setLoadError] = useState(null)
 
     const fetchTemplates = async () => {
+        setLoadError(null)
         try {
             const data = await getTemplates()
             setTemplates(data || [])
         } catch (err) {
+            setLoadError(err.message)
             showError(err.message)
         }
     }
@@ -54,7 +57,7 @@ export default function WhatsAppTemplatesPage() {
 
     const handleSave = async (data) => {
         try {
-            if (editingTemplate) {
+            if (editingTemplate && !editingTemplate.isDefault) {
                 await updateTemplate(editingTemplate.id, data)
                 showSuccess(t('whatsapp.templates.messages.updated'))
             } else {
@@ -69,8 +72,8 @@ export default function WhatsAppTemplatesPage() {
     }
 
     // Group templates by type
-    const orderTemplates = templates.filter(t => t.type === 'OrderConfirmation')
-    const otpTemplates = templates.filter(t => t.type === 'Otp')
+    const orderTemplates = templates.filter(template => template.type?.toLowerCase() === 'orderconfirmation')
+    const otpTemplates = templates.filter(template => template.type?.toLowerCase() === 'otp')
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -110,6 +113,12 @@ export default function WhatsAppTemplatesPage() {
 
             {/* Template Sections */}
             <div className="mt-8 space-y-12">
+                {loadError && (
+                    <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                        <p>{loadError}</p>
+                        <button onClick={fetchTemplates} className="mt-2 font-medium underline">{t('common.retry')}</button>
+                    </div>
+                )}
                 {/* Order Confirmation Section */}
                 <section>
                     <div className="flex justify-between items-center mb-4">
@@ -174,6 +183,7 @@ function TemplateItem({ template, onEdit, onDelete }) {
                 <div className="flex items-center justify-between">
                     <p className={`text-sm font-medium truncate ${template.isActive ? 'text-indigo-600' : 'text-gray-500'}`}>
                         {languageKey ? t(languageKey === 'whatsapp.languages.english' ? 'whatsapp.languages.englishWithCode' : 'whatsapp.languages.arabicWithCode') : template.language}
+                        {template.isDefault && <span className="ml-2 text-xs text-emerald-600">({t('whatsapp.templates.systemDefault')})</span>}
                         {!template.isActive && <span className="ml-2 text-xs text-gray-400">({t('common.inactive')})</span>}
                     </p>
                 </div>
@@ -186,16 +196,22 @@ function TemplateItem({ template, onEdit, onDelete }) {
             <div className="ml-5 flex-shrink-0 flex space-x-2">
                 <button
                     onClick={() => onEdit(template)}
+                    title={template.isDefault ? t('whatsapp.templates.actions.customize') : t('common.edit')}
+                    aria-label={template.isDefault ? t('whatsapp.templates.actions.customize') : t('common.edit')}
                     className="p-1 rounded-full text-gray-400 hover:text-gray-500"
                 >
                     <Pencil className="h-5 w-5" />
                 </button>
-                <button
-                    onClick={() => onDelete(template.id)}
-                    className="p-1 rounded-full text-gray-400 hover:text-red-500"
-                >
-                    <Trash2 className="h-5 w-5" />
-                </button>
+                {!template.isDefault && (
+                    <button
+                        onClick={() => onDelete(template.id)}
+                        title={t('common.delete')}
+                        aria-label={t('common.delete')}
+                        className="p-1 rounded-full text-gray-400 hover:text-red-500"
+                    >
+                        <Trash2 className="h-5 w-5" />
+                    </button>
+                )}
             </div>
         </li>
     )

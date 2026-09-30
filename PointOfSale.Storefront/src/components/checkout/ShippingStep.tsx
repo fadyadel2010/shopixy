@@ -34,7 +34,10 @@ import type { CheckoutAttachment, CheckoutFieldDefinition, ShippingAddress } fro
 import { useCurrency } from '@/hooks';
 import { httpClient } from '@/services/api';
 import { useCartStore } from '@/store/cartStore';
+import { useStoreConfigStore } from '@/store/storeConfigStore';
 import { getEffectiveCheckoutFields } from '@/utils/checkoutFieldRules';
+import { normalizeCountryCode } from '@/utils/country';
+import { formatPhoneForLocalInput, getCallingCodeForCountry } from '@/utils/phone';
 
 interface ShippingStepProps {
     onContinue: () => void;
@@ -136,6 +139,74 @@ const InputField: React.FC<InputFieldProps> = ({
                     required={required}
                 />
             )}
+
+            {helpText && !hasError && (
+                <p id={helpId} className={checkoutHelpClassName}>{helpText}</p>
+            )}
+
+            {hasError && (
+                <p id={errorId} className={checkoutErrorClassName} role="alert">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {error}
+                </p>
+            )}
+        </div>
+    );
+};
+
+interface PhoneInputFieldProps extends Omit<InputFieldProps, 'name' | 'type' | 'multiline'> {
+    countryCode?: string | null;
+}
+
+const PhoneInputField: React.FC<PhoneInputFieldProps> = ({
+    label,
+    value,
+    onChange,
+    onBlur,
+    error,
+    placeholder,
+    helpText,
+    required = false,
+    countryCode,
+}) => {
+    const inputId = 'checkout-phone';
+    const errorId = `${inputId}-error`;
+    const helpId = getFieldHelpId(inputId, Boolean(helpText));
+    const hasError = !!error;
+    const callingCode = getCallingCodeForCountry(countryCode);
+    const localValue = formatPhoneForLocalInput(value, countryCode);
+
+    return (
+        <div className="space-y-2">
+            <label htmlFor={inputId} className={checkoutLabelClassName}>
+                {label}
+                {required && requiredIndicator}
+            </label>
+
+            <div className="flex" dir="ltr">
+                {callingCode && (
+                    <span className={`inline-flex min-h-12 items-center rounded-l-lg border border-r-0 bg-muted/10 px-3.5 text-sm font-semibold text-text ${hasError ? 'border-red-300' : 'border-muted/25'}`}>
+                        {callingCode}
+                    </span>
+                )}
+                <input
+                    id={inputId}
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel-national"
+                    name="phone"
+                    value={localValue}
+                    onChange={(event) => onChange(event.target.value)}
+                    onBlur={onBlur}
+                    placeholder={placeholder}
+                    className={`${checkoutControlClassName(hasError)} ${callingCode ? 'rounded-l-none' : ''}`}
+                    aria-invalid={hasError}
+                    aria-describedby={getFieldDescribedBy(inputId, Boolean(helpText), hasError)}
+                    required={required}
+                />
+            </div>
 
             {helpText && !hasError && (
                 <p id={helpId} className={checkoutHelpClassName}>{helpText}</p>
@@ -652,6 +723,8 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
 
     // Store state
     const address = useCheckoutStore((state) => state.address);
+    const defaultCountryCode = useStoreConfigStore((state) => state.config.defaultCountryCode);
+    const phoneCountryCode = normalizeCountryCode(address.country) ?? normalizeCountryCode(defaultCountryCode);
     const shippingMethods = useCheckoutStore(selectShippingMethods);
     const selectedMethodId = useCheckoutStore(selectShippingMethodId);
     const shippingMethodsStatus = useCheckoutStore(selectShippingMethodsStatus);
@@ -704,6 +777,24 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
 
             const translationKey = field.systemFieldKey ? SYSTEM_FIELD_TRANSLATION_KEYS[field.systemFieldKey] : undefined;
             const label = translationKey ? t(`checkout.shipping.${translationKey}`) : field.label;
+
+            if (field.systemFieldKey === 'phone') {
+                return (
+                    <div key={field.id} className={getCheckoutFieldLayoutClass(field)}>
+                        <PhoneInputField
+                            label={label}
+                            value={address.phone || ''}
+                            onChange={(value) => setAddressField('phone', value)}
+                            onBlur={() => touchField('phone')}
+                            error={getFieldError('phone')}
+                            placeholder={t('checkout.shipping.phonePlaceholder')}
+                            helpText={field.helpText || t('checkout.shipping.phoneHelp')}
+                            required={field.isRequired}
+                            countryCode={phoneCountryCode}
+                        />
+                    </div>
+                );
+            }
 
             return (
                 <div key={field.id} className={getCheckoutFieldLayoutClass(field)}>
@@ -784,10 +875,8 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                         required
                     />
 
-                    <InputField
+                    <PhoneInputField
                         label={t('checkout.shipping.phoneNumber')}
-                        name="phone"
-                        type="tel"
                         value={address.phone}
                         onChange={(value) => setAddressField('phone', value)}
                         onBlur={() => touchField('phone')}
@@ -795,6 +884,7 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                         placeholder={t('checkout.shipping.phonePlaceholder')}
                         helpText={t('checkout.shipping.phoneHelp')}
                         required
+                        countryCode={phoneCountryCode}
                     />
 
                     <InputField

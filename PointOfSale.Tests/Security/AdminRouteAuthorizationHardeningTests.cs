@@ -4,16 +4,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.Controllers.Admin;
 using PointOfSale.API.Controllers;
+using PointOfSale.Core.Entities;
 
 namespace PointOfSale.Tests.Security;
 
 public sealed class AdminRouteAuthorizationHardeningTests
 {
     private static readonly Assembly ApiAssembly = typeof(OrdersController).Assembly;
-    private static readonly HashSet<string> ApprovedAnonymousAdminActions = new(StringComparer.Ordinal)
-    {
-        "AdminAbandonedCartRecoveryController.LogRecoveryResult"
-    };
+    private static readonly HashSet<string> ApprovedAnonymousAdminActions = new(StringComparer.Ordinal);
 
     [Fact]
     public void WhatsAppAdminController_MustRequireOwnerAdminManagerRoles()
@@ -56,16 +54,10 @@ public sealed class AdminRouteAuthorizationHardeningTests
     }
 
     [Fact]
-    public void ApprovedAnonymousAdminActions_MustDeclareAlternativeMachineAuthBoundary()
+    public void NativeRecovery_MustNotExposeLegacyCallbackOrCredential()
     {
-        var source = File.ReadAllText(ApiPath("Controllers", "Admin", "AdminAbandonedCartRecoveryController.cs"));
-
-        Assert.Contains("[AllowAnonymous]", source, StringComparison.Ordinal);
-        Assert.Contains("[EnableRateLimiting(WebhookRateLimiterPolicy.PolicyName)]", source, StringComparison.Ordinal);
-        Assert.Contains("Accepts either an authenticated admin principal or a valid callback API key.", source, StringComparison.Ordinal);
-        Assert.Contains("ResolveRecoveryApiKey", source, StringComparison.Ordinal);
-        Assert.Contains("IsValidApiKey", source, StringComparison.Ordinal);
-        Assert.Contains("N8nWebhookApiKey", source, StringComparison.Ordinal);
+        Assert.Null(typeof(AdminAbandonedCartRecoveryController).GetMethod("LogRecoveryResult"));
+        Assert.Null(typeof(TenantAutomationSettings).GetProperty("N8nWebhookApiKey"));
     }
 
     private static bool IsApiAdminController(Type controllerType)
@@ -119,7 +111,4 @@ public sealed class AdminRouteAuthorizationHardeningTests
 
     private static bool IsApprovedAnonymousAdminAction(MemberInfo controllerType, MemberInfo member) =>
         ApprovedAnonymousAdminActions.Contains($"{controllerType.Name}.{member.Name}");
-
-    private static string ApiPath(params string[] parts) =>
-        Path.GetFullPath(Path.Combine(new[] { AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.API" }.Concat(parts).ToArray()));
 }

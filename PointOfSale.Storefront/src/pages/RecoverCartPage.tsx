@@ -1,23 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { setSessionId } from '@/bootstrap';
+import { useTranslation } from '@/i18n';
 import { recoverCart } from '@/services/api';
 import { useCartStore } from '@/store/cartStore';
 import type { CartDto, RecoveredCartResponse } from '@/types';
-
-interface RecoveryError {
-    title: string;
-    message: string;
-    ctaLabel: string;
-    ctaHref: string;
-}
-
-const DEFAULT_ERROR: RecoveryError = {
-    title: 'Recovery Link Unavailable',
-    message: 'This cart recovery link has expired or is no longer available. Please return to the store and continue shopping.',
-    ctaLabel: 'Go to Cart',
-    ctaHref: '/cart',
-};
 
 function isRecoveredCartSnapshot(snapshot: RecoveredCartResponse['cartSnapshot']): snapshot is CartDto {
     if (!snapshot) {
@@ -44,11 +31,18 @@ function isRecoveredCartSnapshot(snapshot: RecoveredCartResponse['cartSnapshot']
 }
 
 export default function RecoverCartPage() {
+    const { t } = useTranslation();
     const { token } = useParams<{ token: string }>();
     const navigate = useNavigate();
     const [status, setStatus] = useState<'loading' | 'error'>('loading');
+    const recoveryStartedRef = useRef(false);
 
     useEffect(() => {
+        if (recoveryStartedRef.current) {
+            return;
+        }
+        recoveryStartedRef.current = true;
+
         if (!token) {
             setStatus('error');
             return;
@@ -61,7 +55,6 @@ export default function RecoverCartPage() {
                 if (!isRecoveredCartSnapshot(response.cartSnapshot) ||
                     response.cartSnapshot.cartId !== response.cartId ||
                     response.cartSnapshot.tenantId !== response.tenantId) {
-                    console.error('[RecoverCart] Recovery payload is missing a valid cart snapshot.');
                     setStatus('error');
                     return;
                 }
@@ -72,8 +65,7 @@ export default function RecoverCartPage() {
 
                 useCartStore.getState().restoreRecoveredCart(response.cartSnapshot, response.message);
                 navigate('/cart', { replace: true });
-            } catch (error) {
-                console.error('[RecoverCart] Recovery failed:', error);
+            } catch {
                 setStatus('error');
             }
         };
@@ -82,45 +74,32 @@ export default function RecoverCartPage() {
     }, [navigate, token]);
 
     if (status === 'error') {
-        const isExternalUrl = DEFAULT_ERROR.ctaHref.startsWith('http://') || DEFAULT_ERROR.ctaHref.startsWith('https://');
-
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="text-center p-8 max-w-md">
-                    <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                        {DEFAULT_ERROR.title}
+            <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4" aria-labelledby="recovery-error-title">
+                <div className="box-border w-full max-w-md p-8 text-center">
+                    <h1 id="recovery-error-title" className="text-2xl font-bold text-gray-900 mb-2">
+                        {t('cartRecovery.unavailableTitle')}
                     </h1>
                     <p className="text-gray-600 mb-6">
-                        {DEFAULT_ERROR.message}
+                        {t('cartRecovery.unavailableMessage')}
                     </p>
-                    {isExternalUrl ? (
-                        <a
-                            href={DEFAULT_ERROR.ctaHref}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-block px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-                        >
-                            {DEFAULT_ERROR.ctaLabel}
-                        </a>
-                    ) : (
-                        <Link
-                            to={DEFAULT_ERROR.ctaHref}
-                            className="inline-block px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-                        >
-                            {DEFAULT_ERROR.ctaLabel}
-                        </Link>
-                    )}
+                    <Link
+                        to="/cart"
+                        className="inline-block px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+                    >
+                        {t('cartRecovery.goToCart')}
+                    </Link>
                 </div>
-            </div>
+            </main>
         );
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <main className="min-h-screen flex items-center justify-center bg-gray-50" aria-live="polite" aria-busy="true">
             <div className="text-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4" />
-                <p className="text-gray-600">Restoring your cart...</p>
+                <p className="text-gray-600">{t('cartRecovery.restoring')}</p>
             </div>
-        </div>
+        </main>
     );
 }

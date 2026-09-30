@@ -17,10 +17,10 @@ namespace PointOfSale.Core.Interfaces;
 /// HARDENING:
 /// - Atomic upsert (no race conditions)
 /// - Safe state transitions via Pending state
-/// - Retry tracking for failed n8n calls
+    /// - Retry tracking for failed native dispatches
 /// 
 /// DOES NOT:
-/// - Send messages (that's n8n)
+    /// - Send messages (that's the central WhatsApp dispatcher)
 /// - Trigger workflows directly (that's the job)
 /// - Make eligibility decisions (that's IAbandonedCartEligibilityService)
 /// </summary>
@@ -48,31 +48,40 @@ public interface IAbandonedCartService
     IAsyncEnumerable<AbandonedCart> FindCartsReadyForAbandonmentAsync(CancellationToken ct = default);
     
     /// <summary>
-    /// Marks a cart as abandoned.
+    /// Atomically marks an unchanged active cart as abandoned.
     /// Sets: RecoveryStatus = Abandoned, AbandonedAtUtc = now
     /// IDEMPOTENT: Safe to call multiple times.
     /// </summary>
-    Task MarkAsAbandonedAsync(Guid abandonedCartId, CancellationToken ct = default);
+    Task<bool> TryMarkAsAbandonedAsync(
+        Guid abandonedCartId,
+        DateTime expectedLastActivityAtUtc,
+        CancellationToken ct = default);
     
     /// <summary>
-    /// HARDENING: Transition to Pending state before n8n call.
+    /// HARDENING: Transition to Pending state before native dispatch.
     /// Returns false if cart is not in Abandoned state (preventing duplicate triggers).
     /// Use this + ConfirmTriggerSuccessAsync for safe triggering.
     /// </summary>
     Task<bool> TryMarkAsPendingAsync(Guid abandonedCartId, CancellationToken ct = default);
     
     /// <summary>
-    /// HARDENING: Confirm successful n8n webhook call.
+    /// HARDENING: Confirm successful native dispatch.
     /// Transitions from Pending to Triggered.
-    /// Call this after successful n8n webhook response.
+    /// Call this after a successful audited WhatsApp send.
     /// </summary>
     Task<bool> ConfirmTriggerSuccessAsync(Guid abandonedCartId, CancellationToken ct = default);
     
     /// <summary>
-    /// HARDENING: Handle n8n webhook failure.
-    /// Reverts to Abandoned for retry or marks as Failed if exhausted.
+    /// HARDENING: Handle native dispatch failure from Abandoned or Pending.
+    /// Leaves the cart Abandoned for retry or marks it Failed if exhausted.
     /// </summary>
     Task RecordTriggerFailureAsync(Guid abandonedCartId, string errorMessage, CancellationToken ct = default);
+
+    /// <summary>
+    /// Releases a Pending claim when dispatch is suppressed or delivery is ambiguous.
+    /// The update is conditional so completed-order and terminal states cannot be overwritten.
+    /// </summary>
+    Task ReleasePendingAsync(Guid abandonedCartId, CancellationToken ct = default);
     
     /// <summary>
     /// Marks a cart as triggered (recovery workflow initiated).

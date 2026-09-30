@@ -496,7 +496,10 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasDatabaseName("IX_AbandonedCarts_TenantId_SessionId")
                         .HasFilter("\"SessionId\" IS NOT NULL");
 
-                    b.ToTable("AbandonedCarts");
+                    b.ToTable("AbandonedCarts", t =>
+                        {
+                            t.HasCheckConstraint("CK_AbandonedCarts_RecoveryStatus", "\"RecoveryStatus\" IN ('Active', 'Abandoned', 'Pending', 'Triggered', 'Recovered', 'Expired', 'Failed', 'Canceled')");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.AbandonedCartRecoveryLog", b =>
@@ -514,14 +517,36 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("FirstMessageAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("FirstMessageDispatchLogId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("FirstMessageDueAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("FirstMessageError")
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("FirstMessageLeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FirstMessageLeaseId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<bool>("FirstMessageSent")
                         .HasColumnType("boolean");
 
                     b.Property<DateTime?>("FirstMessageSentAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FirstMessageStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("IdempotencyKey")
                         .HasColumnType("text");
@@ -530,8 +555,25 @@ namespace PointOfSale.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("SecondMessageAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SecondMessageDispatchLogId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("SecondMessageDueAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("SecondMessageError")
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("SecondMessageLeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SecondMessageLeaseId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<bool>("SecondMessageSent")
                         .HasColumnType("boolean");
@@ -539,8 +581,18 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<DateTime?>("SecondMessageSentAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("SecondMessageStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)");
 
                     b.Property<DateTime?>("WorkflowCompletedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -553,6 +605,10 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.HasIndex("AbandonedCartId");
 
                     b.HasIndex("TenantId");
+
+                    b.HasIndex("FirstMessageStatus", "FirstMessageDueAtUtc");
+
+                    b.HasIndex("SecondMessageStatus", "SecondMessageDueAtUtc");
 
                     b.HasIndex("TenantId", "IdempotencyKey")
                         .IsUnique()
@@ -21558,14 +21614,16 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("N8nWebhookApiKey")
-                        .HasColumnType("text");
-
                     b.Property<int>("SecondMessageDelayMinutes")
                         .HasColumnType("integer");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -22608,6 +22666,7 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasFilter("enabled = TRUE");
 
                     b.HasIndex("TenantId")
+                        .IsUnique()
                         .HasDatabaseName("ix_whatsapp_accounts_tenant_id");
 
                     b.HasIndex("TenantId", "PhoneNumber")

@@ -11,7 +11,8 @@ public static class CheckoutPhoneOtpStates
 
 public sealed class CheckoutPhoneOtpRecord
 {
-    public string Code { get; set; } = string.Empty;
+    public string CodeHash { get; set; } = string.Empty;
+    public string CodeSalt { get; set; } = string.Empty;
     public string State { get; set; } = CheckoutPhoneOtpStates.Sent;
     public string DeliveryChannel { get; set; } = "whatsapp";
     public DateTime CreatedAtUtc { get; set; }

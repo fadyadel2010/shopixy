@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using PointOfSale.API.DTOs.Checkout;
 using PointOfSale.API.Security;
@@ -10,6 +12,8 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Entities;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
+using PointOfSale.Infrastructure.Data;
+using PointOfSale.Core.Enums;
 
 namespace PointOfSale.API.Controllers;
 
@@ -18,7 +22,9 @@ namespace PointOfSale.API.Controllers;
 /// 
 /// Phase: Abandoned Checkout / Lost Orders
 /// 
-/// READS FROM MongoDB ONLY (CQRS — never from PostgreSQL).
+/// Reads the MongoDB projection when it agrees with PostgreSQL lifecycle counts.
+/// PostgreSQL remains checkout-session authority and is used as a read-only fallback
+/// when projection loss would otherwise report successful but incorrect empty data.
 /// 
 /// Endpoints:
 /// - GET  /api/admin/abandoned-checkouts          → Paged list
@@ -36,6 +42,7 @@ namespace PointOfSale.API.Controllers;
 public class AdminAbandonedCheckoutsController : ControllerBase
 {
     private readonly MongoDbContext _mongoContext;
+    private readonly ApplicationDbContext _dbContext;
     private readonly ITenantContext _tenantContext;
     private readonly ICheckoutSessionTokenService _checkoutSessionTokenService;
     private readonly StorefrontUrlResolver _urlResolver;
@@ -43,12 +50,14 @@ public class AdminAbandonedCheckoutsController : ControllerBase
 
     public AdminAbandonedCheckoutsController(
         MongoDbContext mongoContext,
+        ApplicationDbContext dbContext,
         ITenantContext tenantContext,
         ICheckoutSessionTokenService checkoutSessionTokenService,
         StorefrontUrlResolver urlResolver,
         ILogger<AdminAbandonedCheckoutsController> logger)
     {
         _mongoContext = mongoContext;
+        _dbContext = dbContext;
         _tenantContext = tenantContext;
         _checkoutSessionTokenService = checkoutSessionTokenService;
         _urlResolver = urlResolver;
@@ -73,6 +82,28 @@ public class AdminAbandonedCheckoutsController : ControllerBase
 
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
+
+        CheckoutSessionStatus? parsedStatus = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (!Enum.TryParse<CheckoutSessionStatus>(status, ignoreCase: true, out var value) ||
+                !Enum.IsDefined(value))
+            {
+                return BadRequest(new
+                {
+                    error = "INVALID_CHECKOUT_SESSION_STATUS",
+                    message = "Status must be Active, Abandoned, or ConvertedToOrder."
+                });
+            }
+
+            parsedStatus = value;
+            status = value.ToString();
+        }
+
+        if (await RequiresSqlFallbackAsync(tenantId, ct))
+        {
+            return await GetSqlListAsync(tenantId, parsedStatus, search, page, pageSize, ct);
+        }
 
         var collection = _mongoContext.AbandonedCheckouts;
 
@@ -99,6 +130,7 @@ public class AdminAbandonedCheckoutsController : ControllerBase
 
         var documents = await collection.Find(filter)
             .SortByDescending(x => x.CreatedAtUtc)
+            .ThenByDescending(x => x.CheckoutSessionId)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync(ct);
@@ -171,7 +203,25 @@ public class AdminAbandonedCheckoutsController : ControllerBase
         var doc = await collection.Find(filter).FirstOrDefaultAsync(ct);
 
         if (doc == null)
-            return NotFound(new { error = "Abandoned checkout not found" });
+        {
+            var session = await _dbContext.CheckoutSessions
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .SingleOrDefaultAsync(
+                    item => item.TenantId == tenantId &&
+                            item.Id == sessionId &&
+                            item.InvalidatedAtUtc == null,
+                    ct);
+
+            if (session == null)
+                return NotFound(new { error = "Abandoned checkout not found" });
+
+            _logger.LogWarning(
+                "[AbandonedCheckouts] Serving authoritative SQL detail because the MongoDB projection is missing | TenantId: {TenantId}",
+                tenantId);
+
+            return Ok(await MapSqlDetailAsync(session, ct));
+        }
 
         // Build recovery URL from backend
         string? recoveryUrl = null;
@@ -215,9 +265,6 @@ public class AdminAbandonedCheckoutsController : ControllerBase
             PaymentMethodCode = doc.PaymentMethodCode,
             WalletType = doc.WalletType,
             Status = doc.Status,
-            RecoveryToken = !string.IsNullOrEmpty(doc.RecoveryToken)
-                ? CreateSignedRecoveryToken(tenantId, doc.CheckoutSessionId, doc.RecoveryToken)
-                : null,
             DeviceType = doc.DeviceType,
             Source = doc.Source,
             CreatedAtUtc = doc.CreatedAtUtc,
@@ -244,34 +291,41 @@ public class AdminAbandonedCheckoutsController : ControllerBase
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
-        var collection = _mongoContext.AbandonedCheckouts;
-        var tenantFilter = Builders<AbandonedCheckoutDocument>.Filter.Eq(x => x.TenantId, tenantId);
+        var sessions = _dbContext.CheckoutSessions
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(session => session.TenantId == tenantId && session.InvalidatedAtUtc == null);
 
-        var totalCount = await collection.CountDocumentsAsync(tenantFilter, cancellationToken: ct);
+        var counts = await sessions
+            .GroupBy(session => session.Status)
+            .Select(group => new { Status = group.Key, Count = group.LongCount() })
+            .ToListAsync(ct);
 
-        var abandonedFilter = tenantFilter &
-            Builders<AbandonedCheckoutDocument>.Filter.Eq(x => x.Status, "Abandoned");
-        var abandonedCount = await collection.CountDocumentsAsync(abandonedFilter, cancellationToken: ct);
+        var totalCount = counts.Sum(item => item.Count);
+        var activeCount = counts.FirstOrDefault(item => item.Status == CheckoutSessionStatus.Active)?.Count ?? 0;
+        var abandonedCount = counts.FirstOrDefault(item => item.Status == CheckoutSessionStatus.Abandoned)?.Count ?? 0;
+        var convertedCount = counts.FirstOrDefault(item => item.Status == CheckoutSessionStatus.ConvertedToOrder)?.Count ?? 0;
 
-        var convertedFilter = tenantFilter &
-            Builders<AbandonedCheckoutDocument>.Filter.Eq(x => x.Status, "ConvertedToOrder");
-        var convertedCount = await collection.CountDocumentsAsync(convertedFilter, cancellationToken: ct);
-
-        var activeFilter = tenantFilter &
-            Builders<AbandonedCheckoutDocument>.Filter.Eq(x => x.Status, "Active");
-        var activeCount = await collection.CountDocumentsAsync(activeFilter, cancellationToken: ct);
-
-        var revenueAggregate = await collection.Aggregate()
-            .Match(abandonedFilter)
-            .Group(_ => 1, group => new
-            {
-                TotalAbandonedRevenue = group.Sum(item => item.CartTotal ?? 0m)
-            })
-            .FirstOrDefaultAsync(ct);
-        var totalAbandonedRevenue = revenueAggregate?.TotalAbandonedRevenue ?? 0m;
+        var abandonedValues = await sessions
+            .Where(session => session.Status == CheckoutSessionStatus.Abandoned)
+            .Select(session => new { session.CartTotal, session.Currency })
+            .ToListAsync(ct);
+        var abandonedCurrencies = abandonedValues
+            .Where(item => item.CartTotal.HasValue && !string.IsNullOrWhiteSpace(item.Currency))
+            .Select(item => item.Currency!.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var abandonedValueAvailable = abandonedValues.Count == 0 ||
+            (abandonedValues.All(item => item.CartTotal.HasValue) && abandonedCurrencies.Count <= 1);
+        decimal? totalAbandonedRevenue = abandonedValueAvailable
+            ? abandonedValues.Sum(item => item.CartTotal ?? 0m)
+            : null;
 
         var conversionRate = totalCount > 0
             ? Math.Round((double)convertedCount / totalCount * 100, 1)
+            : 0;
+        var abandonmentRate = totalCount > 0
+            ? Math.Round((double)abandonedCount / totalCount * 100, 1)
             : 0;
 
         return Ok(new
@@ -281,9 +335,209 @@ public class AdminAbandonedCheckoutsController : ControllerBase
             abandonedSessions = abandonedCount,
             convertedSessions = convertedCount,
             conversionRate = conversionRate,
+            abandonmentRate = abandonmentRate,
             totalAbandonedRevenue = totalAbandonedRevenue,
+            abandonedValueAvailable,
+            abandonedValueCurrency = abandonedCurrencies.SingleOrDefault(),
         });
     }
+
+    private async Task<bool> RequiresSqlFallbackAsync(Guid tenantId, CancellationToken ct)
+    {
+        var sqlCounts = await _dbContext.CheckoutSessions
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(session => session.TenantId == tenantId && session.InvalidatedAtUtc == null)
+            .GroupBy(session => session.Status)
+            .Select(group => new { Status = group.Key, Count = group.LongCount() })
+            .ToListAsync(ct);
+
+        var mongoCounts = await _mongoContext.AbandonedCheckouts.Aggregate()
+            .Match(item => item.TenantId == tenantId)
+            .Group(item => item.Status, group => new { Status = group.Key, Count = group.LongCount() })
+            .ToListAsync(ct);
+
+        var sqlByStatus = sqlCounts.ToDictionary(item => item.Status.ToString(), item => item.Count, StringComparer.Ordinal);
+        var mongoByStatus = mongoCounts.ToDictionary(item => item.Status, item => item.Count, StringComparer.Ordinal);
+        var requiresFallback = !sqlByStatus.OrderBy(item => item.Key)
+            .SequenceEqual(mongoByStatus.OrderBy(item => item.Key));
+
+        if (requiresFallback)
+        {
+            _logger.LogWarning(
+                "[AbandonedCheckouts] MongoDB lifecycle projection drift detected; using authoritative SQL visibility | TenantId: {TenantId} | SqlCount: {SqlCount} | MongoCount: {MongoCount}",
+                tenantId,
+                sqlByStatus.Values.Sum(),
+                mongoByStatus.Values.Sum());
+        }
+
+        return requiresFallback;
+    }
+
+    private async Task<IActionResult> GetSqlListAsync(
+        Guid tenantId,
+        CheckoutSessionStatus? status,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken ct)
+    {
+        var query = _dbContext.CheckoutSessions
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(session => session.TenantId == tenantId && session.InvalidatedAtUtc == null);
+
+        if (status.HasValue)
+            query = query.Where(session => session.Status == status.Value);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var pattern = $"%{EscapeLikePattern(search.Trim())}%";
+            query = query.Where(session =>
+                (session.CustomerName != null && EF.Functions.ILike(session.CustomerName, pattern, "\\")) ||
+                (session.Phone != null && EF.Functions.ILike(session.Phone, pattern, "\\")) ||
+                (session.Email != null && EF.Functions.ILike(session.Email, pattern, "\\")));
+        }
+
+        var totalCount = await query.LongCountAsync(ct);
+        var sessions = await query
+            .OrderByDescending(session => session.CreatedAtUtc)
+            .ThenByDescending(session => session.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        var storefrontBaseUrl = await TryResolveStorefrontBaseUrlAsync(tenantId);
+        var items = sessions.Select(session => MapSqlListItem(session, storefrontBaseUrl)).ToList();
+
+        return Ok(new AbandonedCheckoutPagedResponse
+        {
+            Items = items,
+            TotalCount = checked((int)totalCount),
+            Page = page,
+            PageSize = pageSize,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+            HasMore = page * (long)pageSize < totalCount,
+        });
+    }
+
+    private AbandonedCheckoutListItem MapSqlListItem(CheckoutSession session, string? storefrontBaseUrl) => new()
+    {
+        CheckoutSessionId = session.Id,
+        CartId = session.CartId,
+        CustomerName = session.CustomerName,
+        Phone = session.Phone,
+        Email = session.Email,
+        City = session.City,
+        CartTotal = session.CartTotal,
+        Currency = session.Currency,
+        ItemCount = DeserializeItems(session.ItemsSnapshotJson).Count,
+        Status = session.Status.ToString(),
+        DeviceType = session.DeviceType,
+        Source = session.Source,
+        CreatedAtUtc = session.CreatedAtUtc,
+        FirstActivityAtUtc = session.FirstActivityAtUtc,
+        LastActivityAtUtc = session.LastActivityAtUtc,
+        AbandonedAtUtc = session.AbandonedAtUtc,
+        ConvertedAtUtc = session.ConvertedAtUtc,
+        ConvertedOrderNumber = session.ConvertedOrderNumber,
+        TimeSpentSeconds = session.FirstActivityAtUtc.HasValue
+            ? (session.LastActivityAtUtc - session.FirstActivityAtUtc.Value).TotalSeconds
+            : null,
+        RecoveryUrl = !string.IsNullOrWhiteSpace(session.RecoveryToken) && storefrontBaseUrl != null
+            ? $"{storefrontBaseUrl}/recover-checkout/{CreateSignedRecoveryToken(session.TenantId, session.Id, session.RecoveryToken)}"
+            : null,
+    };
+
+    private async Task<AbandonedCheckoutDetail> MapSqlDetailAsync(CheckoutSession session, CancellationToken ct)
+    {
+        var recoveryUrl = !string.IsNullOrWhiteSpace(session.RecoveryToken)
+            ? await TryBuildRecoveryUrlAsync(session.TenantId, session.Id, session.RecoveryToken)
+            : null;
+
+        return new AbandonedCheckoutDetail
+        {
+            CheckoutSessionId = session.Id,
+            CartId = session.CartId,
+            CustomerName = session.CustomerName,
+            Phone = session.Phone,
+            Email = session.Email,
+            City = session.City,
+            Area = session.Area,
+            Address = session.Address,
+            Notes = session.Notes,
+            Items = DeserializeItems(session.ItemsSnapshotJson),
+            CartTotal = session.CartTotal,
+            Currency = session.Currency,
+            ShippingMethodId = session.ShippingMethodId,
+            PaymentMethodCode = session.PaymentMethodCode,
+            WalletType = session.WalletType,
+            Status = session.Status.ToString(),
+            DeviceType = session.DeviceType,
+            Source = session.Source,
+            CreatedAtUtc = session.CreatedAtUtc,
+            FirstActivityAtUtc = session.FirstActivityAtUtc,
+            LastActivityAtUtc = session.LastActivityAtUtc,
+            AbandonedAtUtc = session.AbandonedAtUtc,
+            ConvertedAtUtc = session.ConvertedAtUtc,
+            ConvertedOrderId = session.ConvertedOrderId,
+            ConvertedOrderNumber = session.ConvertedOrderNumber,
+            TimeSpentSeconds = session.FirstActivityAtUtc.HasValue
+                ? (session.LastActivityAtUtc - session.FirstActivityAtUtc.Value).TotalSeconds
+                : null,
+            RecoveryUrl = recoveryUrl,
+        };
+    }
+
+    private async Task<string?> TryResolveStorefrontBaseUrlAsync(Guid tenantId)
+    {
+        try
+        {
+            return await _urlResolver.ResolveByTenantIdAsync(tenantId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[AbandonedCheckouts] Could not resolve storefront URL for tenant {TenantId}", tenantId);
+            return null;
+        }
+    }
+
+    private async Task<string?> TryBuildRecoveryUrlAsync(Guid tenantId, Guid sessionId, string recoveryNonce)
+    {
+        try
+        {
+            return await _urlResolver.BuildRecoveryUrlAsync(
+                tenantId,
+                CreateSignedRecoveryToken(tenantId, sessionId, recoveryNonce));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[AbandonedCheckouts] Could not build recovery URL for tenant {TenantId}", tenantId);
+            return null;
+        }
+    }
+
+    private static List<AbandonedCheckoutItemDto> DeserializeItems(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new();
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<AbandonedCheckoutItemDto>>(
+                json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
+    }
+
+    private static string EscapeLikePattern(string value) =>
+        value.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
 
     private string CreateSignedRecoveryToken(Guid tenantId, Guid checkoutSessionId, string recoveryNonce)
     {

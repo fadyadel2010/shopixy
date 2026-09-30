@@ -61,15 +61,23 @@ public sealed class StorefrontWhatsAppAuthorityCertificationTests
             "PointOfSale.Infrastructure/WhatsApp/Services/WhatsAppAccountService.cs");
         var heartbeat = ReadRepoFile(
             "PointOfSale.Infrastructure/WhatsApp/Jobs/WhatsAppSessionHeartbeatJob.cs");
+        var playwrightEngine = ReadRepoFile(
+            "PointOfSale.Infrastructure/WhatsApp/Engine/PlaywrightWhatsAppEngine.cs");
         var migration = ReadRepoFile(
-            "PointOfSale.Infrastructure/Migrations/20260609210000_StorefrontWhatsAppAuthorityHardening.cs");
+            "PointOfSale.Infrastructure/Migrations/20260929115948_MainWhatsAppSingleAccountPerTenant.cs");
 
         Assert.Contains("ConnectedPhoneMatches", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("mark-connected", controller, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ConnectedPhoneMatches", heartbeat, StringComparison.Ordinal);
+        Assert.Contains("statusResult.Success", heartbeat, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "return new ConnectionStatus(false, WhatsAppAccountStatus.Disconnected, null);",
+            playwrightEngine,
+            StringComparison.Ordinal);
+        Assert.Contains("WHATSAPP_PROVIDER_UNAVAILABLE", controller, StringComparison.Ordinal);
         Assert.Contains("EnsureUseCaseOwnershipAsync", accountService, StringComparison.Ordinal);
-        Assert.Contains("UX_whatsapp_accounts_active_order_confirmation", migration, StringComparison.Ordinal);
-        Assert.Contains("UX_whatsapp_accounts_active_payment_approval", migration, StringComparison.Ordinal);
+        Assert.Contains("ix_whatsapp_accounts_tenant_id", migration, StringComparison.Ordinal);
+        Assert.Contains("unique: true", migration, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -113,7 +121,9 @@ public sealed class StorefrontWhatsAppAuthorityCertificationTests
         Assert.Contains("_dbContext.AbandonedCarts", recovery, StringComparison.Ordinal);
         Assert.Contains("x.TenantId == tenantId", recovery, StringComparison.Ordinal);
         Assert.Contains("cart.PhoneVerified", recovery, StringComparison.Ordinal);
+        Assert.Contains("_eligibilityService.CanTriggerAbandonedRecoveryAsync", recovery, StringComparison.Ordinal);
         Assert.Contains("_rateLimitService.CanSendMessageAsync", recovery, StringComparison.Ordinal);
+        Assert.Contains("!isPhoneRecovery", recovery, StringComparison.Ordinal);
         Assert.Contains("cart.CartSnapshotJson", recovery, StringComparison.Ordinal);
     }
 
@@ -138,8 +148,9 @@ public sealed class StorefrontWhatsAppAuthorityCertificationTests
         Assert.DoesNotContain("WhatsAppWebhookController", program, StringComparison.Ordinal);
         Assert.DoesNotContain("/webhook", routes, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SaveChangesAsync", authority, StringComparison.Ordinal);
-        Assert.DoesNotContain("PaymentStatus =", authority, StringComparison.Ordinal);
-        Assert.DoesNotContain("FulfillmentStatus =", authority, StringComparison.Ordinal);
+        Assert.DoesNotContain("order.PaymentStatus =", authority, StringComparison.Ordinal);
+        Assert.DoesNotContain("order.FulfillmentStatus =", authority, StringComparison.Ordinal);
+        Assert.DoesNotContain("intent.Status =", authority, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath)

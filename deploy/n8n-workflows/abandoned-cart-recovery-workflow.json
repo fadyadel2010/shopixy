@@ -402,55 +402,7 @@
       ]
     }
   ],
-  "pinData": {
-    "Webhook Trigger": [
-      {
-        "json": {
-          "headers": {
-            "host": "localhost:5678",
-            "transfer-encoding": "chunked",
-            "content-type": "application/json; charset=utf-8"
-          },
-          "params": {},
-          "query": {},
-          "body": {
-            "tenantId": "8a9f672b-43d5-4a2c-9762-5df63410fb73",
-            "abandonedCartId": "7b0550fa-d2c1-45a1-818d-f44906cd47dc",
-            "cartId": "8dcc9048-bd83-45b0-bd57-41ee31504716",
-            "phoneNumber": "+201022174803",
-            "email": "customer@example.com",
-            "cartSnapshot": {
-              "items": [
-                {
-                  "sku": "128",
-                  "name": "ssssss",
-                  "price": 100,
-                  "quantity": 1,
-                  "productId": "fe9411e2-6217-41f2-a83d-06b749558808",
-                  "thumbnail": null,
-                  "variantId": "0075497f-0da7-4053-af31-1f5cce1d6e60"
-                }
-              ],
-              "total": 100,
-              "currency": "EGP",
-              "itemCount": 1
-            },
-            "firstMessageDelayMinutes": 1,
-            "secondMessageDelayMinutes": 720,
-            "workingHoursFrom": "00:00",
-            "workingHoursTo": "23:59",
-            "recoveryLink": "https://store.example/cart/recover/test-token",
-            "triggeredAtUtc": "2026-02-05T22:30:07.4534696Z"
-          },
-          "webhookUrl": "http://localhost:5678/webhook/abandoned-cart",
-          "executionMode": "production"
-        },
-        "pairedItem": {
-          "item": 0
-        }
-      }
-    ]
-  },
+  "pinData": {},
   "connections": {
     "Webhook Trigger": {
       "main": [
@@ -708,7 +660,7 @@
       ]
     }
   },
-  "active": true,
+  "active": false,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",

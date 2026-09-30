@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -16,6 +18,8 @@ namespace PointOfSale.Tests.Storefront;
 
 public sealed class StorefrontPhoneVerificationReliabilityTests
 {
+    private const int OtpHashIterations = 100_000;
+
     [Fact]
     public async Task RequestVerificationAsync_WhenOtpChannelUnavailable_ReturnsFailureAndDoesNotPersistOrPublish()
     {
@@ -72,9 +76,17 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
         var persistedOtp = await store.GetOtpAsync(tenantId, "session-1", "+201022174803");
         Assert.NotNull(persistedOtp);
         Assert.Equal(CheckoutPhoneOtpStates.Sent, persistedOtp!.State);
-        Assert.False(string.IsNullOrWhiteSpace(persistedOtp.Code));
-        Assert.Equal(persistedOtp.Code, publishedEvent!.OtpCode);
+        Assert.False(string.IsNullOrWhiteSpace(persistedOtp.CodeHash));
+        Assert.False(string.IsNullOrWhiteSpace(persistedOtp.CodeSalt));
+        Assert.NotEqual(publishedEvent!.OtpCode, persistedOtp.CodeHash);
         Assert.Equal("+201022174803", publishedEvent.Phone);
+
+        var verification = await service.VerifyOtpAsync(
+            tenantId,
+            "session-1",
+            "+201022174803",
+            publishedEvent.OtpCode);
+        Assert.True(verification.Success);
     }
 
     [Fact]
@@ -82,16 +94,14 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
     {
         var tenantId = Guid.NewGuid();
         var store = new InMemoryCheckoutPhoneOtpStore();
-        var existingOtp = new CheckoutPhoneOtpRecord
-        {
-            Code = "123456",
-            State = CheckoutPhoneOtpStates.Sent,
-            DeliveryChannel = "whatsapp",
-            CreatedAtUtc = DateTime.UtcNow.AddSeconds(-20),
-            LastRequestedAtUtc = DateTime.UtcNow.AddSeconds(-10),
-            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(4),
-            DispatchCount = 1
-        };
+        var existingOtp = CreateOtpRecord(
+            tenantId,
+            "session-1",
+            "+201022174803",
+            "123456",
+            DateTime.UtcNow.AddSeconds(-20),
+            DateTime.UtcNow.AddSeconds(-10),
+            DateTime.UtcNow.AddMinutes(4));
         await store.SaveOtpAsync(tenantId, "session-1", "+201022174803", existingOtp, TimeSpan.FromMinutes(4));
 
         var eventPublisher = new Mock<IEventPublisher>();
@@ -115,25 +125,23 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
 
         var persistedOtp = await store.GetOtpAsync(tenantId, "session-1", "+201022174803");
         Assert.NotNull(persistedOtp);
-        Assert.Equal("123456", persistedOtp!.Code);
+        Assert.Equal(existingOtp.CodeHash, persistedOtp!.CodeHash);
         Assert.Equal(1, persistedOtp.DispatchCount);
     }
 
     [Fact]
-    public async Task RequestVerificationAsync_WhenCooldownElapsed_ResendsSameOtpDeterministically()
+    public async Task RequestVerificationAsync_WhenCooldownElapsed_RotatesOtpAndPersistsReplacement()
     {
         var tenantId = Guid.NewGuid();
         var store = new InMemoryCheckoutPhoneOtpStore();
-        var existingOtp = new CheckoutPhoneOtpRecord
-        {
-            Code = "654321",
-            State = CheckoutPhoneOtpStates.Sent,
-            DeliveryChannel = "whatsapp",
-            CreatedAtUtc = DateTime.UtcNow.AddMinutes(-2),
-            LastRequestedAtUtc = DateTime.UtcNow.AddSeconds(-90),
-            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(3),
-            DispatchCount = 1
-        };
+        var existingOtp = CreateOtpRecord(
+            tenantId,
+            "session-1",
+            "+201022174803",
+            "654321",
+            DateTime.UtcNow.AddMinutes(-2),
+            DateTime.UtcNow.AddSeconds(-90),
+            DateTime.UtcNow.AddMinutes(3));
         await store.SaveOtpAsync(tenantId, "session-1", "+201022174803", existingOtp, TimeSpan.FromMinutes(3));
 
         var eventPublisher = new Mock<IEventPublisher>();
@@ -157,12 +165,19 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
 
         Assert.True(result.Success);
         Assert.NotNull(publishedEvent);
-        Assert.Equal("654321", publishedEvent!.OtpCode);
+        Assert.NotEqual("654321", publishedEvent!.OtpCode);
 
         var persistedOtp = await store.GetOtpAsync(tenantId, "session-1", "+201022174803");
         Assert.NotNull(persistedOtp);
-        Assert.Equal("654321", persistedOtp!.Code);
+        Assert.NotEqual(existingOtp.CodeHash, persistedOtp!.CodeHash);
         Assert.Equal(2, persistedOtp.DispatchCount);
+
+        var verification = await service.VerifyOtpAsync(
+            tenantId,
+            "session-1",
+            "+201022174803",
+            publishedEvent.OtpCode);
+        Assert.True(verification.Success);
     }
 
     [Fact]
@@ -209,16 +224,14 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
             tenantId,
             "session-1",
             "+201022174803",
-            new CheckoutPhoneOtpRecord
-            {
-                Code = "123456",
-                State = CheckoutPhoneOtpStates.Sent,
-                DeliveryChannel = "whatsapp",
-                CreatedAtUtc = DateTime.UtcNow.AddMinutes(-6),
-                LastRequestedAtUtc = DateTime.UtcNow.AddMinutes(-6),
-                ExpiresAtUtc = DateTime.UtcNow.AddSeconds(-5),
-                DispatchCount = 1
-            },
+            CreateOtpRecord(
+                tenantId,
+                "session-1",
+                "+201022174803",
+                "123456",
+                DateTime.UtcNow.AddMinutes(-6),
+                DateTime.UtcNow.AddMinutes(-6),
+                DateTime.UtcNow.AddSeconds(-5)),
             TimeSpan.FromMinutes(1));
 
         var service = CreateService(otpStore: store);
@@ -239,16 +252,14 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
             tenantId,
             "session-1",
             "+201022174803",
-            new CheckoutPhoneOtpRecord
-            {
-                Code = "123456",
-                State = CheckoutPhoneOtpStates.Sent,
-                DeliveryChannel = "whatsapp",
-                CreatedAtUtc = DateTime.UtcNow.AddSeconds(-10),
-                LastRequestedAtUtc = DateTime.UtcNow.AddSeconds(-10),
-                ExpiresAtUtc = DateTime.UtcNow.AddMinutes(4),
-                DispatchCount = 1
-            },
+            CreateOtpRecord(
+                tenantId,
+                "session-1",
+                "+201022174803",
+                "123456",
+                DateTime.UtcNow.AddSeconds(-10),
+                DateTime.UtcNow.AddSeconds(-10),
+                DateTime.UtcNow.AddMinutes(4)),
             TimeSpan.FromMinutes(4));
 
         var service = CreateService(otpStore: store);
@@ -260,7 +271,7 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
 
         var persistedOtp = await store.GetOtpAsync(tenantId, "session-1", "+201022174803");
         Assert.NotNull(persistedOtp);
-        Assert.Equal("123456", persistedOtp!.Code);
+        Assert.False(string.IsNullOrWhiteSpace(persistedOtp!.CodeHash));
         Assert.Equal(1, persistedOtp.VerificationAttempts);
     }
 
@@ -273,17 +284,14 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
             tenantId,
             "session-1",
             "+201022174803",
-            new CheckoutPhoneOtpRecord
-            {
-                Code = "123456",
-                State = CheckoutPhoneOtpStates.Sent,
-                DeliveryChannel = "whatsapp",
-                CreatedAtUtc = DateTime.UtcNow.AddSeconds(-10),
-                LastRequestedAtUtc = DateTime.UtcNow.AddSeconds(-10),
-                ExpiresAtUtc = DateTime.UtcNow.AddMinutes(4),
-                DispatchCount = 1,
-                MaxVerificationAttempts = 5
-            },
+            CreateOtpRecord(
+                tenantId,
+                "session-1",
+                "+201022174803",
+                "123456",
+                DateTime.UtcNow.AddSeconds(-10),
+                DateTime.UtcNow.AddSeconds(-10),
+                DateTime.UtcNow.AddMinutes(4)),
             TimeSpan.FromMinutes(4));
 
         var service = CreateService(otpStore: store);
@@ -348,6 +356,38 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
             Status = PointOfSale.Core.Enums.WhatsAppAccountStatus.Connected,
             PhoneNumber = "+201000000000",
             DisplayName = "OTP"
+        };
+    }
+
+    private static CheckoutPhoneOtpRecord CreateOtpRecord(
+        Guid tenantId,
+        string sessionId,
+        string phone,
+        string code,
+        DateTime createdAtUtc,
+        DateTime lastRequestedAtUtc,
+        DateTime expiresAtUtc)
+    {
+        var salt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var saltBytes = Convert.FromBase64String(salt);
+        var value = Encoding.UTF8.GetBytes($"{tenantId:N}\n{sessionId}\n{phone}\n{code}");
+
+        return new CheckoutPhoneOtpRecord
+        {
+            CodeHash = Convert.ToBase64String(Rfc2898DeriveBytes.Pbkdf2(
+                value,
+                saltBytes,
+                OtpHashIterations,
+                HashAlgorithmName.SHA256,
+                32)),
+            CodeSalt = salt,
+            State = CheckoutPhoneOtpStates.Sent,
+            DeliveryChannel = "whatsapp",
+            CreatedAtUtc = createdAtUtc,
+            LastRequestedAtUtc = lastRequestedAtUtc,
+            ExpiresAtUtc = expiresAtUtc,
+            DispatchCount = 1,
+            MaxVerificationAttempts = 5
         };
     }
 
@@ -480,7 +520,8 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
         {
             return new CheckoutPhoneOtpRecord
             {
-                Code = source.Code,
+                CodeHash = source.CodeHash,
+                CodeSalt = source.CodeSalt,
                 State = source.State,
                 DeliveryChannel = source.DeliveryChannel,
                 CreatedAtUtc = source.CreatedAtUtc,

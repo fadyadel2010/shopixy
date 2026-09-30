@@ -1,6 +1,7 @@
 using MassTransit;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Events;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
@@ -63,6 +64,15 @@ public class OrderRecoveryConsumer : IConsumer<OrderCreatedEvent>
             return;
         }
 
+        if (msg.Source != OrderSource.Ecommerce)
+        {
+            _logger.LogDebug(
+                "[Order Recovery] Non-storefront order source rejected | OrderId: {OrderId} | Source: {Source}",
+                msg.OrderId,
+                msg.Source);
+            return;
+        }
+
         var tenantId = msg.TenantId.Value;
 
         try
@@ -90,9 +100,9 @@ public class OrderRecoveryConsumer : IConsumer<OrderCreatedEvent>
             _logger.LogError(ex,
                 "[Order Recovery] Error marking cart as recovered | TenantId: {TenantId} | CartId: {CartId} | OrderId: {OrderId}",
                 msg.TenantId, msg.CartId, msg.OrderId);
-            
-            // Don't throw - abandoned cart tracking is not critical path
-            // Order should complete even if this fails
+
+            // This is an asynchronous consumer, so retrying cannot roll back order creation.
+            throw;
         }
     }
 }

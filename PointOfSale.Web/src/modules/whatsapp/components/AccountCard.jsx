@@ -65,15 +65,16 @@ export default function AccountCard({ account, onRefresh }) {
                     onRefresh()
                 }
             } catch (err) {
-                // Silently ignore polling errors
-                console.debug('Status poll failed:', err)
+                clearInterval(statusPollRef.current)
+                statusPollRef.current = null
+                showError(err.message)
             }
         }, 3000)
 
         return () => {
             if (statusPollRef.current) clearInterval(statusPollRef.current)
         }
-    }, [account.id, getAccountStatus, onRefresh, showSuccess, showQr, t])
+    }, [account.id, getAccountStatus, onRefresh, showError, showSuccess, showQr, t])
 
     const handleToggle = async () => {
         if (!confirm(t(account.enabled ? 'whatsapp.accounts.confirm.disable' : 'whatsapp.accounts.confirm.enable'))) return
@@ -297,4 +298,3 @@ export default function AccountCard({ account, onRefresh }) {
         </>
     )
 }
-

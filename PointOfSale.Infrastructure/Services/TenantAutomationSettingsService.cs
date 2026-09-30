@@ -36,6 +36,12 @@ public class TenantAutomationSettingsService : ITenantAutomationSettingsService
 
         if (settings == null)
         {
+            var country = await _context.Tenants
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(tenant => tenant.Id == tenantId)
+                .Select(tenant => tenant.Country)
+                .SingleOrDefaultAsync(ct);
             _logger.LogDebug(
                 "[Automation Settings] No settings found for tenant, returning defaults | TenantId: {TenantId}",
                 tenantId);
@@ -48,7 +54,8 @@ public class TenantAutomationSettingsService : ITenantAutomationSettingsService
                 FirstMessageDelayMinutes = 60,
                 SecondMessageDelayMinutes = 1440,
                 WorkingHoursFrom = new TimeSpan(9, 0, 0),
-                WorkingHoursTo = new TimeSpan(21, 0, 0)
+                WorkingHoursTo = new TimeSpan(21, 0, 0),
+                TimeZoneId = AbandonedCartScheduleTime.ResolveTimeZoneId(country)
             };
         }
 
@@ -69,11 +76,18 @@ public class TenantAutomationSettingsService : ITenantAutomationSettingsService
 
         if (existing == null)
         {
+            var country = await _context.Tenants
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(tenant => tenant.Id == tenantId)
+                .Select(tenant => tenant.Country)
+                .SingleOrDefaultAsync(ct);
             // Create new
             settings.Id = Guid.NewGuid();
             settings.TenantId = tenantId;
             settings.CreatedAtUtc = DateTime.UtcNow;
             settings.UpdatedAtUtc = DateTime.UtcNow;
+            settings.TimeZoneId = AbandonedCartScheduleTime.ResolveTimeZoneId(country);
 
             _context.Set<TenantAutomationSettings>().Add(settings);
 
@@ -135,9 +149,9 @@ public class TenantAutomationSettingsService : ITenantAutomationSettingsService
         }
 
         // Validate working hours
-        if (settings.WorkingHoursFrom >= settings.WorkingHoursTo)
+        if (settings.WorkingHoursFrom == settings.WorkingHoursTo)
         {
-            throw new ArgumentException("Working hours 'from' must be before 'to'", nameof(settings.WorkingHoursFrom));
+            throw new ArgumentException("Working hours must define a non-empty sending window", nameof(settings.WorkingHoursFrom));
         }
 
         if (settings.WorkingHoursFrom.TotalHours < 0 || settings.WorkingHoursFrom.TotalHours >= 24)
@@ -148,6 +162,15 @@ public class TenantAutomationSettingsService : ITenantAutomationSettingsService
         if (settings.WorkingHoursTo.TotalHours <= 0 || settings.WorkingHoursTo.TotalHours > 24)
         {
             throw new ArgumentException("Working hours 'to' must be between 00:01 and 24:00", nameof(settings.WorkingHoursTo));
+        }
+
+        try
+        {
+            _ = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId);
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            throw new ArgumentException("Recovery time zone is invalid", nameof(settings.TimeZoneId));
         }
     }
 }

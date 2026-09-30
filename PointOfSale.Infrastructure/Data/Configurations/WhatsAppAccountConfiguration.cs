@@ -74,6 +74,7 @@ public class WhatsAppAccountConfiguration : IEntityTypeConfiguration<WhatsAppAcc
 
         // Indexes
         builder.HasIndex(x => x.TenantId)
+            .IsUnique()
             .HasDatabaseName("ix_whatsapp_accounts_tenant_id");
             
         builder.HasIndex(x => x.Status)

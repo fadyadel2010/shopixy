@@ -44,6 +44,27 @@ public class WhatsAppAccountService : IWhatsAppAccountService
             throw new InvalidOperationException("Active tenant authority is required.");
         }
 
+        account.DisplayName = account.DisplayName.Trim();
+        account.PhoneNumber = account.PhoneNumber.Trim();
+
+        var existing = await _context.WhatsAppAccounts
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x => x.TenantId == account.TenantId, ct);
+        if (existing != null)
+        {
+            if (existing.PhoneNumber == account.PhoneNumber &&
+                existing.DisplayName == account.DisplayName &&
+                existing.UseForOrderConfirmation == account.UseForOrderConfirmation &&
+                existing.UseForOtpVerification == account.UseForOtpVerification &&
+                existing.UseForPaymentApproval == account.UseForPaymentApproval &&
+                existing.UseForAbandonedCartRecovery == account.UseForAbandonedCartRecovery)
+            {
+                return existing;
+            }
+
+            throw new InvalidOperationException("Only one WhatsApp account is allowed per store.");
+        }
+
         await EnsureUseCaseOwnershipAsync(account, ct);
         account.CreatedAtUtc = DateTime.UtcNow;
         _context.WhatsAppAccounts.Add(account);
@@ -59,18 +80,28 @@ public class WhatsAppAccountService : IWhatsAppAccountService
         if (existing == null) throw new KeyNotFoundException($"WhatsApp account {account.Id} not found");
 
         await EnsureUseCaseOwnershipAsync(account, ct);
-        existing.DisplayName = account.DisplayName;
+        var phoneChanged = !string.Equals(
+            _context.Entry(existing).Property(x => x.PhoneNumber).OriginalValue,
+            account.PhoneNumber,
+            StringComparison.Ordinal);
+
+        existing.DisplayName = account.DisplayName.Trim();
         existing.UseForOrderConfirmation = account.UseForOrderConfirmation;
         existing.UseForOtpVerification = account.UseForOtpVerification;
         existing.UseForPaymentApproval = account.UseForPaymentApproval;
         existing.UseForAbandonedCartRecovery = account.UseForAbandonedCartRecovery;
+        existing.Status = account.Status;
+        existing.Enabled = account.Enabled;
+        existing.LastConnectedAtUtc = account.LastConnectedAtUtc;
+        existing.LastDisconnectedAtUtc = account.LastDisconnectedAtUtc;
+        existing.StatusReason = account.StatusReason;
         existing.UpdatedAtUtc = DateTime.UtcNow;
         
         // Note: Sensitive fields like PhoneNumber should strictly be controlled if changing them resets status
         // If phone number changes, we must reset status to PendingQR
-        if (existing.PhoneNumber != account.PhoneNumber)
+        if (phoneChanged)
         {
-            existing.PhoneNumber = account.PhoneNumber;
+            existing.PhoneNumber = account.PhoneNumber.Trim();
             existing.Status = WhatsAppAccountStatus.PendingQR;
             existing.LastConnectedAtUtc = null;
             existing.Enabled = false; 
@@ -146,7 +177,8 @@ public class WhatsAppAccountService : IWhatsAppAccountService
                 query = query.Where(x => x.UseForPaymentApproval);
                 break;
             case WhatsAppUseCase.AbandonedCartRecovery:
-                query = query.Where(x => x.UseForAbandonedCartRecovery);
+                // Smart Cart Recovery is the single feature-level opt-in. An enabled,
+                // connected tenant account is sufficient at the transport boundary.
                 break;
         }
 
@@ -199,11 +231,11 @@ public class WhatsAppAccountService : IWhatsAppAccountService
 
     public async Task<WhatsAppMessageTemplate> UpdateTemplateAsync(WhatsAppMessageTemplate template, CancellationToken ct = default)
     {
-        NormalizeAndValidateTemplate(template);
-
         var existing = await _context.WhatsAppMessageTemplates
             .FirstOrDefaultAsync(t => t.Id == template.Id && t.TenantId == template.TenantId, ct);
         if (existing == null) throw new KeyNotFoundException($"Template {template.Id} not found");
+
+        NormalizeAndValidateTemplate(template);
 
         existing.Type = template.Type;
         existing.Language = template.Language;
@@ -261,8 +293,7 @@ public class WhatsAppAccountService : IWhatsAppAccountService
                      x.Status == WhatsAppAccountStatus.Connected &&
                      ((candidate.UseForOrderConfirmation && x.UseForOrderConfirmation) ||
                       (candidate.UseForOtpVerification && x.UseForOtpVerification) ||
-                      (candidate.UseForPaymentApproval && x.UseForPaymentApproval) ||
-                      (candidate.UseForAbandonedCartRecovery && x.UseForAbandonedCartRecovery)),
+                      (candidate.UseForPaymentApproval && x.UseForPaymentApproval)),
                 ct);
 
         if (conflict)
@@ -274,7 +305,9 @@ public class WhatsAppAccountService : IWhatsAppAccountService
 
     private static void NormalizeAndValidateTemplate(WhatsAppMessageTemplate template)
     {
-        template.Type = template.Type.Trim();
+        template.Type = template.Type.Trim().Equals("OTP", StringComparison.OrdinalIgnoreCase)
+            ? "Otp"
+            : template.Type.Trim();
         template.Language = template.Language.Trim().ToLowerInvariant();
         template.Content = template.Content.Trim();
 
@@ -282,9 +315,10 @@ public class WhatsAppAccountService : IWhatsAppAccountService
         {
             "OrderConfirmation" => new HashSet<string>(StringComparer.Ordinal)
             {
-                "order_number", "customer_name", "total", "currency", "items_count", "store_name"
+                "order_number", "customer_name", "total", "currency", "items_count", "store_name",
+                "shipping_address", "payment_status"
             },
-            "OTP" => new HashSet<string>(StringComparer.Ordinal) { "otp_code" },
+            "Otp" => new HashSet<string>(StringComparer.Ordinal) { "otp_code", "store_name" },
             _ => throw new InvalidOperationException("Unsupported WhatsApp template type.")
         };
 
@@ -302,6 +336,15 @@ public class WhatsAppAccountService : IWhatsAppAccountService
             contentWithoutValidVariables.Contains("}}", StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Template contains unsupported or malformed variables.");
+        }
+
+        var requiredVariables = template.Type == "Otp"
+            ? new[] { "otp_code" }
+            : new[] { "order_number", "total" };
+        if (requiredVariables.Any(variable => !variables.Contains(variable)))
+        {
+            throw new InvalidOperationException(
+                $"Template is missing required variables: {string.Join(", ", requiredVariables.Where(variable => !variables.Contains(variable)).Select(variable => $"{{{{{variable}}}}}"))}.");
         }
     }
 }

@@ -33,7 +33,6 @@ public static class SensitiveConfigurationValidator
         RequireSecret(configuration, "AffiliateJwt:Secret", "Affiliate JWT signing key", failures, minimumLength: 32);
         RequireSecret(configuration, "CommerceHub:OrderAccessSigningKey", "CommerceHub order access signing key", failures, minimumLength: 32);
         RequireSecret(configuration, "AbandonedCart:TokenSecret", "abandoned cart token secret", failures, minimumLength: 32);
-        RequireNonEmpty(configuration, "AbandonedCart:N8nWebhookUrl", "abandoned cart n8n webhook URL", failures, rejectPlaceholders: true);
 
         RequireDistinctSecrets(configuration, "JwtSettings:Secret", "SuperAdminJwt:Secret", "POS and Super Admin JWT secrets", failures);
         RequireDistinctSecrets(configuration, "JwtSettings:Secret", "StorefrontJwt:Secret", "POS and Storefront JWT secrets", failures);

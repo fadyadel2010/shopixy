@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, RefreshCw, Pencil, Trash2, ShieldCheck, ShieldAlert, QrCode, Power, CheckCircle } from 'lucide-react'
+import { Plus, RefreshCw, Pencil, Trash2, ShieldCheck, ShieldAlert, QrCode, Power } from 'lucide-react'
 import { useToast } from '../../../components/Toast'
 import { useWhatsAppApi } from '../hooks/useWhatsAppApi'
 import { useWhatsAppAnalytics } from '../hooks/useWhatsAppAnalytics'
@@ -10,6 +10,23 @@ import DeliveryFunnel from '../components/DeliveryFunnel'
 import TemplateEditor from '../components/TemplateEditor'
 import MessageDetailsModal from '../components/MessageDetailsModal'
 import { getWhatsAppLanguageKey, getWhatsAppMessageStatusKey, getWhatsAppTemplateTypeKey } from '../i18n'
+import api from '../../../services/api'
+
+const accountCountries = [
+    { code: 'EG', dialCode: '+20', nameKey: 'settings.countries.egypt' },
+    { code: 'SA', dialCode: '+966', nameKey: 'settings.countries.saudiArabia' },
+    { code: 'AE', dialCode: '+971', nameKey: 'settings.countries.uae' },
+    { code: 'KW', dialCode: '+965', nameKey: 'settings.countries.kuwait' },
+    { code: 'QA', dialCode: '+974', nameKey: 'settings.countries.qatar' },
+    { code: 'BH', dialCode: '+973', nameKey: 'settings.countries.bahrain' },
+    { code: 'OM', dialCode: '+968', nameKey: 'settings.countries.oman' },
+    { code: 'JO', dialCode: '+962', nameKey: 'settings.countries.jordan' },
+    { code: 'LB', dialCode: '+961', nameKey: 'settings.countries.lebanon' },
+    { code: 'US', dialCode: '+1', nameKey: 'settings.countries.unitedStates' },
+    { code: 'GB', dialCode: '+44', nameKey: 'settings.countries.unitedKingdom' },
+    { code: 'DE', dialCode: '+49', nameKey: 'settings.countries.germany' },
+    { code: 'FR', dialCode: '+33', nameKey: 'settings.countries.france' },
+]
 
 export default function WhatsAppSettings() {
     const { t, i18n } = useTranslation()
@@ -18,7 +35,7 @@ export default function WhatsAppSettings() {
 
     // API hooks
     const {
-        getAccounts, toggleAccount, disconnectAccount, deleteAccount, getQrCode, createAccount, getAccountStatus, markAsConnected,
+        getAccounts, toggleAccount, disconnectAccount, deleteAccount, getQrCode, createAccount, getAccountStatus,
         getTemplates, createTemplate, updateTemplate, deleteTemplate,
         getKillSwitchStatus, activateKillSwitch, deactivateKillSwitch,
         loading
@@ -31,14 +48,16 @@ export default function WhatsAppSettings() {
     const [qrData, setQrData] = useState(null)
     const [selectedAccount, setSelectedAccount] = useState(null)
     const [showAddModal, setShowAddModal] = useState(false)
-    const [newAccount, setNewAccount] = useState({ displayName: '', phoneNumber: '', useForOrderConfirmation: true, useForOtpVerification: false })
+    const [newAccount, setNewAccount] = useState({ displayName: '', phoneNumber: '', countryCode: '', useForOrderConfirmation: true, useForOtpVerification: false })
     const [qrPolling, setQrPolling] = useState(false)
+    const [qrSecondsRemaining, setQrSecondsRemaining] = useState(null)
 
     // === TEMPLATES STATE ===
     const [templates, setTemplates] = useState([])
     const [isEditorOpen, setIsEditorOpen] = useState(false)
     const [editingTemplate, setEditingTemplate] = useState(null)
     const [newTemplateType, setNewTemplateType] = useState('OrderConfirmation')
+    const [templatesError, setTemplatesError] = useState(null)
 
     // === SAFETY STATE ===
     const [killSwitchStatus, setKillSwitchStatus] = useState({ isKilled: false, reason: null, activatedAt: null })
@@ -61,16 +80,32 @@ export default function WhatsAppSettings() {
     const logsRequestIdRef = useRef(0)
     const qrCodeRequestIdRef = useRef(0)
     const qrPollingRequestIdRef = useRef(0)
-    const orderTemplates = templates.filter(template => template.type === 'OrderConfirmation')
-    const otpTemplates = templates.filter(template => template.type === 'Otp')
+    const orderTemplates = templates.filter(template => template.type?.toLowerCase() === 'orderconfirmation')
+    const otpTemplates = templates.filter(template => template.type?.toLowerCase() === 'otp')
 
     const translateLanguage = (language) => t(getWhatsAppLanguageKey(language) || 'common.unknown')
     const translateMessageStatus = (status) => t(getWhatsAppMessageStatusKey(status) || 'common.unknown')
     const translateTemplateType = (type) => t(getWhatsAppTemplateTypeKey(type) || 'common.unknown')
     const formatDateTime = (value) => value ? new Date(value).toLocaleString(i18n.language) : t('common.none')
+    const selectedAccountCountry = accountCountries.find(country => country.code === newAccount.countryCode)
 
     useEffect(() => {
+        let active = true
+        void api.get('/settings/default-country', {
+            headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+        }).then(response => {
+            const countryCode = response.data?.countryCode || ''
+            if (active && countryCode) {
+                setNewAccount(previous => previous.countryCode
+                    ? previous
+                    : { ...previous, countryCode })
+            }
+        }).catch(() => {
+            // The modal still lets the administrator choose a country explicitly.
+        })
+
         return () => {
+            active = false
             accountsRequestIdRef.current += 1
             templatesRequestIdRef.current += 1
             killSwitchRequestIdRef.current += 1
@@ -101,6 +136,7 @@ export default function WhatsAppSettings() {
 
     const fetchTemplates = async () => {
         const requestId = ++templatesRequestIdRef.current
+        setTemplatesError(null)
         try {
             const data = await getTemplates()
 
@@ -111,6 +147,7 @@ export default function WhatsAppSettings() {
             setTemplates(data || [])
         } catch (err) {
             if (requestId === templatesRequestIdRef.current) {
+                setTemplatesError(err.message)
                 showError(err.message)
             }
         }
@@ -201,7 +238,8 @@ export default function WhatsAppSettings() {
                     }
                 } catch (err) {
                     if (pollRequestId === qrPollingRequestIdRef.current) {
-                        console.error('Error polling status:', err)
+                        setQrPolling(false)
+                        showError(err.message)
                     }
                 }
             }, 3000)
@@ -211,13 +249,30 @@ export default function WhatsAppSettings() {
         }
     }, [showQrModal, selectedAccount, qrPolling])
 
+    useEffect(() => {
+        if (!showQrModal || !qrData || qrSecondsRemaining <= 0) return
+
+        const timer = setTimeout(() => {
+            setQrSecondsRemaining(seconds => {
+                if (seconds <= 1) {
+                    setQrData(null)
+                    setQrPolling(false)
+                    return 0
+                }
+                return seconds - 1
+            })
+        }, 1000)
+
+        return () => clearTimeout(timer)
+    }, [showQrModal, qrData, qrSecondsRemaining])
+
     // === ACCOUNT HANDLERS ===
     const handleCreateAccount = async () => {
         try {
             await createAccount(newAccount)
             showSuccess(t('whatsapp.accounts.success.created'))
             setShowAddModal(false)
-            setNewAccount({ displayName: '', phoneNumber: '', useForOrderConfirmation: true, useForOtpVerification: false })
+            setNewAccount(previous => ({ displayName: '', phoneNumber: '', countryCode: previous.countryCode, useForOrderConfirmation: true, useForOtpVerification: false }))
             await fetchAccounts()
         } catch (err) {
             showError(err.message)
@@ -257,22 +312,12 @@ export default function WhatsAppSettings() {
         }
     }
 
-    const handleMarkAsConnected = async (accountId) => {
-        if (!confirm(t('whatsapp.accounts.confirm.markConnected'))) return
-        try {
-            await markAsConnected(accountId)
-            showSuccess(t('whatsapp.accounts.success.markedConnected'))
-            await fetchAccounts()
-        } catch (err) {
-            showError(err.message)
-        }
-    }
-
     const handleShowQr = async (account) => {
         const requestId = ++qrCodeRequestIdRef.current
         qrPollingRequestIdRef.current += 1
         setSelectedAccount(account)
         setQrData(null)
+        setQrSecondsRemaining(null)
         setQrPolling(false)
         setShowQrModal(true)
         try {
@@ -282,8 +327,13 @@ export default function WhatsAppSettings() {
             }
             if (data.success && data.qrImageBase64) {
                 setQrData(data.qrImageBase64)
+                setQrSecondsRemaining(data.expiresInSeconds || 60)
                 qrPollingRequestIdRef.current += 1
                 setQrPolling(true) // Start polling for connection status
+            } else if (data.success && data.alreadyConnected) {
+                showSuccess(t('whatsapp.accounts.success.alreadyConnected'))
+                setShowQrModal(false)
+                await fetchAccounts()
             } else {
                 showError(data.error || t('whatsapp.accounts.qr.generateFailed'))
                 setShowQrModal(false)
@@ -301,6 +351,8 @@ export default function WhatsAppSettings() {
         qrPollingRequestIdRef.current += 1
         setShowQrModal(false)
         setQrPolling(false)
+        setQrData(null)
+        setQrSecondsRemaining(null)
         void fetchAccounts() // Refresh accounts when closing modal
     }
 
@@ -330,7 +382,7 @@ export default function WhatsAppSettings() {
 
     const handleSaveTemplate = async (data) => {
         try {
-            if (editingTemplate) {
+            if (editingTemplate && !editingTemplate.isDefault) {
                 await updateTemplate(editingTemplate.id, data)
                 showSuccess(t('whatsapp.templates.messages.updated'))
             } else {
@@ -447,8 +499,6 @@ export default function WhatsAppSettings() {
                                     <div key={account.id} className="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
                                         {(() => {
                                             const isConnected = ['Connected', 'CONNECTED'].includes(account.status)
-                                            const isPendingQr = ['PendingQR', 'QR_PENDING'].includes(account.status)
-
                                             return (
                                                 <>
                                                     <div className="flex justify-between items-start mb-4">
@@ -458,11 +508,12 @@ export default function WhatsAppSettings() {
                                                         </div>
                                                         <AccountStatusBadge status={account.status} />
                                                     </div>
-                                                    <div className="flex gap-2 mb-4">
+                                                    <div className="flex gap-2 mb-4 flex-wrap">
                                                         <span className={`px-2.5 py-0.5 rounded-md text-xs font-medium ${account.useForOrderConfirmation ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'}`}>{t('whatsapp.accounts.orderConfirmations')}</span>
                                                         <span className={`px-2.5 py-0.5 rounded-md text-xs font-medium ${account.useForOtpVerification ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-600'}`}>{t('whatsapp.accounts.otpVerification')}</span>
                                                         <CircuitBreakerBadge isOpen={false} />
                                                     </div>
+                                                    {account.statusReason && <p className="mb-4 text-xs text-amber-700">{account.statusReason}</p>}
                                                     <div className="flex gap-2 flex-wrap">
                                                         <button
                                                             onClick={() => handleShowQr(account)}
@@ -471,22 +522,19 @@ export default function WhatsAppSettings() {
                                                         >
                                                             <QrCode className="mr-1.5 h-4 w-4" /> {t('whatsapp.accounts.scanQr')}
                                                         </button>
-                                                        {isPendingQr && (
-                                                            <button
-                                                                onClick={() => handleMarkAsConnected(account.id)}
-                                                                disabled={loading}
-                                                                className="inline-flex items-center px-3 py-1.5 border border-green-300 text-xs font-medium rounded text-green-700 bg-green-50 hover:bg-green-100 disabled:opacity-50"
-                                                                title={t('whatsapp.accounts.titles.markConnected')}
-                                                            >
-                                                                <CheckCircle className="mr-1.5 h-4 w-4" /> {t('whatsapp.accounts.actions.markConnected')}
-                                                            </button>
-                                                        )}
                                                         <button
                                                             onClick={() => handleToggleAccount(account)}
                                                             disabled={loading || !isConnected}
                                                             className={`inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white ${account.enabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50`}
                                                         >
                                                             <Power className="mr-1.5 h-4 w-4" /> {account.enabled ? t('common.disable') : t('common.enable')}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDisconnect(account.id)}
+                                                            disabled={loading}
+                                                            className="inline-flex items-center px-3 py-1.5 border border-amber-300 text-xs font-medium rounded text-amber-700 bg-white hover:bg-amber-50 disabled:opacity-50"
+                                                        >
+                                                            {t('whatsapp.accounts.actions.disconnect')}
                                                         </button>
                                                         <button
                                                             onClick={() => handleDeleteAccount(account.id)}
@@ -519,6 +567,12 @@ export default function WhatsAppSettings() {
                     {/* === TEMPLATES TAB === */}
                     {activeTab === 'templates' && (
                         <div className="space-y-8">
+                            {templatesError && (
+                                <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                                    <p>{templatesError}</p>
+                                    <button onClick={fetchTemplates} className="mt-2 font-medium underline">{t('common.retry')}</button>
+                                </div>
+                            )}
                             {/* Order Confirmation Templates */}
                             <section>
                                 <div className="flex justify-between items-center mb-4">
@@ -536,13 +590,13 @@ export default function WhatsAppSettings() {
                                             <div key={template.id} className="px-4 py-3 flex justify-between items-center hover:bg-gray-50">
                                                 <div>
                                                     <p className={`text-sm font-medium ${template.isActive ? 'text-indigo-600' : 'text-gray-500'}`}>
-                                                        {translateLanguage(template.language)} {!template.isActive && <span className="text-xs text-gray-400">({t('common.inactive')})</span>}
+                                                        {translateLanguage(template.language)} {template.isDefault && <span className="text-xs text-emerald-600">({t('whatsapp.templates.systemDefault')})</span>} {!template.isActive && <span className="text-xs text-gray-400">({t('common.inactive')})</span>}
                                                     </p>
                                                     <p className="text-sm text-gray-500 line-clamp-1">{template.content}</p>
                                                 </div>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => handleEditTemplate(template)} title={t('common.edit')} aria-label={t('common.edit')} className="p-1 text-gray-400 hover:text-gray-600"><Pencil className="h-4 w-4" /></button>
-                                                    <button onClick={() => handleDeleteTemplate(template.id)} title={t('common.delete')} aria-label={t('common.delete')} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>
+                                                    <button onClick={() => handleEditTemplate(template)} title={template.isDefault ? t('whatsapp.templates.actions.customize') : t('common.edit')} aria-label={template.isDefault ? t('whatsapp.templates.actions.customize') : t('common.edit')} className="p-1 text-gray-400 hover:text-gray-600"><Pencil className="h-4 w-4" /></button>
+                                                    {!template.isDefault && <button onClick={() => handleDeleteTemplate(template.id)} title={t('common.delete')} aria-label={t('common.delete')} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>}
                                                 </div>
                                             </div>
                                         ))}
@@ -569,13 +623,13 @@ export default function WhatsAppSettings() {
                                             <div key={template.id} className="px-4 py-3 flex justify-between items-center hover:bg-gray-50">
                                                 <div>
                                                     <p className={`text-sm font-medium ${template.isActive ? 'text-indigo-600' : 'text-gray-500'}`}>
-                                                        {translateLanguage(template.language)} {!template.isActive && <span className="text-xs text-gray-400">({t('common.inactive')})</span>}
+                                                        {translateLanguage(template.language)} {template.isDefault && <span className="text-xs text-emerald-600">({t('whatsapp.templates.systemDefault')})</span>} {!template.isActive && <span className="text-xs text-gray-400">({t('common.inactive')})</span>}
                                                     </p>
                                                     <p className="text-sm text-gray-500 line-clamp-1">{template.content}</p>
                                                 </div>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => handleEditTemplate(template)} title={t('common.edit')} aria-label={t('common.edit')} className="p-1 text-gray-400 hover:text-gray-600"><Pencil className="h-4 w-4" /></button>
-                                                    <button onClick={() => handleDeleteTemplate(template.id)} title={t('common.delete')} aria-label={t('common.delete')} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>
+                                                    <button onClick={() => handleEditTemplate(template)} title={template.isDefault ? t('whatsapp.templates.actions.customize') : t('common.edit')} aria-label={template.isDefault ? t('whatsapp.templates.actions.customize') : t('common.edit')} className="p-1 text-gray-400 hover:text-gray-600"><Pencil className="h-4 w-4" /></button>
+                                                    {!template.isDefault && <button onClick={() => handleDeleteTemplate(template.id)} title={t('common.delete')} aria-label={t('common.delete')} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>}
                                                 </div>
                                             </div>
                                         ))}
@@ -798,16 +852,41 @@ export default function WhatsAppSettings() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">{t('whatsapp.accounts.fields.phoneNumber')}</label>
-                                    <input
-                                        type="text"
-                                        value={newAccount.phoneNumber}
-                                        onChange={e => setNewAccount(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                                    <label className="block text-sm font-medium text-gray-700">{t('whatsapp.accounts.fields.country')}</label>
+                                    <select
+                                        value={newAccount.countryCode}
+                                        onChange={e => setNewAccount(prev => ({ ...prev, countryCode: e.target.value }))}
                                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                        placeholder={t('whatsapp.accounts.placeholders.phoneNumber')}
-                                    />
+                                    >
+                                        <option value="">{t('settings.selectCountry')}</option>
+                                        {accountCountries.map(country => (
+                                            <option key={country.code} value={country.code}>
+                                                {country.code} - {t(country.nameKey)} ({country.dialCode})
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
-                                <div className="flex gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">{t('whatsapp.accounts.fields.phoneNumber')}</label>
+                                    <div className="mt-1 flex rounded-md shadow-sm" dir="ltr">
+                                        <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-300 bg-gray-50 px-3 text-sm text-gray-600">
+                                            {selectedAccountCountry?.dialCode || '+'}
+                                        </span>
+                                        <input
+                                            type="tel"
+                                            value={newAccount.phoneNumber}
+                                            onChange={e => setNewAccount(prev => ({ ...prev, phoneNumber: e.target.value.replace(/[^0-9\s()-]/g, '') }))}
+                                            className="block w-full min-w-0 flex-1 rounded-none rounded-r-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                            placeholder={t('whatsapp.accounts.placeholders.phoneNumber')}
+                                        />
+                                    </div>
+                                    {selectedAccountCountry && (
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            {t('whatsapp.accounts.phonePrefixHint', { prefix: selectedAccountCountry.dialCode })}
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="flex gap-4 flex-wrap">
                                     <label className="flex items-center">
                                         <input
                                             type="checkbox"
@@ -830,7 +909,7 @@ export default function WhatsAppSettings() {
                             </div>
                             <div className="mt-6 flex justify-end gap-3">
                                 <button onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">{t('common.cancel')}</button>
-                                <button onClick={handleCreateAccount} disabled={!newAccount.displayName || !newAccount.phoneNumber} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50">{t('whatsapp.accounts.actions.createAccount')}</button>
+                                <button onClick={handleCreateAccount} disabled={!newAccount.displayName || !newAccount.phoneNumber || !newAccount.countryCode} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50">{t('whatsapp.accounts.actions.createAccount')}</button>
                             </div>
                         </div>
                     </div>
@@ -850,7 +929,8 @@ export default function WhatsAppSettings() {
                             <p className="text-sm text-gray-500 mb-4">{t('whatsapp.accounts.qr.description')}</p>
                             {qrData ? (
                                 <>
-                                    <img src={qrData} alt={t('whatsapp.accounts.qr.alt')} className="mx-auto border p-2" />
+                                    <img src={qrData} alt={t('whatsapp.accounts.qr.alt')} className="mx-auto h-56 w-56 max-w-full border p-2" />
+                                    <p className="mt-2 text-xs text-gray-500" dir="ltr">{t('whatsapp.accounts.qr.expiresIn', { count: qrSecondsRemaining })}</p>
                                     {qrPolling && (
                                         <p className="mt-3 text-sm text-green-600 animate-pulse">
                                             {t('whatsapp.accounts.qr.waitingForConnection')}
@@ -858,7 +938,12 @@ export default function WhatsAppSettings() {
                                     )}
                                 </>
                             ) : (
-                                <div className="h-48 w-48 mx-auto bg-gray-100 flex items-center justify-center">{t('whatsapp.accounts.qr.loading')}</div>
+                                <div className="mx-auto flex h-48 w-48 flex-col items-center justify-center gap-3 bg-gray-100 px-4">
+                                    <span>{qrSecondsRemaining === 0 ? t('whatsapp.accounts.qr.expiredTitle') : t('whatsapp.accounts.qr.loading')}</span>
+                                    {qrSecondsRemaining === 0 && selectedAccount && (
+                                        <button onClick={() => handleShowQr(selectedAccount)} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">{t('whatsapp.accounts.actions.refreshQr')}</button>
+                                    )}
+                                </div>
                             )}
                             <button onClick={handleCloseQrModal} className="mt-6 w-full px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">{t('whatsapp.accounts.actions.done')}</button>
                         </div>

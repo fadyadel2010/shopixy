@@ -49,7 +49,6 @@ public sealed class SensitiveConfigurationValidatorTests
         ["AffiliateJwt:Secret"] = "affiliate-secret-key-0000000000000001",
         ["CommerceHub:OrderAccessSigningKey"] = "order-access-signing-key-000000000001",
         ["AbandonedCart:TokenSecret"] = "abandoned-cart-token-secret-00000000001",
-        ["AbandonedCart:N8nWebhookUrl"] = "https://n8n.example.test/webhook/recovery",
         ["RabbitMQ:Host"] = "rabbitmq.example.test",
         ["RabbitMQ:VirtualHost"] = "/",
         ["RabbitMQ:Username"] = "rabbit",

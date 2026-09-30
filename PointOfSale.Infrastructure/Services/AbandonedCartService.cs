@@ -20,7 +20,7 @@ namespace PointOfSale.Infrastructure.Services;
 /// HARDENING CHANGES:
 /// 1. Atomic upsert using PostgreSQL ON CONFLICT
 /// 2. Safe state transitions using SQL UPDATE ... WHERE status = X
-/// 3. Pending state for n8n call-in-progress protection
+/// 3. Pending state for native dispatch claim protection
 /// 4. Retry tracking and failure handling
 /// 5. Improved logging with structured fields
 /// </summary>
@@ -103,29 +103,29 @@ public class AbandonedCartService : IAbandonedCartService
                 ""CartSnapshotJson"" = @p10::jsonb,
                 ""LastActivityAtUtc"" = @p11,
                 ""UpdatedAtUtc"" = @p14,
-                -- HARDENING: Reset status on activity (customer returned)
+                -- Preserve Triggered so a later order remains attributable to the sent recovery.
                 ""RecoveryStatus"" = CASE 
-                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending', 'Triggered') 
+                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending')
                     THEN 'Active'
                     ELSE ""AbandonedCarts"".""RecoveryStatus""
                 END,
                 ""AbandonedAtUtc"" = CASE 
-                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending', 'Triggered') 
+                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending')
                     THEN NULL
                     ELSE ""AbandonedCarts"".""AbandonedAtUtc""
                 END,
                 ""TriggeredAtUtc"" = CASE 
-                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending', 'Triggered') 
+                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending')
                     THEN NULL
                     ELSE ""AbandonedCarts"".""TriggeredAtUtc""
                 END,
                 ""PendingAtUtc"" = CASE 
-                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending', 'Triggered') 
+                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending')
                     THEN NULL
                     ELSE ""AbandonedCarts"".""PendingAtUtc""
                 END,
                 ""RetryCount"" = CASE 
-                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending', 'Triggered') 
+                    WHEN ""AbandonedCarts"".""RecoveryStatus"" IN ('Abandoned', 'Pending')
                     THEN 0
                     ELSE ""AbandonedCarts"".""RetryCount""
                 END";
@@ -203,8 +203,12 @@ public class AbandonedCartService : IAbandonedCartService
                         .IgnoreQueryFilters()
                         .AsNoTracking()
                         .Where(c => c.TenantId == settings.TenantId
-                            && c.RecoveryStatus == AbandonedCartRecoveryStatus.Active
-                            && c.LastActivityAtUtc <= threshold);
+                            && ((c.RecoveryStatus == AbandonedCartRecoveryStatus.Active
+                                 && c.LastActivityAtUtc <= threshold) ||
+                                (c.RecoveryStatus == AbandonedCartRecoveryStatus.Abandoned
+                                 && c.RetryCount < AbandonedCart.MaxRetryCount
+                                 && c.PhoneVerified
+                                 && c.PhoneNumber != "")));
 
                     if (lastCartId.HasValue)
                     {
@@ -318,41 +322,29 @@ public class AbandonedCartService : IAbandonedCartService
         }
     }
 
-    public async Task MarkAsAbandonedAsync(Guid abandonedCartId, CancellationToken ct = default)
+    public async Task<bool> TryMarkAsAbandonedAsync(
+        Guid abandonedCartId,
+        DateTime expectedLastActivityAtUtc,
+        CancellationToken ct = default)
     {
-        // CRITICAL: IgnoreQueryFilters() because this is called from AbandonedCartScannerJob
-        // which runs without TenantContext
-        var cart = await _context.Set<AbandonedCart>()
+        var now = DateTime.UtcNow;
+        var rowsAffected = await _context.Set<AbandonedCart>()
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.Id == abandonedCartId, ct);
+            .Where(cart => cart.Id == abandonedCartId &&
+                           cart.RecoveryStatus == AbandonedCartRecoveryStatus.Active &&
+                           cart.LastActivityAtUtc == expectedLastActivityAtUtc)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(cart => cart.RecoveryStatus, AbandonedCartRecoveryStatus.Abandoned)
+                    .SetProperty(cart => cart.AbandonedAtUtc, now)
+                    .SetProperty(cart => cart.UpdatedAtUtc, now),
+                ct);
 
-        if (cart == null)
-        {
-            _logger.LogWarning(
-                "[Abandoned Cart] Cart not found for marking as abandoned | Id: {Id}",
-                abandonedCartId);
-            return;
-        }
-
-        if (cart.RecoveryStatus == AbandonedCartRecoveryStatus.Abandoned)
-        {
-            // Already marked, idempotent
-            return;
-        }
-
-        cart.RecoveryStatus = AbandonedCartRecoveryStatus.Abandoned;
-        cart.AbandonedAtUtc = DateTime.UtcNow;
-        cart.UpdatedAtUtc = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "[Abandoned Cart] Marked as abandoned | TenantId: {TenantId} | CartId: {CartId}",
-            cart.TenantId, cart.CartId);
+        return rowsAffected == 1;
     }
 
     /// <summary>
-    /// HARDENING: Transition to Pending state before n8n call.
+    /// HARDENING: Transition to Pending state before native dispatch.
     /// Returns false if cart is not in Abandoned state (preventing duplicate triggers).
     /// </summary>
     public async Task<bool> TryMarkAsPendingAsync(Guid abandonedCartId, CancellationToken ct = default)
@@ -397,7 +389,7 @@ public class AbandonedCartService : IAbandonedCartService
     }
 
     /// <summary>
-    /// HARDENING: Confirm successful n8n webhook call.
+    /// HARDENING: Confirm successful native dispatch.
     /// Transitions from Pending to Triggered.
     /// </summary>
     public async Task<bool> ConfirmTriggerSuccessAsync(Guid abandonedCartId, CancellationToken ct = default)
@@ -433,41 +425,49 @@ public class AbandonedCartService : IAbandonedCartService
     }
 
     /// <summary>
-    /// HARDENING: Handle n8n webhook failure.
-    /// Reverts to Abandoned for retry or marks as Failed if exhausted.
+    /// HARDENING: Handle native dispatch failure without overwriting a concurrent
+    /// completed-order transition.
     /// </summary>
     public async Task RecordTriggerFailureAsync(Guid abandonedCartId, string errorMessage, CancellationToken ct = default)
     {
-        // CRITICAL: IgnoreQueryFilters() because this is called from MassTransit consumers
-        var cart = await _context.Set<AbandonedCart>()
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.Id == abandonedCartId, ct);
+        var normalizedError = errorMessage.Length > 2000 ? errorMessage[..2000] : errorMessage;
+        var now = DateTime.UtcNow;
+        var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
+            @"UPDATE ""AbandonedCarts""
+              SET ""RetryCount"" = ""RetryCount"" + 1,
+                  ""LastErrorMessage"" = @p1,
+                  ""RecoveryStatus"" = CASE
+                      WHEN ""RetryCount"" + 1 >= @p3 THEN 'Failed'
+                      ELSE 'Abandoned'
+                  END,
+                  ""PendingAtUtc"" = NULL,
+                  ""UpdatedAtUtc"" = @p2
+              WHERE ""Id"" = @p0
+                AND ""RecoveryStatus"" IN ('Abandoned', 'Pending')",
+            abandonedCartId,
+            normalizedError,
+            now,
+            AbandonedCart.MaxRetryCount);
 
-        if (cart == null) return;
-
-        cart.RetryCount++;
-        cart.LastErrorMessage = errorMessage?.Length > 2000 
-            ? errorMessage.Substring(0, 2000) 
-            : errorMessage;
-        cart.UpdatedAtUtc = DateTime.UtcNow;
-
-        if (cart.RetryCount >= AbandonedCart.MaxRetryCount)
+        if (rowsAffected == 1)
         {
-            cart.RecoveryStatus = AbandonedCartRecoveryStatus.Failed;
-            _logger.LogError(
-                "[Abandoned Cart] Trigger exhausted after {MaxRetries} retries | Id: {Id} | Error: {Error}",
-                AbandonedCart.MaxRetryCount, abandonedCartId, errorMessage);
-        }
-        else
-        {
-            cart.RecoveryStatus = AbandonedCartRecoveryStatus.Abandoned;
-            cart.PendingAtUtc = null;
             _logger.LogWarning(
-                "[Abandoned Cart] Trigger failed, will retry | Id: {Id} | RetryCount: {RetryCount} | Error: {Error}",
-                abandonedCartId, cart.RetryCount, errorMessage);
+                "[Abandoned Cart] Native dispatch failed and retry state was updated | Id: {Id} | Error: {Error}",
+                abandonedCartId,
+                normalizedError);
         }
+    }
 
-        await _context.SaveChangesAsync(ct);
+    public async Task ReleasePendingAsync(Guid abandonedCartId, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        await _context.Set<AbandonedCart>()
+            .IgnoreQueryFilters()
+            .Where(cart => cart.Id == abandonedCartId && cart.RecoveryStatus == AbandonedCartRecoveryStatus.Pending)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(cart => cart.RecoveryStatus, AbandonedCartRecoveryStatus.Abandoned)
+                .SetProperty(cart => cart.PendingAtUtc, (DateTime?)null)
+                .SetProperty(cart => cart.UpdatedAtUtc, now), ct);
     }
 
     public async Task<bool> MarkAsTriggeredAsync(Guid abandonedCartId, CancellationToken ct = default)
@@ -519,16 +519,45 @@ public class AbandonedCartService : IAbandonedCartService
             return;
         }
 
-        // HARDENING: Use atomic update to handle any prior state
+        // A completed order always closes future work. Attribution additionally requires
+        // the canonical Ecommerce order to have been created after the successful send.
         var sql = @"
             UPDATE ""AbandonedCarts""
-            SET ""RecoveryStatus"" = 'Recovered',
-                ""RecoveredAtUtc"" = @p3,
+            SET ""RecoveryStatus"" = CASE
+                    WHEN ""RecoveryStatus"" = 'Triggered'
+                         AND ""TriggeredAtUtc"" IS NOT NULL
+                         AND EXISTS (
+                             SELECT 1
+                             FROM ""Orders"" AS canonical_order
+                             WHERE canonical_order.""Id"" = @p2
+                               AND canonical_order.""TenantId"" = @p0
+                               AND canonical_order.""CartId"" = @p1
+                               AND canonical_order.""Source"" = 0
+                               AND canonical_order.""IsDeleted"" = FALSE
+                                AND canonical_order.""CreatedAt"" >= ""AbandonedCarts"".""TriggeredAtUtc""
+                         ) THEN 'Recovered'
+                    ELSE 'Canceled'
+                END,
+                ""RecoveredAtUtc"" = CASE
+                    WHEN ""RecoveryStatus"" = 'Triggered'
+                         AND ""TriggeredAtUtc"" IS NOT NULL
+                         AND EXISTS (
+                             SELECT 1
+                             FROM ""Orders"" AS canonical_order
+                             WHERE canonical_order.""Id"" = @p2
+                               AND canonical_order.""TenantId"" = @p0
+                               AND canonical_order.""CartId"" = @p1
+                               AND canonical_order.""Source"" = 0
+                               AND canonical_order.""IsDeleted"" = FALSE
+                                AND canonical_order.""CreatedAt"" >= ""AbandonedCarts"".""TriggeredAtUtc""
+                         ) THEN @p3
+                    ELSE NULL
+                END,
                 ""RecoveredOrderId"" = @p2,
                 ""UpdatedAtUtc"" = @p3
             WHERE ""TenantId"" = @p0
               AND ""CartId"" = @p1
-              AND ""RecoveryStatus"" NOT IN ('Recovered', 'Expired')";
+              AND ""RecoveryStatus"" NOT IN ('Recovered', 'Expired', 'Failed', 'Canceled')";
 
         var now = DateTime.UtcNow;
         var rowsAffected = await _context.Database.ExecuteSqlRawAsync(sql, tenantId, cartId, orderId, now);
@@ -742,7 +771,13 @@ public class AbandonedCartService : IAbandonedCartService
             normalized = normalized.PadRight(normalized.Length + (4 - padding), '=');
         }
 
-        return Convert.FromBase64String(normalized);
+        var decoded = Convert.FromBase64String(normalized);
+        if (!string.Equals(EncodeBase64Url(decoded), value, StringComparison.Ordinal))
+        {
+            throw new FormatException("Recovery token is not canonical Base64URL.");
+        }
+
+        return decoded;
     }
 
     private class RecoveryTokenPayload

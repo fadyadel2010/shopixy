@@ -25,8 +25,8 @@ public interface IWhatsAppFeatureGateService
     
     /// <summary>
     /// Checks if WhatsApp abandoned cart recovery is enabled for the tenant.
-    /// Returns true ONLY if there's an active, connected account with UseForAbandonedCartRecovery=true.
-    /// Phase: Smart Abandoned Cart Recovery Engine
+    /// Returns true when an enabled, connected account exists. Smart Cart Recovery
+    /// settings are the separate and sole feature-level opt-in.
     /// </summary>
     Task<bool> IsAbandonedCartRecoveryEnabledAsync(Guid tenantId, CancellationToken ct = default);
     

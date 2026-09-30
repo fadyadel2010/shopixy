@@ -1,8 +1,5 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.Core.DTOs.AbandonedCart;
@@ -15,13 +12,27 @@ using PointOfSale.Infrastructure.Consumers.AbandonedCart;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Jobs;
-using PointOfSale.Tests.Infrastructure;
+using PointOfSale.Infrastructure.Services;
 using AbandonedCartEntity = PointOfSale.Core.Entities.AbandonedCart;
 
 namespace PointOfSale.Tests.AbandonedCart;
 
 public sealed class AbandonedCartRecoveryCompletenessTests
 {
+    [Theory]
+    [InlineData("abandoned-cart-scanner", "abandoned-cart-native-dispatcher", true)]
+    [InlineData("abandoned-cart-scanner", "unrelated-job", false)]
+    [InlineData("abandoned-cart-native-dispatcher", "unrelated-job", false)]
+    public void RuntimeHealth_RequiresScannerAndNativeDispatcher(
+        string firstJobId,
+        string secondJobId,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            AbandonedCartRecoveryRuntimeHealthService.HasRequiredRecurringJobs([firstJobId, secondJobId]));
+    }
+
     [Fact]
     public async Task CartActivityConsumer_WhenGuestEventArrives_TracksSessionCartWithNullableCustomer()
     {
@@ -84,7 +95,7 @@ public sealed class AbandonedCartRecoveryCompletenessTests
     }
 
     [Fact]
-    public async Task Scanner_WhenGuestHasVerifiedPhone_PublishesRecoveryEventWithSessionContact()
+    public async Task Scanner_WhenGuestHasVerifiedPhone_PublishesIdentityOnlyRecoveryEvent()
     {
         var tenantId = Guid.NewGuid();
         var cart = CreateReadyGuestCart(
@@ -102,14 +113,10 @@ public sealed class AbandonedCartRecoveryCompletenessTests
         await scanner.ExecuteAsync();
 
         var trigger = Assert.Single(eventPublisher.Published.OfType<TriggerRecoveryEvent>());
+        Assert.Equal(AbandonedCartRecoveryStatus.Abandoned, cart.RecoveryStatus);
         Assert.Equal(tenantId, trigger.TenantId);
+        Assert.Equal(cart.Id, trigger.AbandonedCartId);
         Assert.Equal(cart.CartId, trigger.CartId);
-        Assert.Equal(cart.SessionId, trigger.SessionId);
-        Assert.Null(trigger.CustomerId);
-        Assert.Equal("+201000000000", trigger.PhoneNumber);
-        Assert.Null(trigger.Email);
-        Assert.Equal("phone", trigger.ContactChannel);
-        Assert.Equal($"https://recovery-store.example.test/recover-cart/token-{cart.CartId:N}", trigger.RecoveryLink);
     }
 
     [Fact]
@@ -134,69 +141,115 @@ public sealed class AbandonedCartRecoveryCompletenessTests
         Assert.Equal(AbandonedCartRecoveryStatus.Abandoned, cart.RecoveryStatus);
     }
 
+    [Fact]
+    public async Task Scanner_WhenCartActivityChangesBeforeClaim_DoesNotPublishStaleRecoveryEvent()
+    {
+        var tenantId = Guid.NewGuid();
+        var cart = CreateReadyGuestCart(tenantId, "+201000000000", phoneVerified: true);
+        var cartService = new FakeAbandonedCartService([cart], canClaimActiveCart: false);
+        var eventPublisher = new RecordingEventPublisher();
+
+        var scanner = CreateScanner(tenantId, cartService, eventPublisher);
+
+        await scanner.ExecuteAsync();
+
+        Assert.Empty(eventPublisher.Published.OfType<TriggerRecoveryEvent>());
+        Assert.Equal(AbandonedCartRecoveryStatus.Active, cart.RecoveryStatus);
+    }
+
+    [Fact]
+    public async Task OrderRecoveryConsumer_WhenOrderIsNotEcommerce_DoesNotCloseRecovery()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartService = new Mock<IAbandonedCartService>(MockBehavior.Strict);
+        await using var dbContext = CreateDbContext();
+        var consumer = new OrderRecoveryConsumer(
+            cartService.Object,
+            dbContext,
+            NullLogger<OrderRecoveryConsumer>.Instance);
+        var context = new Mock<ConsumeContext<OrderCreatedEvent>>();
+        context.SetupGet(value => value.Message).Returns(new OrderCreatedEvent
+        {
+            TenantId = tenantId,
+            OrderId = Guid.NewGuid(),
+            CartId = Guid.NewGuid(),
+            Source = OrderSource.POS
+        });
+        context.SetupGet(value => value.CancellationToken).Returns(CancellationToken.None);
+
+        await consumer.Consume(context.Object);
+
+        cartService.Verify(
+            service => service.MarkAsRecoveredAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RecoveryOrchestrationConsumer_WhenEventIsValid_PersistsNativeSchedule()
+    {
+        var tenantId = Guid.NewGuid();
+        var cart = CreateReadyGuestCart(tenantId, "+201000000000", phoneVerified: true);
+        cart.RecoveryStatus = AbandonedCartRecoveryStatus.Abandoned;
+        var scheduler = new Mock<IAbandonedCartRecoveryScheduler>(MockBehavior.Strict);
+        scheduler
+            .Setup(service => service.ScheduleAsync(
+                It.Is<TriggerRecoveryEvent>(message => message.TenantId == tenantId && message.CartId == cart.CartId),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var consumer = new RecoveryOrchestrationConsumer(
+            scheduler.Object,
+            NullLogger<RecoveryOrchestrationConsumer>.Instance);
+
+        await consumer.Consume(CreateRecoveryTriggerContext(cart));
+
+        scheduler.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RecoveryOrchestrationConsumer_WhenTenantIdentityIsMissing_DoesNotSchedule()
+    {
+        var cart = CreateReadyGuestCart(Guid.Empty, "+201000000000", phoneVerified: true);
+        var scheduler = new Mock<IAbandonedCartRecoveryScheduler>(MockBehavior.Strict);
+        var consumer = new RecoveryOrchestrationConsumer(
+            scheduler.Object,
+            NullLogger<RecoveryOrchestrationConsumer>.Instance);
+
+        await consumer.Consume(CreateRecoveryTriggerContext(cart));
+
+        scheduler.VerifyNoOtherCalls();
+    }
+
+    private static ConsumeContext<TriggerRecoveryEvent> CreateRecoveryTriggerContext(AbandonedCartEntity cart)
+    {
+        var context = new Mock<ConsumeContext<TriggerRecoveryEvent>>();
+        context.SetupGet(value => value.Message).Returns(new TriggerRecoveryEvent
+        {
+            TenantId = cart.TenantId,
+            AbandonedCartId = cart.Id,
+            CartId = cart.CartId
+        });
+        context.SetupGet(value => value.CancellationToken).Returns(CancellationToken.None);
+        return context.Object;
+    }
+
     private static AbandonedCartScannerJob CreateScanner(
         Guid tenantId,
         IAbandonedCartService cartService,
         IEventPublisher eventPublisher)
     {
-        var databaseRoot = SharedInMemoryDatabaseRoot.Instance;
-        var databaseName = $"AbandonedCartRecoveryCompleteness_{Guid.NewGuid():N}";
-        var dbContextOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName, databaseRoot)
-            .Options;
-
-        var services = new ServiceCollection();
-        services.AddScoped(_ => new ApplicationDbContext(dbContextOptions));
-        var serviceProvider = services.BuildServiceProvider();
-
-        using (var db = new ApplicationDbContext(dbContextOptions))
-        {
-            db.Tenants.Add(new Tenant
-            {
-                Id = tenantId,
-                Name = "Recovery Store",
-                Slug = "recovery-store",
-                StorefrontBaseUrl = "https://recovery-store.example.test",
-                CreatedAtUtc = DateTime.UtcNow
-            });
-            db.SaveChanges();
-        }
-
-        var settings = new TenantAutomationSettings
-        {
-            TenantId = tenantId,
-            EnableAbandonedRecovery = true,
-            FirstMessageDelayMinutes = 30,
-            SecondMessageDelayMinutes = 1440,
-            WorkingHoursFrom = new TimeSpan(9, 0, 0),
-            WorkingHoursTo = new TimeSpan(21, 0, 0)
-        };
-
         var eligibility = new Mock<IAbandonedCartEligibilityService>();
         eligibility
             .Setup(x => x.CanTriggerAbandonedRecoveryAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var settingsService = new Mock<ITenantAutomationSettingsService>();
-        settingsService
-            .Setup(x => x.GetSettingsAsync(tenantId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(settings);
-
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Storefront:UrlTemplate"] = "https://{slug}.example.test",
-                ["AbandonedCart:StorefrontUrlTemplate"] = "https://{slug}.example.test"
-            })
-            .Build();
-
         return new AbandonedCartScannerJob(
             cartService,
             eligibility.Object,
-            settingsService.Object,
             eventPublisher,
-            configuration,
-            serviceProvider,
             new CommerceReliabilityTelemetry(),
             NullLogger<AbandonedCartScannerJob>.Instance);
     }
@@ -237,10 +290,14 @@ public sealed class AbandonedCartRecoveryCompletenessTests
     private sealed class FakeAbandonedCartService : IAbandonedCartService
     {
         private readonly IReadOnlyList<AbandonedCartEntity> _readyCarts;
+        private readonly bool _canClaimActiveCart;
 
-        public FakeAbandonedCartService(IReadOnlyList<AbandonedCartEntity> readyCarts)
+        public FakeAbandonedCartService(
+            IReadOnlyList<AbandonedCartEntity> readyCarts,
+            bool canClaimActiveCart = true)
         {
             _readyCarts = readyCarts;
+            _canClaimActiveCart = canClaimActiveCart;
         }
 
         public Task UpsertCartActivityAsync(
@@ -258,12 +315,21 @@ public sealed class AbandonedCartRecoveryCompletenessTests
             }
         }
 
-        public Task MarkAsAbandonedAsync(Guid abandonedCartId, CancellationToken ct = default)
+        public Task<bool> TryMarkAsAbandonedAsync(
+            Guid abandonedCartId,
+            DateTime expectedLastActivityAtUtc,
+            CancellationToken ct = default)
         {
             var cart = _readyCarts.Single(c => c.Id == abandonedCartId);
+            if (!_canClaimActiveCart ||
+                cart.RecoveryStatus != AbandonedCartRecoveryStatus.Active ||
+                cart.LastActivityAtUtc != expectedLastActivityAtUtc)
+            {
+                return Task.FromResult(false);
+            }
             cart.RecoveryStatus = AbandonedCartRecoveryStatus.Abandoned;
             cart.AbandonedAtUtc = DateTime.UtcNow;
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         public Task<bool> TryMarkAsPendingAsync(Guid abandonedCartId, CancellationToken ct = default) =>
@@ -273,6 +339,9 @@ public sealed class AbandonedCartRecoveryCompletenessTests
             Task.FromResult(true);
 
         public Task RecordTriggerFailureAsync(Guid abandonedCartId, string errorMessage, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task ReleasePendingAsync(Guid abandonedCartId, CancellationToken ct = default) =>
             Task.CompletedTask;
 
         public Task<bool> MarkAsTriggeredAsync(Guid abandonedCartId, CancellationToken ct = default) =>

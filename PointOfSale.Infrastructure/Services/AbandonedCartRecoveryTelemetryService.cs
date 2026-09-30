@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using System.Linq;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 
@@ -39,6 +40,7 @@ public sealed class AbandonedCartRecoveryTelemetryService : IAbandonedCartRecove
 
         var idempotencyKey = BuildIdempotencyKey(command);
         var existingLog = await _dbContext.AbandonedCartRecoveryLogs
+            .IgnoreQueryFilters()
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 log => log.TenantId == command.TenantId && log.IdempotencyKey == idempotencyKey,
@@ -141,10 +143,14 @@ public sealed class AbandonedCartRecoveryTelemetryService : IAbandonedCartRecove
             .IgnoreQueryFilters()
             .AsNoTracking()
             .CountAsync(
-                cart => cart.TenantId == tenantId && cart.RecoveredAtUtc != null,
+                cart => cart.TenantId == tenantId &&
+                        cart.RecoveryStatus == AbandonedCartRecoveryStatus.Recovered &&
+                        cart.RecoveredAtUtc != null &&
+                        cart.RecoveredOrderId != null,
                 cancellationToken);
 
         var logProjection = await _dbContext.AbandonedCartRecoveryLogs
+            .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(log => log.TenantId == tenantId)
             .Select(log => new

@@ -13,6 +13,8 @@ public class AutomationSettingsResponse
     public int SecondMessageDelayMinutes { get; set; }
     public string WorkingHoursFrom { get; set; } = string.Empty; // HH:mm format
     public string WorkingHoursTo { get; set; } = string.Empty; // HH:mm format
+    public string TimeZoneId { get; set; } = "UTC";
+    public bool IsPersisted { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
@@ -51,9 +53,15 @@ public class AbandonedCartEligibilityResponse
 {
     public bool IsEligible { get; set; }
     public bool HasWhatsAppAccount { get; set; }
-    public bool WhatsAppAccountEnabledForRecovery { get; set; }
+    public bool WhatsAppAccountEnabled { get; set; }
     public bool WhatsAppAccountConnected { get; set; }
     public bool AutomationEnabled { get; set; }
+    public bool NativeSchedulerOperational { get; set; }
+    public bool NativeDispatcherOperational { get; set; }
+    public string? WhatsAppAccountStatus { get; set; }
+    public string? WhatsAppStatusReason { get; set; }
+    public string TimeZoneId { get; set; } = "UTC";
+    public string? IneligibilityCode { get; set; }
     public string? IneligibilityReason { get; set; }
     public DateTime CheckedAtUtc { get; set; }
 }
@@ -64,14 +72,16 @@ public class AbandonedCartEligibilityResponse
 public class AutomationApiErrorResponse
 {
     public string Error { get; set; } = string.Empty;
+    public string? Code { get; set; }
     public string? Details { get; set; }
     public string TraceId { get; set; } = string.Empty;
 
-    public static AutomationApiErrorResponse ValidationError(string message, string traceId)
+    public static AutomationApiErrorResponse ValidationError(string message, string traceId, string? code = null)
     {
         return new AutomationApiErrorResponse
         {
             Error = "Validation failed",
+            Code = code,
             Details = message,
             TraceId = traceId
         };
@@ -109,4 +119,3 @@ public class AbandonedCartStatsResponse
     public int Recovered { get; set; }
     public decimal RecoveryRate { get; set; }
 }
-

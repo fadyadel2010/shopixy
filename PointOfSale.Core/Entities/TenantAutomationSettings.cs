@@ -64,13 +64,11 @@ public class TenantAutomationSettings : TenantEntity
     /// WHY: Respect customer's time - don't message late at night.
     /// </summary>
     public TimeSpan WorkingHoursTo { get; set; } = new TimeSpan(21, 0, 0);
-    
+
     /// <summary>
-    /// HARDENING: API key for authenticating n8n webhook callbacks.
-    /// Auto-generated on first recovery trigger if null.
-    /// Used to validate POST /recovery-log requests.
+    /// Authoritative IANA time zone used for recovery sending windows.
     /// </summary>
-    public string? N8nWebhookApiKey { get; set; }
+    public string TimeZoneId { get; set; } = "UTC";
     
     /// <summary>
     /// When these settings were last updated.
@@ -86,4 +84,3 @@ public class TenantAutomationSettings : TenantEntity
     // Navigation
     public virtual Tenant Tenant { get; set; } = null!;
 }
-

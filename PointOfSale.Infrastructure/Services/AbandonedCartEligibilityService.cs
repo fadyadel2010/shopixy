@@ -20,16 +20,19 @@ namespace PointOfSale.Infrastructure.Services;
 public class AbandonedCartEligibilityService : IAbandonedCartEligibilityService
 {
     private readonly ITenantAutomationSettingsService _settingsService;
-    private readonly IWhatsAppFeatureGateService _featureGate;
+    private readonly IWhatsAppAccountService _accountService;
+    private readonly IAbandonedCartRecoveryRuntimeHealthService _runtimeHealthService;
     private readonly ILogger<AbandonedCartEligibilityService> _logger;
 
     public AbandonedCartEligibilityService(
         ITenantAutomationSettingsService settingsService,
-        IWhatsAppFeatureGateService featureGate,
+        IWhatsAppAccountService accountService,
+        IAbandonedCartRecoveryRuntimeHealthService runtimeHealthService,
         ILogger<AbandonedCartEligibilityService> logger)
     {
         _settingsService = settingsService;
-        _featureGate = featureGate;
+        _accountService = accountService;
+        _runtimeHealthService = runtimeHealthService;
         _logger = logger;
     }
 
@@ -39,41 +42,13 @@ public class AbandonedCartEligibilityService : IAbandonedCartEligibilityService
             "[Abandoned Cart Eligibility] Starting eligibility check | TenantId: {TenantId}",
             tenantId);
 
-        // RULE 1: Check if automation is enabled
-        var settings = await _settingsService.GetSettingsAsync(tenantId, ct);
-        if (!settings.EnableAbandonedRecovery)
-        {
-            _logger.LogInformation(
-                "[Abandoned Cart Eligibility] INELIGIBLE: Automation disabled | TenantId: {TenantId}",
-                tenantId);
-            return false;
-        }
-
-        // RULE 2: Check if WhatsApp account exists and is enabled for abandoned cart recovery
-        var isWhatsAppEnabled = await _featureGate.IsAbandonedCartRecoveryEnabledAsync(tenantId, ct);
-        if (!isWhatsAppEnabled)
-        {
-            _logger.LogInformation(
-                "[Abandoned Cart Eligibility] INELIGIBLE: No active WhatsApp account for abandoned cart recovery | TenantId: {TenantId}",
-                tenantId);
-            return false;
-        }
-
-        // RULE 3: Verify account is connected (already checked by feature gate, but explicit for clarity)
-        var account = await _featureGate.GetActiveAccountAsync(tenantId, WhatsAppUseCase.AbandonedCartRecovery, ct);
-        if (account == null || account.Status != WhatsAppAccountStatus.Connected)
-        {
-            _logger.LogInformation(
-                "[Abandoned Cart Eligibility] INELIGIBLE: WhatsApp account not connected | TenantId: {TenantId} | Status: {Status}",
-                tenantId, account?.Status.ToString() ?? "null");
-            return false;
-        }
-
+        var status = await GetEligibilityStatusAsync(tenantId, ct);
         _logger.LogInformation(
-            "[Abandoned Cart Eligibility] ELIGIBLE: All checks passed | TenantId: {TenantId}",
-            tenantId);
-
-        return true;
+            "[Abandoned Cart Eligibility] {Result} | TenantId: {TenantId} | Reason: {Reason}",
+            status.IsEligible ? "ELIGIBLE" : "INELIGIBLE",
+            tenantId,
+            status.IneligibilityCode ?? "none");
+        return status.IsEligible;
     }
 
     public async Task<AbandonedCartEligibilityStatus> GetEligibilityStatusAsync(Guid tenantId, CancellationToken ct = default)
@@ -83,46 +58,61 @@ public class AbandonedCartEligibilityService : IAbandonedCartEligibilityService
             CheckedAtUtc = DateTime.UtcNow
         };
 
-        // Check automation settings
         var settings = await _settingsService.GetSettingsAsync(tenantId, ct);
         status.AutomationEnabled = settings.EnableAbandonedRecovery;
 
-        if (!status.AutomationEnabled)
-        {
-            status.IsEligible = false;
-            status.IneligibilityReason = "Abandoned cart recovery is disabled in automation settings";
-            return status;
-        }
-
-        // Check WhatsApp account
-        var account = await _featureGate.GetActiveAccountAsync(tenantId, WhatsAppUseCase.AbandonedCartRecovery, ct);
+        var account = (await _accountService.GetAccountsAsync(tenantId, ct)).SingleOrDefault();
         status.HasWhatsAppAccount = account != null;
-        status.WhatsAppAccountEnabledForRecovery = account?.UseForAbandonedCartRecovery ?? false;
+        status.WhatsAppAccountEnabled = account?.Enabled ?? false;
         status.WhatsAppAccountConnected = account?.Status == WhatsAppAccountStatus.Connected;
+        status.WhatsAppAccountStatus = account?.Status.ToString();
+        status.WhatsAppStatusReason = account?.StatusReason;
+
+        status.TimeZoneId = settings.TimeZoneId;
+
+        var runtimeHealth = await _runtimeHealthService.GetHealthAsync(ct);
+        status.NativeSchedulerOperational = runtimeHealth.SchedulerOperational;
+        status.NativeDispatcherOperational = runtimeHealth.DispatcherOperational;
 
         if (!status.HasWhatsAppAccount)
         {
-            status.IsEligible = false;
-            status.IneligibilityReason = "No WhatsApp account configured";
-            return status;
+            SetIneligible(status, "whatsapp_not_configured", "No WhatsApp account configured");
         }
-
-        if (!status.WhatsAppAccountEnabledForRecovery)
+        else if (!status.WhatsAppAccountEnabled)
         {
-            status.IsEligible = false;
-            status.IneligibilityReason = "WhatsApp account is not enabled for abandoned cart recovery";
-            return status;
+            SetIneligible(status, "whatsapp_account_disabled", "WhatsApp account is disabled");
         }
-
-        if (!status.WhatsAppAccountConnected)
+        else if (!status.WhatsAppAccountConnected)
         {
-            status.IsEligible = false;
-            status.IneligibilityReason = $"WhatsApp account is not connected (Status: {account?.Status})";
-            return status;
+            SetIneligible(status, "whatsapp_disconnected", "WhatsApp account is not connected");
+        }
+        else if (!status.AutomationEnabled)
+        {
+            SetIneligible(status, "recovery_disabled", "Abandoned cart recovery is saved as disabled");
+        }
+        else if (!status.NativeSchedulerOperational)
+        {
+            SetIneligible(status, runtimeHealth.FailureCode ?? "native_scheduler_unavailable", runtimeHealth.FailureReason ?? "The native recovery scheduler is unavailable");
+        }
+        else if (!status.NativeDispatcherOperational)
+        {
+            SetIneligible(status, runtimeHealth.FailureCode ?? "native_dispatcher_unavailable", runtimeHealth.FailureReason ?? "The native WhatsApp dispatcher is unavailable");
+        }
+        else
+        {
+            status.IsEligible = true;
         }
 
-        // All checks passed
-        status.IsEligible = true;
         return status;
+    }
+
+    private static void SetIneligible(
+        AbandonedCartEligibilityStatus status,
+        string code,
+        string reason)
+    {
+        status.IsEligible = false;
+        status.IneligibilityCode = code;
+        status.IneligibilityReason = reason;
     }
 }

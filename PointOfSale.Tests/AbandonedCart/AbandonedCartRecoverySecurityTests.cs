@@ -19,6 +19,7 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Services;
+using PointOfSale.Tests.Infrastructure;
 using AbandonedCartEntity = PointOfSale.Core.Entities.AbandonedCart;
 
 namespace PointOfSale.Tests.AbandonedCart;
@@ -45,7 +46,7 @@ public sealed class AbandonedCartRecoverySecurityTests
         await using var context = CreateDbContext();
         var cart = await SeedRecoverableCartAsync(context);
         var service = CreateService(context);
-        var controller = CreateController(service);
+        var controller = CreateController(service, tenantId: cart.TenantId);
 
         var token = service.GenerateRecoveryToken(cart);
         var tamperedToken = token[..^1] + (token[^1] == 'A' ? "B" : "A");
@@ -63,7 +64,7 @@ public sealed class AbandonedCartRecoverySecurityTests
         await using var context = CreateDbContext();
         var cart = await SeedRecoverableCartAsync(context);
         var service = CreateService(context);
-        var controller = CreateController(service);
+        var controller = CreateController(service, tenantId: cart.TenantId);
 
         var token = service.GenerateRecoveryToken(cart);
         cart.SessionId = Guid.NewGuid().ToString();
@@ -82,7 +83,7 @@ public sealed class AbandonedCartRecoverySecurityTests
         await using var context = CreateDbContext();
         var cart = await SeedRecoverableCartAsync(context);
         var service = CreateService(context);
-        var controller = CreateController(service, CreateLiveCartService(cart));
+        var controller = CreateController(service, CreateLiveCartService(cart), cart.TenantId);
 
         var token = service.GenerateRecoveryToken(cart);
 
@@ -129,7 +130,7 @@ public sealed class AbandonedCartRecoverySecurityTests
         await using var context = CreateDbContext();
         var cart = await SeedRecoverableCartAsync(context);
         var service = CreateService(context);
-        var controller = CreateController(service);
+        var controller = CreateController(service, tenantId: cart.TenantId);
 
         var token = service.GenerateRecoveryToken(cart);
 
@@ -139,6 +140,21 @@ public sealed class AbandonedCartRecoverySecurityTests
         var payload = Assert.IsType<CartRecoveryErrorResponse>(badRequest.Value);
         Assert.Equal("Cart recovery data is invalid", payload.Error);
         Assert.Contains("could not safely restore", payload.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RecoverCart_WhenTokenBelongsToAnotherTenant_IsRejected()
+    {
+        await using var context = CreateDbContext();
+        var cart = await SeedRecoverableCartAsync(context);
+        var service = CreateService(context);
+        var controller = CreateController(service, tenantId: Guid.NewGuid());
+
+        var result = await controller.RecoverCart(service.GenerateRecoveryToken(cart), CancellationToken.None);
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        var payload = Assert.IsType<CartRecoveryErrorResponse>(notFound.Value);
+        Assert.Equal("Cart not found", payload.Error);
     }
 
     [Fact]
@@ -153,97 +169,6 @@ public sealed class AbandonedCartRecoverySecurityTests
         Assert.DoesNotContain("+", token, StringComparison.Ordinal);
         Assert.DoesNotContain("/", token, StringComparison.Ordinal);
         Assert.DoesNotContain("=", token, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task N8nRecoveryOrchestrator_SignsWebhookWithTenantSecretAndReplayHeaders()
-    {
-        var tenantId = Guid.NewGuid();
-        var abandonedCartId = Guid.NewGuid();
-        var cartId = Guid.NewGuid();
-        const string secret = "tenant-recovery-secret-with-enough-entropy";
-        using var handler = new CapturingHandler();
-        var orchestrator = CreateOrchestrator(handler, tenantId, secret);
-
-        var accepted = await orchestrator.TriggerRecoveryWorkflowAsync(
-            tenantId,
-            abandonedCartId,
-            cartId,
-            "session-1",
-            null,
-            "+201000000000",
-            null,
-            "phone",
-            "{\"items\":[]}",
-            60,
-            1440,
-            new TimeSpan(9, 0, 0),
-            new TimeSpan(21, 0, 0),
-            "Recovery Store",
-            "https://store.example.test",
-            "https://store.example.test/recover-cart/token",
-            CancellationToken.None);
-
-        Assert.True(accepted);
-        Assert.NotNull(handler.Request);
-        Assert.NotNull(handler.Body);
-        var request = handler.Request!;
-        var body = handler.Body!;
-
-        Assert.Equal("v1", Header(request, "X-Recovery-Signature-Version"));
-        Assert.Equal(tenantId.ToString("D"), Header(request, "X-Recovery-Tenant-Id"));
-        Assert.Equal(abandonedCartId.ToString("D"), Header(request, "X-Recovery-Abandoned-Cart-Id"));
-        Assert.Equal(cartId.ToString("D"), Header(request, "X-Recovery-Cart-Id"));
-        Assert.False(string.IsNullOrWhiteSpace(Header(request, "X-Recovery-Timestamp")));
-        Assert.False(string.IsNullOrWhiteSpace(Header(request, "X-Recovery-Nonce")));
-
-        var idempotencyKey = Header(request, "Idempotency-Key");
-        Assert.Equal($"recovery-trigger:{tenantId:D}:{abandonedCartId:D}:{cartId:D}", idempotencyKey);
-
-        var signatureBase = string.Join(
-            ".",
-            tenantId.ToString("D"),
-            abandonedCartId.ToString("D"),
-            cartId.ToString("D"),
-            Header(request, "X-Recovery-Timestamp"),
-            Header(request, "X-Recovery-Nonce"),
-            idempotencyKey,
-            body);
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var expectedSignature = "sha256=" + Convert.ToHexString(
-            hmac.ComputeHash(Encoding.UTF8.GetBytes(signatureBase))).ToLowerInvariant();
-
-        Assert.Equal(expectedSignature, Header(request, "X-Recovery-Signature"));
-    }
-
-    [Fact]
-    public async Task N8nRecoveryOrchestrator_WhenTenantSecretMissing_FailsClosedWithoutCallingWebhook()
-    {
-        var tenantId = Guid.NewGuid();
-        using var handler = new CapturingHandler();
-        var orchestrator = CreateOrchestrator(handler, tenantId, secret: null);
-
-        var accepted = await orchestrator.TriggerRecoveryWorkflowAsync(
-            tenantId,
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            "session-1",
-            null,
-            "+201000000000",
-            null,
-            "phone",
-            "{\"items\":[]}",
-            60,
-            1440,
-            new TimeSpan(9, 0, 0),
-            new TimeSpan(21, 0, 0),
-            "Recovery Store",
-            "https://store.example.test",
-            "https://store.example.test/recover-cart/token",
-            CancellationToken.None);
-
-        Assert.False(accepted);
-        Assert.Null(handler.Request);
     }
 
     [Fact]
@@ -267,13 +192,17 @@ public sealed class AbandonedCartRecoverySecurityTests
 
     private static StorefrontCartRecoveryController CreateController(
         IAbandonedCartService service,
-        ICartService? liveCartService = null)
+        ICartService? liveCartService = null,
+        Guid? tenantId = null)
     {
         liveCartService ??= CreateLiveCartService();
+        var tenantContext = new Mock<ITenantContext>();
+        tenantContext.SetupGet(context => context.TenantId).Returns(tenantId);
 
         return new StorefrontCartRecoveryController(
             service,
             liveCartService,
+            tenantContext.Object,
             new AbandonedCartRecoveryTelemetry(),
             new CommerceReliabilityTelemetry(),
             NullLogger<StorefrontCartRecoveryController>.Instance)
@@ -292,35 +221,6 @@ public sealed class AbandonedCartRecoverySecurityTests
             Mock.Of<ITenantAutomationSettingsService>(),
             new EphemeralDataProtectionProvider(),
             NullLogger<AbandonedCartService>.Instance);
-    }
-
-    private static N8nRecoveryOrchestrator CreateOrchestrator(
-        CapturingHandler handler,
-        Guid tenantId,
-        string? secret)
-    {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["AbandonedCart:N8nWebhookUrl"] = "https://n8n.example.test/webhook/recovery"
-            })
-            .Build();
-
-        var settings = new Mock<ITenantAutomationSettingsService>();
-        settings
-            .Setup(x => x.GetSettingsAsync(tenantId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TenantAutomationSettings
-            {
-                TenantId = tenantId,
-                EnableAbandonedRecovery = true,
-                N8nWebhookApiKey = secret
-            });
-
-        return new N8nRecoveryOrchestrator(
-            new CapturingHttpClientFactory(handler),
-            configuration,
-            settings.Object,
-            NullLogger<N8nRecoveryOrchestrator>.Instance);
     }
 
     private static async Task<AbandonedCartEntity> SeedRecoverableCartAsync(ApplicationDbContext context)
@@ -419,17 +319,11 @@ public sealed class AbandonedCartRecoverySecurityTests
         return new ApplicationDbContext(options);
     }
 
-    private static string Header(HttpRequestMessage request, string name)
-    {
-        Assert.True(request.Headers.TryGetValues(name, out var values), $"Missing header {name}");
-        return Assert.Single(values);
-    }
-
     private static string ApiPath(params string[] parts) =>
-        Path.GetFullPath(Path.Combine(new[] { AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.API" }.Concat(parts).ToArray()));
+        Path.Combine(new[] { TestConfiguration.GetSolutionRoot(), "PointOfSale.API" }.Concat(parts).ToArray());
 
     private static string InfrastructurePath(params string[] parts) =>
-        Path.GetFullPath(Path.Combine(new[] { AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Infrastructure" }.Concat(parts).ToArray()));
+        Path.Combine(new[] { TestConfiguration.GetSolutionRoot(), "PointOfSale.Infrastructure" }.Concat(parts).ToArray());
 
     private static ICartService CreateLiveCartService(AbandonedCartEntity? cart = null)
     {
@@ -473,33 +367,4 @@ public sealed class AbandonedCartRecoverySecurityTests
         return liveCartService.Object;
     }
 
-    private sealed class CapturingHttpClientFactory : IHttpClientFactory
-    {
-        private readonly HttpMessageHandler _handler;
-
-        public CapturingHttpClientFactory(HttpMessageHandler handler)
-        {
-            _handler = handler;
-        }
-
-        public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
-    }
-
-    private sealed class CapturingHandler : HttpMessageHandler
-    {
-        public HttpRequestMessage? Request { get; private set; }
-        public string? Body { get; private set; }
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            Request = request;
-            Body = request.Content == null
-                ? null
-                : await request.Content.ReadAsStringAsync(cancellationToken);
-
-            return new HttpResponseMessage(HttpStatusCode.Accepted);
-        }
-    }
 }

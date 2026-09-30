@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
@@ -8,6 +9,7 @@ using Moq;
 using PointOfSale.API.Controllers.Admin;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -24,6 +26,20 @@ public sealed class AbandonedCartRecoveryTelemetryTests : IDisposable
         // these database semantics, which can give false confidence.
         _connection = new SqliteConnection("Data Source=:memory:");
         _connection.Open();
+        _connection.CreateFunction<string?, string?>("btrim", value => value?.Trim());
+        _connection.CreateFunction<string?, string?, string?>(
+            "btrim",
+            (value, characters) => value?.Trim(characters?.ToCharArray() ?? []));
+        _connection.CreateFunction<string?, int>("char_length", value => value?.Length ?? 0);
+        _connection.CreateFunction<string?, string, string, string, string?>(
+            "regexp_replace",
+            (value, pattern, replacement, flags) => value == null
+                ? null
+                : Regex.Replace(
+                    value,
+                    pattern,
+                    replacement,
+                    flags.Contains('i') ? RegexOptions.IgnoreCase : RegexOptions.None));
 
         // Create the database schema once during test fixture setup
         using var context = CreateDbContext();
@@ -35,6 +51,15 @@ public sealed class AbandonedCartRecoveryTelemetryTests : IDisposable
     {
         var tenantId = Guid.NewGuid();
         await using var dbContext = CreateDbContext();
+        dbContext.Tenants.Add(new Tenant
+        {
+            Id = tenantId,
+            Name = "Recovery Store",
+            Slug = $"recovery-{tenantId:N}",
+            IsActive = true,
+            Status = TenantStatus.Active,
+            CreatedAtUtc = DateTime.UtcNow
+        });
 
         var firstCart = new AbandonedCart
         {
@@ -56,6 +81,8 @@ public sealed class AbandonedCartRecoveryTelemetryTests : IDisposable
             CartSnapshotJson = "{}",
             AbandonedAtUtc = DateTime.UtcNow.AddHours(-5),
             RecoveredAtUtc = DateTime.UtcNow.AddHours(-1),
+            RecoveredOrderId = Guid.NewGuid(),
+            RecoveryStatus = AbandonedCartRecoveryStatus.Recovered,
             CreatedAtUtc = DateTime.UtcNow.AddHours(-6),
             UpdatedAtUtc = DateTime.UtcNow.AddHours(-1)
         };
@@ -99,79 +126,67 @@ public sealed class AbandonedCartRecoveryTelemetryTests : IDisposable
     }
 
     [Fact]
-    public async Task LogRecoveryResult_RequiresApiKey_WhenAnonymous()
+    public async Task UpdateSettings_WhenNativeSchedulerIsUnavailable_FailsClosedWithStableCode()
     {
         var tenantId = Guid.NewGuid();
-        var settingsService = new Mock<ITenantAutomationSettingsService>();
-        settingsService
-            .Setup(service => service.GetSettingsAsync(tenantId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TenantAutomationSettings
+        var tenantContext = new Mock<ITenantContext>();
+        tenantContext.SetupGet(context => context.TenantId).Returns(tenantId);
+        tenantContext.SetupGet(context => context.RequiredTenantId).Returns(tenantId);
+
+        var settingsService = new Mock<ITenantAutomationSettingsService>(MockBehavior.Strict);
+        var eligibilityService = new Mock<IAbandonedCartEligibilityService>(MockBehavior.Strict);
+        eligibilityService
+            .Setup(service => service.GetEligibilityStatusAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AbandonedCartEligibilityStatus
             {
-                TenantId = tenantId,
-                N8nWebhookApiKey = "expected-key"
+                HasWhatsAppAccount = true,
+                WhatsAppAccountEnabled = true,
+                WhatsAppAccountConnected = true,
+                NativeSchedulerOperational = false,
+                NativeDispatcherOperational = true,
+                IneligibilityCode = "native_scheduler_unavailable",
+                IneligibilityReason = "No healthy native recovery worker is available"
             });
 
         var controller = CreateController(
             settingsService.Object,
-            Mock.Of<IAbandonedCartRecoveryTelemetryService>());
+            Mock.Of<IAbandonedCartRecoveryTelemetryService>(),
+            tenantContext.Object,
+            eligibilityService.Object);
 
-        var result = await controller.LogRecoveryResult(new AbandonedCartRecoveryLogRequest
+        var result = await controller.UpdateSettings(new UpdateAutomationSettingsRequest
         {
-            TenantId = tenantId,
-            AbandonedCartId = Guid.NewGuid(),
-            ApiKey = "wrong-key"
+            EnableAbandonedRecovery = true,
+            FirstMessageDelayMinutes = 60,
+            SecondMessageDelayMinutes = 1440,
+            WorkingHoursFrom = "09:00",
+            WorkingHoursTo = "21:00"
         }, CancellationToken.None);
 
-        var unauthorized = Assert.IsType<UnauthorizedObjectResult>(result);
-        var payload = Assert.IsType<AbandonedCartRecoveryLogResponse>(unauthorized.Value);
-        Assert.False(payload.Success);
-        Assert.Equal("Invalid API key", payload.Message);
-    }
-
-    [Fact]
-    public async Task LogRecoveryResult_ReturnsServerError_WhenPersistenceFails()
-    {
-        var tenantId = Guid.NewGuid();
-        var settingsService = new Mock<ITenantAutomationSettingsService>();
-        settingsService
-            .Setup(service => service.GetSettingsAsync(tenantId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TenantAutomationSettings
-            {
-                TenantId = tenantId,
-                N8nWebhookApiKey = "expected-key"
-            });
-
-        var telemetryService = new Mock<IAbandonedCartRecoveryTelemetryService>();
-        telemetryService
-            .Setup(service => service.RecordWorkflowResultAsync(It.IsAny<AbandonedCartRecoveryLogCommand>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("db write failed"));
-
-        var controller = CreateController(settingsService.Object, telemetryService.Object);
-
-        var result = await controller.LogRecoveryResult(new AbandonedCartRecoveryLogRequest
-        {
-            TenantId = tenantId,
-            AbandonedCartId = Guid.NewGuid(),
-            ApiKey = "expected-key"
-        }, CancellationToken.None);
-
-        var serverError = Assert.IsType<ObjectResult>(result);
-        Assert.Equal(StatusCodes.Status500InternalServerError, serverError.StatusCode);
-        var payload = Assert.IsType<AbandonedCartRecoveryLogResponse>(serverError.Value);
-        Assert.False(payload.Success);
-        Assert.Equal("Recovery log processing failed", payload.Message);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = Assert.IsType<AutomationApiErrorResponse>(badRequest.Value);
+        Assert.Equal("native_scheduler_unavailable", payload.Code);
+        Assert.Equal("No healthy native recovery worker is available", payload.Details);
+        settingsService.Verify(
+            service => service.UpdateSettingsAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<TenantAutomationSettings>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        eligibilityService.VerifyAll();
     }
 
     private static AdminAbandonedCartRecoveryController CreateController(
         ITenantAutomationSettingsService settingsService,
         IAbandonedCartRecoveryTelemetryService telemetryService,
-        ITenantContext? tenantContext = null)
+        ITenantContext? tenantContext = null,
+        IAbandonedCartEligibilityService? eligibilityService = null)
     {
         tenantContext ??= Mock.Of<ITenantContext>();
         return new AdminAbandonedCartRecoveryController(
             tenantContext,
             settingsService,
-            Mock.Of<IAbandonedCartEligibilityService>(),
+            eligibilityService ?? Mock.Of<IAbandonedCartEligibilityService>(),
             telemetryService,
             new AbandonedCartRecoveryTelemetry(),
             NullLogger<AdminAbandonedCartRecoveryController>.Instance)

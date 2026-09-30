@@ -1254,6 +1254,78 @@
     "cardAmount": "مبلغ البطاقة:",
     "optionalNotes": "ملاحظات اختيارية..."
   },
+  "abandonedCheckouts": {
+    "title": "عمليات الدفع المتروكة",
+    "subtitle": "تتبّع جلسات الدفع التي بدأت ولم تكتمل",
+    "totalSessions": "إجمالي الجلسات",
+    "abandoned": "متروكة",
+    "converted": "محوّلة",
+    "lostRevenue": "القيمة التقديرية المتروكة",
+    "estimatedValueHint": "قيمة لقطة السلة وليست إيراداً مفقوداً مؤكداً",
+    "refreshing": "جارٍ تحديث بيانات الدفع...",
+    "loading": "جارٍ تحميل جلسات الدفع",
+    "loadingDetails": "جارٍ تحميل تفاصيل الدفع",
+    "searchLabel": "البحث في جلسات الدفع",
+    "searchPlaceholder": "ابحث بالاسم أو الهاتف أو البريد الإلكتروني...",
+    "statusFilter": "حالة جلسة الدفع",
+    "empty": "لا توجد جلسات دفع",
+    "emptyHint": "ستظهر جلسات الدفع بعد أن يبدأ العميل عملية الدفع.",
+    "noMatches": "لا توجد جلسات تطابق البحث أو عامل التصفية",
+    "noMatchesHint": "امسح البحث أو اختر حالة أخرى لعرض جلسات أخرى.",
+    "cartTotal": "إجمالي السلة",
+    "device": "الجهاز",
+    "source": "المصدر",
+    "timeSpent": "الوقت المستغرق",
+    "lastActivity": "آخر نشاط",
+    "details": "تفاصيل عملية الدفع",
+    "checkoutInfo": "معلومات عملية الدفع",
+    "paymentMethod": "طريقة الدفع",
+    "recoveryLink": "رابط استعادة عملية الدفع",
+    "recoveryLinkHint": "يستعيد هذا الرابط عملية الدفع فقط، ولا يجعل الجلسة مؤهلة تلقائياً لاستعادة السلة الذكية ولا يرسل رسالة واتساب.",
+    "copied": "تم النسخ",
+    "started": "بدأت",
+    "duration": "مدة عملية الدفع",
+    "cartItems": "عناصر السلة ({{count}})",
+    "itemsUnavailable": "لا تتوفر لقطة لعناصر السلة لهذه الجلسة.",
+    "item": "عنصر",
+    "unknownItem": "عنصر غير معروف",
+    "unknownCustomer": "عميل غير معروف",
+    "itemQuantity": "×{{count}}",
+    "convertedOrder": "تم التحويل إلى الطلب رقم {{orderNumber}}",
+    "durationSeconds": "{{count}} ث",
+    "durationMinutesSeconds": "{{minutes}} د {{seconds}} ث",
+    "durationHoursMinutes": "{{hours}} س {{minutes}} د",
+    "pagination": "عرض {{from}} إلى {{to}} من {{total}}",
+    "statuses": {
+      "all": "الكل",
+      "abandoned": "متروكة",
+      "active": "نشطة",
+      "converted": "محوّلة",
+      "unknown": "غير معروفة"
+    },
+    "devices": {
+      "mobile": "هاتف محمول",
+      "desktop": "حاسوب مكتبي",
+      "tablet": "جهاز لوحي",
+      "unknown": "غير معروف"
+    },
+    "sources": {
+      "direct": "مباشر",
+      "storefront": "المتجر الإلكتروني",
+      "instagram": "إنستغرام",
+      "affiliate": "التسويق بالعمولة",
+      "googleads": "إعلانات جوجل",
+      "unknown": "غير معروف"
+    },
+    "errors": {
+      "list": "تعذر تحميل جلسات الدفع. هذه ليست نتيجة فارغة.",
+      "refresh": "فشل التحديث. لا تزال النتائج المحمّلة سابقاً معروضة.",
+      "stats": "تعذر تحميل إحصاءات جلسات الدفع.",
+      "detail": "تعذر تحميل تفاصيل عملية الدفع.",
+      "permission": "ليست لديك صلاحية لعرض عمليات الدفع المتروكة.",
+      "authentication": "انتهت جلستك. سجّل الدخول مجدداً للمتابعة."
+    }
+  },
   "common": {
     "search": "بحث",
     "searchPlaceholder": "بحث...",
@@ -1275,7 +1347,16 @@
     "total": "الإجمالي",
     "status": "الحالة",
     "description": "الوصف",
+    "customer": "العميل",
     "name": "الاسم",
+    "phone": "الهاتف",
+    "email": "البريد الإلكتروني",
+    "city": "المدينة",
+    "address": "العنوان",
+    "notes": "ملاحظات",
+    "timeline": "الخط الزمني",
+    "copy": "نسخ",
+    "notAvailable": "غير متاح",
     "code": "الرمز",
     "price": "السعر",
     "quantity": "الكمية",
@@ -3095,6 +3176,7 @@
     "companyProfile": "ملف الشركة",
     "taxAndCurrency": "الضريبة والعملة",
     "receiptSettings": "إعدادات الفاتورة",
+    "messaging": "الرسائل",
     "companyName": "اسم الشركة",
     "companyAddress": "عنوان الشركة",
     "companyPhone": "هاتف الشركة",
@@ -3110,7 +3192,37 @@
     "saveSettings": "حفظ الإعدادات",
     "settingsSaved": "تم حفظ الإعدادات بنجاح",
     "failedToLoadSettings": "فشل تحميل الإعدادات",
-    "failedToSaveSettings": "فشل حفظ الإعدادات"
+    "failedToSaveSettings": "فشل حفظ الإعدادات",
+    "defaultCountryTitle": "الدولة الافتراضية لأرقام الهاتف",
+    "defaultCountryDescription": "تُطبّع أرقام الهاتف المحلية باستخدام هذه الدولة قبل إرسال رسائل واتساب للمعاملات.",
+    "defaultCountryExampleIntro": "على سبيل المثال،",
+    "defaultCountryCountrylessExample": "يُطبّع إلى",
+    "defaultCountryUpdated": "تم تحديث الدولة الافتراضية",
+    "failedToUpdateDefaultCountry": "تعذر تحديث الدولة الافتراضية",
+    "selectCountry": "اختر دولة",
+    "configured": "تم الإعداد",
+    "example": "مثال",
+    "messagingInfoTitle": "رسائل المعاملات",
+    "messagingInfoDescription": "يُستخدم واتساب فقط لمسارات عمل المتجر المفعّلة الخاصة بالمعاملات.",
+    "messagingUseCaseOtp": "رموز التحقق من هاتف العميل عند إتمام الطلب",
+    "messagingUseCaseOrderConfirmation": "تأكيد الطلب بعد إنشائه واعتماده",
+    "messagingUseCaseShippingUpdates": "تحديثات حالة الشحن عند تفعيلها",
+    "goToWhatsAppSettings": "فتح إعدادات واتساب",
+    "countries": {
+      "egypt": "مصر",
+      "saudiArabia": "المملكة العربية السعودية",
+      "uae": "الإمارات العربية المتحدة",
+      "kuwait": "الكويت",
+      "qatar": "قطر",
+      "bahrain": "البحرين",
+      "oman": "عُمان",
+      "jordan": "الأردن",
+      "lebanon": "لبنان",
+      "unitedStates": "الولايات المتحدة",
+      "unitedKingdom": "المملكة المتحدة",
+      "germany": "ألمانيا",
+      "france": "فرنسا"
+    }
   },
   "databaseReset": {
     "title": "إعادة ضبط قاعدة البيانات",
@@ -5679,12 +5791,14 @@
       "otpVerification": "التحقق عبر رمز OTP",
       "fields": {
         "displayName": "الاسم المعروض",
+        "country": "الدولة",
         "phoneNumber": "رقم الهاتف"
       },
       "placeholders": {
         "displayName": "مثل: خط الأعمال الرئيسي",
-        "phoneNumber": "+20 1XX XXXX XXX"
+        "phoneNumber": "10X XXX XXXX"
       },
+      "phonePrefixHint": "تُضاف البادئة {{prefix}} تلقائيًا. يمكنك إدخال الرقم المحلي بصفر البداية أو بدونه.",
       "actions": {
         "addAccount": "إضافة حساب",
         "createAccount": "إنشاء حساب",
@@ -5754,8 +5868,10 @@
       "supportedVariables": "المتغيرات المدعومة: راجع الشريط الجانبي.",
       "livePreview": "معاينة مباشرة",
       "empty": "لا توجد قوالب معرفة بعد. سيتم استخدام القالب الافتراضي للنظام.",
+      "systemDefault": "القالب الافتراضي للنظام",
       "actions": {
         "create": "إنشاء",
+        "customize": "تخصيص القالب الافتراضي",
         "saveTemplate": "حفظ القالب",
         "editTemplate": "تعديل القالب",
         "newTemplate": "قالب {{type}} جديد"
@@ -5772,7 +5888,7 @@
         "contentRequired": "محتوى الرسالة مطلوب",
         "contentTooLong": "الرسالة طويلة جدًا (الحد الأقصى 1024 حرفًا)",
         "otpRequiresCode": "يجب أن تحتوي قوالب OTP على {{otp_code}}",
-        "orderRecommendedNumber": "يُفضَّل أن تحتوي قوالب الطلب على {{order_number}}"
+        "orderRecommendedNumber": "يجب أن يحتوي قالب الطلب على {{order_number}} و{{total}}"
       }
     },
     "safety": {
@@ -5868,6 +5984,8 @@
         "currency": "رمز العملة (مثل USD)",
         "itemsCount": "عدد العناصر في السلة",
         "storeName": "اسم متجرك",
+        "shippingAddress": "عنوان الشحن المعتمد",
+        "paymentStatus": "حالة الدفع المعتمدة",
         "otpCode": "كلمة المرور لمرة واحدة (لقوالب OTP فقط)"
       }
     },
@@ -5907,6 +6025,28 @@
         "timestamp": "الوقت",
         "retryCount": "(إعادة محاولة رقم {{count}})"
       }
+    },
+    "errors": {
+      "WHATSAPP_INVALID_PHONE": "أدخل رقم هاتف صالحًا للدولة المحددة.",
+      "WHATSAPP_ACCOUNT_EXISTS": "يوجد بالفعل حساب واتساب لهذا المتجر. احذفه قبل إنشاء حساب آخر.",
+      "WHATSAPP_PROVIDER_UNAVAILABLE": "خدمة واتساب غير متاحة مؤقتًا. حاول مرة أخرى.",
+      "WHATSAPP_CONNECTED_PHONE_MISMATCH": "تستخدم الجلسة المرتبطة رقم هاتف مختلفًا. افصلها ثم امسح رمز QR جديدًا.",
+      "WHATSAPP_TEMPLATE_INVALID": "تحقق من محتوى القالب والمتغيرات المطلوبة.",
+      "VALIDATION_ERROR": "تحقق من القيم المدخلة وحاول مرة أخرى.",
+      "fetchAccounts": "تعذر تحميل حسابات واتساب.",
+      "fetchAccount": "تعذر تحميل حساب واتساب.",
+      "fetchAccountStatus": "تعذر التحقق من حالة اتصال واتساب.",
+      "createAccount": "تعذر إنشاء حساب واتساب.",
+      "updateAccount": "تعذر تحديث حساب واتساب.",
+      "enableAccount": "تعذر تفعيل حساب واتساب.",
+      "disableAccount": "تعذر تعطيل حساب واتساب.",
+      "disconnectAccount": "تعذر فصل حساب واتساب.",
+      "deleteAccount": "تعذر حذف حساب واتساب.",
+      "generateQr": "تعذر إنشاء رمز QR.",
+      "fetchTemplates": "تعذر تحميل قوالب الرسائل.",
+      "createTemplate": "تعذر إنشاء قالب الرسالة.",
+      "updateTemplate": "تعذر تحديث قالب الرسالة.",
+      "deleteTemplate": "تعذر حذف قالب الرسالة."
     }
   },
   "languageSwitcher": {
@@ -6312,11 +6452,13 @@
   "AbandonedCartRecovery": {
     "messages": {
       "connectWhatsAppBeforeEnable": "يرجى ربط حساب واتساب قبل تفعيل هذه الميزة.",
-      "saveSuccess": "تم حفظ الإعدادات بنجاح!"
+      "saveSuccess": "تم حفظ إعدادات الاستعادة.",
+      "saveError": "تعذر حفظ إعدادات الاستعادة.",
+      "invalidWorkingHours": "يجب أن تختلف بداية نافذة الإرسال عن نهايتها."
     },
     "header": {
       "title": "استعادة السلة الذكية",
-      "subtitle": "استعد السلات المتروكة تلقائيًا عبر رسائل واتساب الذكية."
+      "subtitle": "إعداد ومراقبة الاستعادة الأصلية للسلات عبر واتساب."
     },
     "hero": {
       "badge": "محرك استعادة مدعوم بالذكاء الاصطناعي",
@@ -6342,18 +6484,50 @@
       }
     },
     "stats": {
+      "title": "إحصاءات الاستعادة",
       "abandonedCarts": "السلات المتروكة",
       "messagesSent": "الرسائل المرسلة",
       "recovered": "المستعاد",
       "recoveryRate": "معدل الاستعادة"
     },
     "connection": {
-      "requiredTitle": "حساب واتساب مطلوب",
+      "requiredTitle": "يلزم استكمال إعداد الاستعادة",
       "requiredPrefix": "لتفعيل الاستعادة الذكية للسلة، يجب أولًا ربط حساب واتساب. انتقل إلى ",
       "settingsLink": "إعدادات واتساب",
+      "enableLink": "فعّل الاستعادة بالأسفل",
       "requiredSuffix": " لإعداد حسابك.",
       "connectedTitle": "تم توصيل واتساب",
       "connectedDescription": "حساب واتساب الخاص بك {{name}} ({{phone}}) جاهز لإرسال رسائل الاستعادة."
+    },
+    "actions": {
+      "refresh": "تحديث"
+    },
+    "errors": {
+      "configurationTitle": "إعداد الاستعادة غير متاح",
+      "configurationDescription": "تعذر تحميل الإعدادات أو حالة الجاهزية. لم تُستبدل القيم الحالية بقيم افتراضية.",
+      "statsUnavailable": "إحصاءات الاستعادة غير متاحة مؤقتًا. لن تُعرض أصفار بديلة قد تكون مضللة."
+    },
+    "status": {
+      "title": "الجاهزية التشغيلية",
+      "timeZone": "تُفسر ساعات الإرسال وفق المنطقة الزمنية {{timeZone}}.",
+      "configurationSaved": "تم تحميل الإعداد المحفوظ",
+      "configurationNotSaved": "تم تحميل القيم الافتراضية ولم تُحفظ",
+      "accountEnabled": "الحساب مفعّل",
+      "accountConnected": "الحساب متصل",
+      "recoveryEnabled": "الاستعادة مفعلة",
+      "nativeRuntime": "العامل الداخلي يعمل",
+      "operational": "الاستعادة تعمل"
+    },
+    "readiness": {
+      "recovery_disabled": "الاستعادة محفوظة كمعطلة، ولن يبدأ أي مسار استعادة.",
+      "whatsapp_not_configured": "لا يوجد حساب واتساب مُعد لهذا المتجر.",
+      "whatsapp_account_disabled": "حساب واتساب الخاص بالمتجر معطل.",
+      "whatsapp_disconnected": "حساب واتساب غير متصل أو غير قابل للاستخدام حاليًا. افتح إعدادات واتساب لإعادة الربط إذا أُلغي اقتران الجلسة.",
+      "native_recovery_disabled": "الإرسال الداخلي لاستعادة السلات معطل في إعدادات التطبيق.",
+      "native_database_unavailable": "قاعدة بيانات الاستعادة الداخلية غير متاحة.",
+      "native_scheduler_unavailable": "لا يوجد عامل داخلي سليم لمعالجة الاستعادة. تظل الاستعادة متوقفة.",
+      "native_dispatcher_unavailable": "مرسل واتساب الخاضع للتدقيق غير متاح. تظل الاستعادة متوقفة.",
+      "unavailable": "تعذر التحقق من جاهزية الاستعادة. تظل الاستعادة مغلقة عند الفشل."
     },
     "settings": {
       "title": "إعدادات الاستعادة",
@@ -6361,15 +6535,29 @@
       "enableTitle": "تفعيل الاستعادة الذكية للسلة",
       "enableDescription": "عند التفعيل، سيتلقى العملاء الذين يتركون سلتهم رسائل استعادة عبر واتساب.",
       "firstMessageDelay": "تأخير الرسالة الأولى",
-      "firstMessageHelp": "المدة التي يجب انتظارها بعد ترك السلة قبل إرسال الرسالة الأولى.",
+      "firstMessageHelp": "حد الخمول المحسوب من آخر نشاط موثق للسلة، ولا يجوز لمسار العمل إضافة هذا التأخير مرة أخرى.",
       "secondMessageDelay": "تأخير الرسالة الثانية",
       "secondMessageHelp": "المدة التي يجب انتظارها بعد الرسالة الأولى قبل إرسال متابعة.",
       "workingHoursLabel": "ساعات العمل (لا تُرسل الرسائل إلا خلال هذه الفترة)",
-      "workingHoursHelp": "لن تُرسل الرسائل إلا خلال هذه الساعات احترامًا لوقت العملاء.",
+      "workingHoursHelp": "لا يجوز إرسال أي من الرسالتين خارج هذه النافذة وفق {{timeZone}}.",
+      "scheduleSummary": "بعد {{first}} دون نشاط في السلة تصبح الرسالة الأولى مستحقة داخل {{from}}-{{to}} بتوقيت {{timeZone}}. تأخير الرسالة الثانية هو {{second}} بعد إرسال الرسالة الأولى فعليًا.",
       "from": "من",
       "to": "إلى",
       "save": "حفظ الإعدادات",
-      "saving": "جارٍ الحفظ..."
+      "saving": "جارٍ الحفظ...",
+      "unsaved": "تغييرات غير محفوظة",
+      "saved": "لا توجد تغييرات غير محفوظة"
+    },
+    "duration": {
+      "30": "30 دقيقة",
+      "60": "ساعة واحدة",
+      "120": "ساعتان",
+      "180": "3 ساعات",
+      "360": "6 ساعات",
+      "720": "12 ساعة",
+      "1440": "24 ساعة",
+      "2880": "48 ساعة",
+      "4320": "72 ساعة"
     },
     "options": {
       "30Minutes": "30 دقيقة",

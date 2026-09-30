@@ -168,9 +168,6 @@ export function setSessionId(sessionId: string): void {
 
     memorySessionIds.set(getSessionStorageKey(), normalizedSessionId);
 
-    if (import.meta.env.DEV) {
-        console.log('[SessionManager] Session overridden from recovery link:', normalizedSessionId.substring(0, 8) + '...');
-    }
 }
 
 /**

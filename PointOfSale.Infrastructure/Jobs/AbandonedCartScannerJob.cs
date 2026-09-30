@@ -1,13 +1,9 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events.AbandonedCart;
 using PointOfSale.Core.Interfaces;
-using PointOfSale.Core.Tenancy;
-using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
-using Microsoft.EntityFrameworkCore;
 
 namespace PointOfSale.Infrastructure.Jobs;
 
@@ -21,7 +17,7 @@ namespace PointOfSale.Infrastructure.Jobs;
 /// - Find carts idle beyond FirstMessageDelayMinutes
 /// - Check tenant eligibility
 /// - Mark carts as abandoned
-/// - Emit TriggerRecoveryEvent
+/// - Emit a durable discovery event for native scheduling
 /// 
 /// IDEMPOTENCY:
 /// - Only processes carts with RecoveryStatus = Active
@@ -36,29 +32,20 @@ public class AbandonedCartScannerJob
 {
     private readonly IAbandonedCartService _cartService;
     private readonly IAbandonedCartEligibilityService _eligibilityService;
-    private readonly ITenantAutomationSettingsService _settingsService;
     private readonly IEventPublisher _eventPublisher;
-    private readonly IConfiguration _configuration;
-    private readonly IServiceProvider _serviceProvider;
     private readonly CommerceReliabilityTelemetry _telemetry;
     private readonly ILogger<AbandonedCartScannerJob> _logger;
 
     public AbandonedCartScannerJob(
         IAbandonedCartService cartService,
         IAbandonedCartEligibilityService eligibilityService,
-        ITenantAutomationSettingsService settingsService,
         IEventPublisher eventPublisher,
-        IConfiguration configuration,
-        IServiceProvider serviceProvider,
         CommerceReliabilityTelemetry telemetry,
         ILogger<AbandonedCartScannerJob> logger)
     {
         _cartService = cartService;
         _eligibilityService = eligibilityService;
-        _settingsService = settingsService;
         _eventPublisher = eventPublisher;
-        _configuration = configuration;
-        _serviceProvider = serviceProvider;
         _telemetry = telemetry;
         _logger = logger;
     }
@@ -103,7 +90,10 @@ public class AbandonedCartScannerJob
                     var contact = DetermineRecoveryContact(cart);
                     if (contact == null)
                     {
-                        await _cartService.MarkAsAbandonedAsync(cart.Id, ct);
+                        if (cart.RecoveryStatus == AbandonedCartRecoveryStatus.Active)
+                        {
+                            await _cartService.TryMarkAsAbandonedAsync(cart.Id, cart.LastActivityAtUtc, ct);
+                        }
 
                         _logger.LogInformation(
                             "[Abandoned Cart Scanner] Recovery skipped - no verified contact | TenantId: {TenantId} | CartId: {CartId} | SessionId: {SessionId} | CustomerId: {CustomerId} | CorrelationId: {CorrelationId}",
@@ -119,35 +109,25 @@ public class AbandonedCartScannerJob
                         continue;
                     }
 
-                    // Get tenant settings for recovery parameters
-                    var settings = await _settingsService.GetSettingsAsync(cart.TenantId, ct);
+                    if (cart.RecoveryStatus == AbandonedCartRecoveryStatus.Active &&
+                        !await _cartService.TryMarkAsAbandonedAsync(cart.Id, cart.LastActivityAtUtc, ct))
+                    {
+                        _logger.LogInformation(
+                            "[Abandoned Cart Scanner] Cart activity changed before claim; skipping stale candidate | TenantId: {TenantId} | CartId: {CartId} | CorrelationId: {CorrelationId}",
+                            cart.TenantId,
+                            cart.CartId,
+                            scanCorrelationId);
+                        skippedCount++;
+                        continue;
+                    }
 
-                    var storefrontContext = await ResolveStorefrontContextAsync(cart.TenantId, ct);
-                    var storeName = storefrontContext.StoreName;
-                    var storefrontBaseUrl = storefrontContext.StorefrontBaseUrl;
-
-                    var recoveryToken = _cartService.GenerateRecoveryToken(cart);
-                    var recoveryLink = $"{storefrontBaseUrl}/recover-cart/{Uri.EscapeDataString(recoveryToken)}";
-
-                    // Emit trigger event
+                    // Emit only schedule-selection identity. Current settings, account,
+                    // cart, template, recipient, and recovery URL are rebuilt at dispatch.
                     var triggerEvent = new TriggerRecoveryEvent
                     {
                         TenantId = cart.TenantId,
                         AbandonedCartId = cart.Id,
                         CartId = cart.CartId,
-                        SessionId = cart.SessionId,
-                        CustomerId = cart.CustomerId,
-                        PhoneNumber = contact.Channel == "phone" ? contact.Value : null,
-                        Email = contact.Channel == "email" ? contact.Value : null,
-                        ContactChannel = contact.Channel,
-                        CartSnapshotJson = cart.CartSnapshotJson,
-                        FirstMessageDelayMinutes = settings.FirstMessageDelayMinutes,
-                        SecondMessageDelayMinutes = settings.SecondMessageDelayMinutes,
-                        WorkingHoursFrom = settings.WorkingHoursFrom,
-                        WorkingHoursTo = settings.WorkingHoursTo,
-                        StoreName = storeName,
-                        StorefrontBaseUrl = storefrontBaseUrl,
-                        RecoveryLink = recoveryLink,
                         CorrelationId = scanCorrelationId
                     };
 
@@ -170,9 +150,6 @@ public class AbandonedCartScannerJob
                         cart.TenantId,
                         cart.CartId,
                         scanCorrelationId);
-
-                    // Mark as abandoned AFTER successful publish to ensure cart remains retryable on transient failures
-                    await _cartService.MarkAsAbandonedAsync(cart.Id, ct);
 
                     triggeredCount++;
                     processedCount++;
@@ -222,67 +199,8 @@ public class AbandonedCartScannerJob
             return new RecoveryContact("phone", cart.PhoneNumber);
         }
 
-        if (cart.EmailVerified && !string.IsNullOrWhiteSpace(cart.Email))
-        {
-            return new RecoveryContact("email", cart.Email);
-        }
-
         return null;
     }
 
-    private async Task<StorefrontContext> ResolveStorefrontContextAsync(Guid tenantId, CancellationToken ct)
-    {
-        using var scope = _serviceProvider.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        var tenant = await dbContext.Tenants
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Select(t => new TenantStorefrontIdentity(
-                t.Id,
-                t.Name,
-                t.Slug,
-                t.StorefrontBaseUrl))
-            .FirstOrDefaultAsync(t => t.Id == tenantId, ct);
-
-        if (tenant is null)
-        {
-            throw new InvalidOperationException(
-                $"Cannot publish abandoned-cart recovery event because tenant {tenantId} was not found.");
-        }
-
-        var storeName = await dbContext.StoreConfigs
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(s => s.TenantId == tenantId && !string.IsNullOrWhiteSpace(s.StoreName))
-            .Select(s => s.StoreName)
-            .FirstOrDefaultAsync(ct);
-
-        if (string.IsNullOrWhiteSpace(storeName))
-        {
-            storeName = tenant.Name;
-        }
-
-        if (string.IsNullOrWhiteSpace(storeName))
-        {
-            throw new InvalidOperationException(
-                $"Cannot publish abandoned-cart recovery event because tenant {tenantId} has no store name.");
-        }
-
-        return new StorefrontContext(
-            storeName,
-            ResolveStorefrontBaseUrl(tenant));
-    }
-
-    private string ResolveStorefrontBaseUrl(TenantStorefrontIdentity tenant)
-    {
-        return StorefrontUrlAuthority.ResolveOrigin(
-            tenant.StorefrontBaseUrl,
-            tenant.Slug,
-            _configuration["Storefront:UrlTemplate"]);
-    }
-
-    private sealed record StorefrontContext(string StoreName, string StorefrontBaseUrl);
-    private sealed record TenantStorefrontIdentity(Guid Id, string Name, string? Slug, string? StorefrontBaseUrl);
     private sealed record RecoveryContact(string Channel, string Value);
 }

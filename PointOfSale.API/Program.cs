@@ -39,6 +39,7 @@ using PointOfSale.Infrastructure.EventBus;
 using PointOfSale.Infrastructure.MongoDB;
 using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Notifications;
+using PointOfSale.Infrastructure.Observability;
 using PointOfSale.Infrastructure.Redis;
 using PointOfSale.Infrastructure.Elasticsearch;
 using PointOfSale.Infrastructure.Configuration;
@@ -342,11 +343,14 @@ builder.Services.AddScoped<DomainAuthorityCacheInvalidationState>();
 builder.Services.AddScoped<DomainAuthorityCacheInvalidationInterceptor>();
 builder.Services.AddScoped<DomainAuthorityTransactionInvalidationInterceptor>();
 builder.Services.AddScoped<PointOfSale.Infrastructure.Observability.SlowQueryLoggingInterceptor>();
+builder.Services.AddNpgsqlDiagnostics(builder.Configuration);
 builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
     options.UseNpgsql(defaultConnectionString);
     options.AddInterceptors(
         sp.GetRequiredService<PointOfSale.Infrastructure.Observability.SlowQueryLoggingInterceptor>(),
+        sp.GetRequiredService<NpgsqlLifecycleDiagnosticInterceptor>(),
+        sp.GetRequiredService<NpgsqlConnectionLifecycleDiagnosticInterceptor>(),
         sp.GetRequiredService<TenantSaveChangesInterceptor>(),
         sp.GetRequiredService<PaymentStatusSaveChangesInterceptor>(),
         sp.GetRequiredService<OrderStatusSaveChangesInterceptor>(),
@@ -1567,6 +1571,8 @@ builder.Services.AddScoped<PointOfSale.Infrastructure.WhatsApp.Jobs.WhatsAppSess
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.ITenantAutomationSettingsService, PointOfSale.Infrastructure.Services.TenantAutomationSettingsService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.IAbandonedCartEligibilityService, PointOfSale.Infrastructure.Services.AbandonedCartEligibilityService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.IAbandonedCartRecoveryTelemetryService, PointOfSale.Infrastructure.Services.AbandonedCartRecoveryTelemetryService>();
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IAbandonedCartRecoveryRuntimeHealthService, PointOfSale.Infrastructure.Services.AbandonedCartRecoveryRuntimeHealthService>();
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IAbandonedCartRecoveryScheduler, PointOfSale.Infrastructure.Services.NativeAbandonedCartRecoveryScheduler>();
 
 // Abandoned Cart Service: Core cart tracking and state management
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.IAbandonedCartService, PointOfSale.Infrastructure.Services.AbandonedCartService>();
@@ -1584,6 +1590,7 @@ builder.Services.AddScoped<PointOfSale.Core.Interfaces.Geographic.IGeographicSyn
 
 // Abandoned Cart Scanner Job: Background job that finds and triggers recovery for abandoned carts
 builder.Services.AddScoped<PointOfSale.Infrastructure.Jobs.AbandonedCartScannerJob>();
+builder.Services.AddScoped<PointOfSale.Infrastructure.Jobs.AbandonedCartRecoveryDispatchJob>();
 builder.Services.AddScoped<PointOfSale.Infrastructure.Jobs.AbandonedCartCleanupJob>();
 
 // =============================================================================
@@ -1597,14 +1604,8 @@ builder.Services.AddScoped<PointOfSale.Infrastructure.Jobs.AbandonedCheckoutScan
 // P2-13: ProcessedTrustEvents cleanup job (scheduled via Hangfire)
 builder.Services.AddScoped<PointOfSale.Infrastructure.Jobs.ProcessedTrustEventsCleanupJob>();
 
-// Recovery Orchestrator: Calls n8n webhook to trigger recovery workflow
-builder.Services.AddScoped<PointOfSale.Core.Interfaces.IRecoveryOrchestrator, PointOfSale.Infrastructure.Services.N8nRecoveryOrchestrator>();
-
 // WhatsApp Rate Limiting: Prevents spam and handles opt-out
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.IWhatsAppRateLimitService, PointOfSale.Infrastructure.Services.WhatsAppRateLimitService>();
-
-// HttpClient for n8n webhook calls
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("N8nRecovery"), TimeSpan.FromSeconds(10), enableRetry: false);
 
 
 // =============================================================================
@@ -2203,7 +2204,7 @@ builder.Services.AddMassTransit(x =>
     // =============================================================================
     // CartActivityConsumer: Tracks cart activity for abandonment detection
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.AbandonedCart.CartActivityConsumer>();
-    // RecoveryOrchestrationConsumer: Calls n8n webhook to trigger recovery workflow
+    // RecoveryOrchestrationConsumer: Persists the native durable recovery schedule
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.AbandonedCart.RecoveryOrchestrationConsumer>();
     // OrderRecoveryConsumer: Marks abandoned carts as recovered when orders complete
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.AbandonedCart.OrderRecoveryConsumer, PointOfSale.Infrastructure.Consumers.AbandonedCart.OrderRecoveryConsumerDefinition>();
@@ -2376,6 +2377,7 @@ builder.Services.AddOpenTelemetry()
             .AddMeter(PointOfSale.API.Instrumentation.SuperAdminPayoutOrchestrationTelemetry.MeterName)
             .AddMeter(PointOfSale.API.Instrumentation.CommerceHubPaymentOrchestrationTelemetry.MeterName)
             .AddMeter(PointOfSale.API.Instrumentation.ManualPaymentOperationalTelemetry.MeterName)
+            .AddMeter(NpgsqlDiagnosticsTelemetry.MeterName)
             .AddAspNetCoreInstrumentation()
             .AddPrometheusExporter();
         
@@ -2397,6 +2399,8 @@ builder.Services.AddOpenTelemetry()
                     serviceName: "PointOfSale.API",
                     serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0"))
             .AddSource(PointOfSale.Infrastructure.Analytics.Delivery.ProviderDeliveryTelemetry.ActivitySourceName)
+            .AddSource("PointOfSale.Npgsql.Diagnostics")
+            .AddSource(RequestLifecycleDiagnosticMiddleware.ActivitySourceName)
             .AddAspNetCoreInstrumentation();
 
         var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
@@ -3609,6 +3613,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseMiddleware<PointOfSale.API.Middleware.CorrelationIdMiddleware>();
+app.UseMiddleware<RequestLifecycleDiagnosticMiddleware>();
 app.UseMiddleware<PointOfSale.API.Middleware.StorefrontHttpCachePolicyMiddleware>();
 app.UseMiddleware<PointOfSale.API.SuperAdmin.Infrastructure.SuperAdminRequestLoggingMiddleware>();
 
