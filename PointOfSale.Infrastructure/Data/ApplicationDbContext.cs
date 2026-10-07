@@ -51,6 +51,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<ProductMedia> ProductMedia => Set<ProductMedia>();
+    public DbSet<HomepageMediaAsset> HomepageMediaAssets => Set<HomepageMediaAsset>();
     public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
     public DbSet<ProductVariantStock> ProductVariantStocks => Set<ProductVariantStock>();
     public DbSet<ProductVariantAttribute> ProductVariantAttributes => Set<ProductVariantAttribute>();
@@ -603,6 +604,7 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<ProductMedia>().HasQueryFilter(e =>
             e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<HomepageMediaAsset>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
             
         modelBuilder.Entity<Warehouse>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
@@ -1490,6 +1492,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Slug).HasMaxLength(63);
             entity.Property(e => e.ContactEmail).HasMaxLength(255);
             entity.Property(e => e.Country).HasMaxLength(2);
+            entity.Property(e => e.UseBaileys).HasDefaultValue(true);
             entity.Property(e => e.Currency)
                 .HasMaxLength(3)
                 .IsRequired()

@@ -162,6 +162,24 @@ beforeEach(() => {
 });
 
 describe('browser runtime cache recovery', () => {
+    it('keeps authenticated draft chrome authoritative inside the isolated preview even on forced refresh and locale changes', async () => {
+        const config = createStoreConfig('Draft');
+        config.previewChrome = {
+            runtimeUrl: 'https://store.example.test/draft-preview.html',
+            navigation: createNavigation('Draft header'),
+            footerByLanguage: { en: createFooter('Draft footer'), ar: createFooter('تذييل المسودة') },
+        };
+        useStoreConfigStore.getState().setConfig(config);
+        await useNavigationStore.getState().refreshNavigation();
+        await useFooterStore.getState().refreshFooter();
+        expect(useNavigationStore.getState().navigation).toEqual(config.previewChrome.navigation);
+        expect(useFooterStore.getState().footer).toEqual(config.previewChrome.footerByLanguage.en);
+        mocks.languageStore.setState({ language: 'ar' });
+        await useFooterStore.getState().refreshFooter();
+        expect(useFooterStore.getState().footer).toEqual(config.previewChrome.footerByLanguage.ar);
+        expect(mocks.fetchNavigation).not.toHaveBeenCalled();
+        expect(mocks.fetchStorefrontFooter).not.toHaveBeenCalled();
+    });
     it('bounds successful entries with a lazy max-age policy and no timer', () => {
         const loadedAt = 1_000;
 
@@ -245,6 +263,22 @@ describe('browser runtime cache recovery', () => {
 
         expect(mocks.fetchNavigation).toHaveBeenCalledTimes(2);
         expect(useNavigationStore.getState().navigation?.header.links[0].label).toBe('New');
+    });
+
+    it('clears the previous tenant announcement while the next tenant navigation loads', async () => {
+        const navigation = createNavigation('Tenant A');
+        navigation.header.announcement = { enabled: true, text: 'Tenant A sale', textAr: '', link: '/products', backgroundColor: '', textColor: '' };
+        mocks.fetchNavigation.mockResolvedValueOnce(navigation);
+        await useNavigationStore.getState().loadNavigation();
+        setResolvedTenant('33333333-3333-4333-8333-333333333333', { overwrite: true });
+        let finish!: (value: Navigation) => void;
+        mocks.fetchNavigation.mockReturnValueOnce(new Promise<Navigation>(resolve => { finish = resolve; }));
+        const pending = useNavigationStore.getState().loadNavigation();
+        expect(useNavigationStore.getState().navigation).toBeNull();
+        finish(createNavigation('Tenant B'));
+        await pending;
+        expect(useNavigationStore.getState().navigation?.header.announcement).toBeUndefined();
+        expect(useNavigationStore.getState().navigation?.header.links[0].label).toBe('Tenant B');
     });
 
     it('deduplicates concurrent Navigation force refreshes', async () => {

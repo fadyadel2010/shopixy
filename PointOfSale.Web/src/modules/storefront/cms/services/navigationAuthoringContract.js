@@ -118,6 +118,7 @@ const admitConfig = (candidate, field, validationWarnings) => {
     }
 
     return {
+        ...(candidate.announcement != null ? { announcement: { ...candidate.announcement } } : {}),
         header: requireArray(candidate.header, `${field}.header`).map((link, index) => admitLink(link, field, 'header', index, validationWarnings)),
         footer: requireArray(candidate.footer, `${field}.footer`).map((link, index) => admitLink(link, field, 'footer', index, validationWarnings)),
     }
@@ -265,6 +266,7 @@ export function mapNavigationDraftToRequest(snapshot) {
     const admitted = admitNavigationSnapshot(snapshot)
     return {
         rowVersion: admitted.rowVersion,
+        ...(admitted.draft.announcement != null ? { announcement: admitted.draft.announcement } : {}),
         header: admitted.draft.header.map((link, index) => mapLinkToRequest(link, 'header', index)),
         footer: admitted.draft.footer.map((link, index) => mapLinkToRequest(link, 'footer', index)),
     }

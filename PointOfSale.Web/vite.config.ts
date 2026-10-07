@@ -11,7 +11,7 @@ const adminCsp = [
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
   "connect-src 'self' https: ws: wss:",
-  "frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://www.facebook.com https://accounts.google.com https://*.google.com",
+  "frame-src 'self' https: http://*.localhost:5174",
   "object-src 'none'",
   "base-uri 'self'",
   "frame-ancestors 'none'",

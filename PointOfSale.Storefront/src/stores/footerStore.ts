@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { useStoreConfigStore } from '@/store/storeConfigStore';
+import { useLanguageStore } from '@/i18n/languageStore';
 import { fetchStorefrontFooter } from '@/services/api/storefrontApi';
 import {
     getRuntimeCacheIdentity,
@@ -43,6 +45,11 @@ export const useFooterStore = create<FooterState>((set, get) => ({
     loadedAt: null,
 
     loadFooter: async (options = {}) => {
+        const preview = useStoreConfigStore.getState();
+        if (preview.configSource === 'preview' && preview.config.previewChrome) {
+            set({ footer: preview.config.previewChrome.footerByLanguage[useLanguageStore.getState().language], loading: false, error: null });
+            return;
+        }
         const identity = getRuntimeCacheIdentity('footer', { includeLanguage: true });
         const state = get();
 

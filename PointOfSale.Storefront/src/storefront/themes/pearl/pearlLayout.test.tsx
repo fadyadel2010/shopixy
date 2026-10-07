@@ -95,9 +95,9 @@ describe('Pearl layout — Header rendering contract', () => {
         expect(headerSrc).toContain('AnnouncementMarquee');
     });
 
-    it('is transparent over hero and becomes elevated on scroll (sticky convention)', () => {
+    it('keeps white header controls legible on the normal-flow canvas and elevates on scroll', () => {
         expect(headerSrc).toContain('sticky top-0');
-        expect(headerSrc).toContain('bg-transparent');
+        expect(headerSrc).toContain("'bg-[#141218]'");
         expect(headerSrc).toContain('useScrollPosition');
     });
 

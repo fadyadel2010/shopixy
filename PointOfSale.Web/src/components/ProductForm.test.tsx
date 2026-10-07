@@ -50,7 +50,11 @@ vi.mock('../contexts/SettingsContext', () => ({
 }))
 
 vi.mock('../components/ProductMediaManager', () => ({
-    default: () => <div>Product media</div>,
+    default: ({ onMediaChanged }: { onMediaChanged?: (headers: Record<string, string>) => void }) => <div>
+        Product media
+        <button type="button" onClick={() => onMediaChanged?.({ 'x-product-previous-version': '7', 'x-product-version': '8' })}>Own media mutation</button>
+        <button type="button" onClick={() => onMediaChanged?.({ 'x-product-previous-version': '9', 'x-product-version': '10' })}>Concurrent media mutation</button>
+    </div>,
 }))
 
 vi.mock('../components/ProductVariantsTab', () => ({
@@ -718,6 +722,19 @@ describe('product affiliate entry presentation', () => {
         expect(await screen.findByText(serverMessage)).toBeInTheDocument()
         expect(screen.queryByText('This product changed while you were editing it. Refresh the product before retrying.')).toBeNull()
     })
+
+    it.each([['Own media mutation', '8'], ['Concurrent media mutation', '7']])(
+        'preserves drafts and accepts only the exact version chain after %s', async (action, version) => {
+            const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+            await screen.findByText('Product media')
+            await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+            fireEvent.change(container.querySelector('input[type="text"]')!, { target: { value: 'Retained media draft' } })
+            fireEvent.click(screen.getByRole('button', { name: action }))
+            fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+            await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith('/products/product-1',
+                expect.objectContaining({ name: 'Retained media draft' }),
+                expect.objectContaining({ headers: expect.objectContaining({ 'If-Match': `"${version}"` }) })))
+        })
 
     it('generates English simple SKUs as before and Arabic simple SKUs from unique draft identities', async () => {
         const first = render(<ProductForm mode="modal" />)

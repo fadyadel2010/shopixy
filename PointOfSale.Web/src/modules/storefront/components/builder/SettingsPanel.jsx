@@ -19,7 +19,7 @@ export function SettingsPanel() {
 
     if (!selectedSection) {
         return (
-            <div className="w-80 h-full bg-white border-l border-gray-200 flex flex-col">
+            <div className="w-full 2xl:w-80 shrink-0 2xl:h-full min-w-0 bg-white border-l border-gray-200 flex flex-col">
                 <div className="p-4 border-b border-gray-200">
                     <h2 className="text-lg font-semibold text-gray-900">
                         {isRTL ? 'الإعدادات' : 'Settings'}
@@ -49,7 +49,7 @@ export function SettingsPanel() {
     }
 
     return (
-        <div className="w-80 h-full bg-white border-l border-gray-200 flex flex-col">
+        <div className="w-full 2xl:w-80 shrink-0 2xl:h-full min-w-0 bg-white border-l border-gray-200 flex flex-col">
             {/* Header */}
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">

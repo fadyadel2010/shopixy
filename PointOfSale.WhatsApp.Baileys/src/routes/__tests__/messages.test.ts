@@ -8,6 +8,7 @@ import request from 'supertest';
 import express, { Express } from 'express';
 import { SessionManager } from '../../services/SessionManager';
 import { MessageSender } from '../../services/MessageSender';
+import { PoolManager } from '../../services/PoolManager';
 import { createMessageRoutes } from '../messages';
 import { MessageType } from '../../models/Message';
 import { SessionMode, ConnectionStatus } from '../../models/Session';
@@ -15,6 +16,7 @@ import { SessionMode, ConnectionStatus } from '../../models/Session';
 // Mock dependencies
 jest.mock('redis', () => ({
   createClient: jest.fn(() => ({
+    on: jest.fn(),
     connect: jest.fn().mockResolvedValue(undefined),
     quit: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
@@ -25,6 +27,7 @@ jest.mock('redis', () => ({
 }));
 
 jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
   default: jest.fn(() => ({
     ev: {
       on: jest.fn()
@@ -40,7 +43,8 @@ jest.mock('@whiskeysockets/baileys', () => ({
     loggedOut: 401
   },
   Browsers: {
-    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0'])
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
   },
   proto: {
     WebMessageInfo: {}
@@ -53,6 +57,7 @@ jest.mock('qrcode', () => ({
 
 jest.mock('../../utils/logger', () => ({
   createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -68,7 +73,10 @@ describe('Message Routes', () => {
   beforeEach(async () => {
     sessionManager = new SessionManager();
     await sessionManager.initialize();
-    messageSender = new MessageSender(sessionManager);
+    messageSender = new MessageSender(
+      sessionManager,
+      new PoolManager(sessionManager.getRedisClient())
+    );
 
     app = express();
     app.use(express.json());
@@ -238,7 +246,10 @@ describe('Message Routes', () => {
       expect(response.body.error).toContain('E.164');
     });
 
-    it('should return 400 if session not found', async () => {
+    it('should return 400 if a missing session cannot reconnect', async () => {
+      const connectSpy = jest.spyOn(sessionManager, 'connectSession')
+        .mockRejectedValueOnce(new Error('Session not connected'));
+
       const response = await request(app)
         .post('/messages/send')
         .send({
@@ -249,7 +260,8 @@ describe('Message Routes', () => {
         .expect(400);
 
       expect(response.body.success).toBe(false);
-      expect(response.body.error).toContain('Session not found');
+      expect(response.body.error).toContain('not connected');
+      connectSpy.mockRestore();
     });
 
     it('should return 400 if session not connected', async () => {

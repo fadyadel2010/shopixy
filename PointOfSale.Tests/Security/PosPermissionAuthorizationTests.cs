@@ -78,6 +78,23 @@ public sealed class PosPermissionAuthorizationTests
         Assert.False(await AuthorizeAsync(Principal(PosAuthority()), PosPermissions.DashboardView));
     }
 
+    [Theory]
+    [InlineData(UserRole.Owner, true, true)]
+    [InlineData(UserRole.Admin, true, true)]
+    [InlineData(UserRole.Manager, false, true)]
+    [InlineData(UserRole.Cashier, false, false)]
+    [InlineData(UserRole.Warehouse, false, false)]
+    public async Task StorefrontConfigurationNavigation_PreservesPaymentAndShippingAuthority(
+        UserRole role, bool paymentsAllowed, bool shippingAllowed)
+    {
+        Assert.Equal(paymentsAllowed, await AuthorizeAsync(PosPrincipal(role), PosPermissions.StorefrontPaymentsManage));
+        Assert.Equal(shippingAllowed, await AuthorizeAsync(PosPrincipal(role), PosPermissions.ShippingManage));
+        Assert.True(PosEndpointPermissionCatalog.TryResolve("PaymentMethodsAdmin", "Update", ["PUT"], out var paymentPermission));
+        Assert.Equal(PosPermissions.StorefrontPaymentsManage, paymentPermission);
+        Assert.True(PosEndpointPermissionCatalog.TryResolve("ShippingMethods", "Update", ["PUT"], out var shippingPermission));
+        Assert.Equal(PosPermissions.ShippingManage, shippingPermission);
+    }
+
     [Fact]
     public async Task Handler_IgnoresForgedPermissionClaims()
     {

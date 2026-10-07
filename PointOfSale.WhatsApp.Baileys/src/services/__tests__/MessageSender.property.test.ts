@@ -8,12 +8,14 @@
 import fc from 'fast-check';
 import { MessageSender } from '../MessageSender';
 import { SessionManager } from '../SessionManager';
+import { PoolManager } from '../PoolManager';
 import { MessageType } from '../../models/Message';
 import { ConnectionStatus, SessionMode } from '../../models/Session';
 
 // Mock dependencies
 jest.mock('redis', () => ({
   createClient: jest.fn(() => ({
+    on: jest.fn(),
     connect: jest.fn().mockResolvedValue(undefined),
     quit: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
@@ -24,6 +26,7 @@ jest.mock('redis', () => ({
 }));
 
 jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
   default: jest.fn(() => ({
     ev: {
       on: jest.fn()
@@ -39,7 +42,8 @@ jest.mock('@whiskeysockets/baileys', () => ({
     loggedOut: 401
   },
   Browsers: {
-    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0'])
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
   },
   proto: {
     WebMessageInfo: {}
@@ -52,6 +56,7 @@ jest.mock('qrcode', () => ({
 
 jest.mock('../../utils/logger', () => ({
   createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -66,7 +71,10 @@ describe('MessageSender Property Tests', () => {
   beforeEach(async () => {
     sessionManager = new SessionManager();
     await sessionManager.initialize();
-    messageSender = new MessageSender(sessionManager);
+    messageSender = new MessageSender(
+      sessionManager,
+      new PoolManager(sessionManager.getRedisClient())
+    );
   });
 
   afterEach(async () => {
@@ -302,7 +310,9 @@ describe('MessageSender Property Tests', () => {
       );
     });
 
-    it('should include descriptive error for session not found', async () => {
+    it('should include descriptive error when a missing session cannot reconnect', async () => {
+      const connectSpy = jest.spyOn(sessionManager, 'connectSession');
+
       await fc.assert(
         fc.asyncProperty(
           fc.uuid(),
@@ -312,24 +322,28 @@ describe('MessageSender Property Tests', () => {
           ).map(([cc, num]) => `+${cc}${num}`),
           fc.string({ minLength: 1, maxLength: 100 }),
           async (tenantId, phone, text) => {
-            // Don't create session
+            connectSpy.mockRejectedValueOnce(new Error('Session not connected'));
             const result = await messageSender.sendTextMessage({
               tenantId,
               phone,
               text,
               type: MessageType.TEXT
             });
+            await sessionManager.closeSession(tenantId);
 
             expect(result.success).toBe(false);
             expect(result.error).toBeDefined();
-            expect(result.error).toContain('Session not found');
+            expect(result.error).toContain('not connected');
           }
         ),
         { numRuns: 50 }
       );
+      connectSpy.mockRestore();
     });
 
     it('should include descriptive error for session not connected', async () => {
+      const connectSpy = jest.spyOn(sessionManager, 'connectSession');
+
       await fc.assert(
         fc.asyncProperty(
           fc.uuid(),
@@ -347,6 +361,7 @@ describe('MessageSender Property Tests', () => {
             // Create session but not connected
             const session = await sessionManager.getOrCreateSession(tenantId, SessionMode.DEDICATED);
             session.status = status;
+            connectSpy.mockRejectedValueOnce(new Error('Session not connected'));
 
             const result = await messageSender.sendTextMessage({
               tenantId,
@@ -354,6 +369,7 @@ describe('MessageSender Property Tests', () => {
               text,
               type: MessageType.TEXT
             });
+            await sessionManager.closeSession(tenantId);
 
             expect(result.success).toBe(false);
             expect(result.error).toBeDefined();
@@ -362,6 +378,7 @@ describe('MessageSender Property Tests', () => {
         ),
         { numRuns: 50 }
       );
+      connectSpy.mockRestore();
     });
   });
 

@@ -43,6 +43,9 @@ public class StorefrontConfigDocument
 
     public int LastEventVersion { get; set; }
 
+    /// <summary>Authoritative SQL publication revision; independent of event schema versions.</summary>
+    public int LiveVersion { get; set; }
+
     /// <summary>
     /// Newest tenant-currency authority event applied to the Currency field.
     /// Kept separate from StoreConfig lifecycle freshness so currency sync cannot

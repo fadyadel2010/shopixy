@@ -40,6 +40,19 @@ function CuratedShelfPreview({ ids, maxItems }: { ids: string[]; maxItems: numbe
 function SectionPreview({ section, sectionProps }: { section: HomepageSection; sectionProps?: Record<string, unknown> }) {
   const { t } = useTranslation()
   const data = section.data
+  const backgroundReference = textValue(data.backgroundImage)
+  const [mediaPreview, setMediaPreview] = useState<{ reference: string; url: string } | null>(null)
+  useEffect(() => {
+    if (!backgroundReference.startsWith('/api/storefront/homepage-media/')) return
+    const controller = new AbortController()
+    const id = backgroundReference.slice('/api/storefront/homepage-media/'.length)
+    api.get(`/admin/homepage-media/${id}/preview`, { signal: controller.signal })
+      .then(({ data }) => { if (!controller.signal.aborted) setMediaPreview({ reference: backgroundReference, url: data.url }) })
+      .catch(() => { if (!controller.signal.aborted) setMediaPreview(null) })
+    return () => controller.abort()
+  }, [backgroundReference])
+  const backgroundImage = backgroundReference.startsWith('/api/storefront/homepage-media/')
+    ? mediaPreview?.reference === backgroundReference ? mediaPreview.url : '' : backgroundReference
   const title = textValue(data.title, textValue(data.heading, section.type))
   const subtitle = textValue(data.subtitle, textValue(data.description))
 
@@ -58,7 +71,10 @@ function SectionPreview({ section, sectionProps }: { section: HomepageSection; s
   if (section.type.includes('hero')) {
     const highlights = Array.isArray(data.highlights) ? data.highlights as Array<{ value: string; label: string }> : []
     return (
-      <section className="rounded-3xl px-8 py-12" style={{ backgroundColor: textValue(data.backgroundColor, '#111827'), color: textValue(data.textColor, '#ffffff') }}>
+      <section className="rounded-3xl bg-cover bg-center px-8 py-12" style={{
+        backgroundColor: textValue(data.backgroundColor, '#111827'), color: textValue(data.textColor, '#ffffff'),
+        backgroundImage: backgroundImage ? `linear-gradient(rgba(0,0,0,${Math.min(100, Math.max(0, Number(data.overlayOpacity) || 0)) / 100}),rgba(0,0,0,${Math.min(100, Math.max(0, Number(data.overlayOpacity) || 0)) / 100})),url(${JSON.stringify(backgroundImage)})` : undefined
+      }}>
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-200">{t('storefront.homepageEditor.hero')}</p>
         <h2 className="mt-3 text-4xl font-bold">{title}</h2>
         {subtitle && <p className="mt-3 max-w-2xl text-sm leading-7 opacity-80">{subtitle}</p>}

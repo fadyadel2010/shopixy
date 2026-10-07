@@ -170,7 +170,7 @@ function MediaPreviewModal({ item, onClose }) {
     )
 }
 
-export default function ProductMediaManager({ productId }) {
+export default function ProductMediaManager({ productId, onMediaChanged }) {
     const { confirm } = useConfirmDialog()
     const { showError, showSuccess } = useToast()
     const [media, setMedia] = useState([])
@@ -271,6 +271,7 @@ export default function ProductMediaManager({ productId }) {
                 })
 
                 setMedia(current => sortMedia([...current, registerResponse.data]))
+                onMediaChanged?.(registerResponse.headers)
             }
 
             showSuccess(selectedFiles.length === 1 ? 'Media uploaded successfully.' : `${selectedFiles.length} media files uploaded successfully.`)
@@ -282,7 +283,7 @@ export default function ProductMediaManager({ productId }) {
         } finally {
             setUploading(false)
         }
-    }, [productId, showError, showSuccess, loadMedia])
+    }, [productId, showError, showSuccess, loadMedia, onMediaChanged])
 
     const handleDelete = useCallback(async (mediaId) => {
         const confirmed = await confirm({
@@ -305,7 +306,8 @@ export default function ProductMediaManager({ productId }) {
         ))
 
         try {
-            await api.delete(`/admin/products/${productId}/media/${mediaId}`, { idempotencyKey: crypto.randomUUID() })
+            const response = await api.delete(`/admin/products/${productId}/media/${mediaId}`, { idempotencyKey: crypto.randomUUID() })
+            onMediaChanged?.(response.headers)
             showSuccess('Media deleted successfully.')
         } catch (err) {
             setMedia(previousMedia)
@@ -313,7 +315,7 @@ export default function ProductMediaManager({ productId }) {
             setError(message)
             showError(message)
         }
-    }, [confirm, media, productId, showError, showSuccess])
+    }, [confirm, media, productId, showError, showSuccess, onMediaChanged])
 
     const handleReorder = useCallback(async (orderedMedia) => {
         const previousMedia = media
@@ -331,6 +333,7 @@ export default function ProductMediaManager({ productId }) {
             }, { idempotencyKey: crypto.randomUUID() })
 
             setMedia(sortMedia(response.data || normalizedMedia))
+            onMediaChanged?.(response.headers)
             return true
         } catch (err) {
             setMedia(previousMedia)
@@ -341,7 +344,7 @@ export default function ProductMediaManager({ productId }) {
         } finally {
             setSavingOrder(false)
         }
-    }, [media, productId, showError])
+    }, [media, productId, showError, onMediaChanged])
 
     const handleSetPrimary = useCallback(async (mediaId) => {
         const itemIndex = media.findIndex(item => item.id === mediaId)
@@ -379,6 +382,7 @@ export default function ProductMediaManager({ productId }) {
             })
 
             setMedia(current => sortMedia([...current, response.data]))
+            onMediaChanged?.(response.headers)
             setYoutubeUrl('')
             showSuccess('Video added successfully.')
         } catch (err) {

@@ -625,6 +625,15 @@ const ProductForm = forwardRef(function ProductForm({
     const [productUnits, setProductUnits] = useState([])
     const [variantAuthoringSummary, setVariantAuthoringSummary] = useState([])
     const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
+    const [productMediaRevision, setProductMediaRevision] = useState(0)
+    const handleMediaChanged = useCallback((headers) => {
+        const previous = headers?.['x-product-previous-version']
+        const next = headers?.['x-product-version']
+        if (previous && next) {
+            setAcceptedRowVersion(current => String(current) === String(previous) ? next : current)
+        }
+        setProductMediaRevision(current => current + 1)
+    }, [])
     const [simpleProductData, setSimpleProductData] = useState({
         sku: '',
         barcode: '',
@@ -1935,7 +1944,7 @@ const ProductForm = forwardRef(function ProductForm({
             description={t('products.viewOnStorefront') || 'Manage the media customers and staff see for this product.'}
         >
             {productId ? (
-                <ProductMediaManager productId={productId} />
+                <ProductMediaManager productId={productId} onMediaChanged={handleMediaChanged} />
             ) : (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                     Save the product first, then manage all images and videos from the Media Manager.
@@ -1958,6 +1967,7 @@ const ProductForm = forwardRef(function ProductForm({
                 <ProductVariantsTab
                     ref={variantsTabRef}
                     productId={productId}
+                    productMediaRevision={productMediaRevision}
                     forceMatrixMode={hasVariants}
                     productSkuPrefix={formData.name}
                     onVariantDraftChange={handleVariantDraftChange}

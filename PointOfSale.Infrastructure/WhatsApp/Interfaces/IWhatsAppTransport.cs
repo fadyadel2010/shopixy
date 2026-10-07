@@ -1,8 +1,9 @@
+using PointOfSale.Core.Enums;
+
 namespace PointOfSale.Infrastructure.WhatsApp.Interfaces;
 
 /// <summary>
-/// Transport abstraction for WhatsApp message delivery.
-/// Enables multiple transport implementations (Playwright, Baileys) to coexist during migration.
+/// Baileys transport contract for WhatsApp message and session operations.
 /// </summary>
 public interface IWhatsAppTransport
 {
@@ -119,3 +120,16 @@ public class WhatsAppDisconnectResult
     public bool Success { get; set; }
     public string? ErrorMessage { get; set; }
 }
+
+public record QrCodeResult(
+    bool Success,
+    string? QrImageBase64,
+    string? Error,
+    int? ExpiresInSeconds,
+    bool AlreadyConnected = false);
+
+public record ConnectionStatus(
+    bool IsConnected,
+    WhatsAppAccountStatus Status,
+    DateTime? LastActivity,
+    string? ConnectedPhone = null);

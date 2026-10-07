@@ -22,6 +22,21 @@ namespace PointOfSale.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.HomepageMediaAsset", b =>
+            {
+                b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
+                b.Property<Guid>("TenantId").HasColumnType("uuid");
+                b.Property<string>("ObjectKey").IsRequired().HasMaxLength(512).HasColumnType("character varying(512)");
+                b.Property<string>("ContentType").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
+                b.Property<long>("Size").HasColumnType("bigint");
+                b.Property<DateTime>("CreatedAtUtc").HasColumnType("timestamp with time zone");
+                b.HasKey("Id");
+                b.HasIndex("TenantId", "Id");
+                b.HasIndex("ObjectKey").IsUnique();
+                b.ToTable("HomepageMediaAssets");
+                b.HasOne("PointOfSale.Core.Entities.Tenant", null).WithMany().HasForeignKey("TenantId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+            });
+
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.InboxState", b =>
                 {
                     b.Property<long>("Id")
@@ -21570,7 +21585,8 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("UseBaileys")
-                        .HasColumnType("boolean");
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
 
                     b.HasKey("Id");
 

@@ -44,6 +44,7 @@ import {
     extractNavigationConflict,
 } from '../services'
 import { useCmsStore } from '../store'
+import { HeaderAnnouncementSettings } from '../components/HeaderAnnouncementSettings'
 import { isRequestCanceled } from '../../../../services/api'
 import {
     AuthoringActionBar,
@@ -428,6 +429,13 @@ export function NavigationEditor() {
     const handleDiscard = () => {
         if (!acceptedNavigationRef.current) return
         clearScheduledSave(true)
+        if (navigation.live) {
+            const candidate = { ...navigation, draft: navigation.live }
+            setNavigation(candidate)
+            setNavigationDirty(true)
+            void handleSave(false, candidate)
+            return
+        }
         setNavigation(acceptedNavigationRef.current)
         setNavigationDirty(false)
         setSaveStatus('idle')
@@ -549,7 +557,7 @@ export function NavigationEditor() {
                 backAction={{ label: t('storefront.cms.navigationEditor.back'), onClick: handleExit }}
                 status={<AuthoringStatusBadge state={isPublishing ? 'publishing' : isSaving ? 'saving' : isNavigationDirty ? 'dirty' : publishStatus === 'published' ? 'published' : 'draft'} />}
                 historyAction={{ label: t('storefront.cms.navigationEditor.history'), onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
-                discardAction={{ label: t('storefront.cms.navigationEditor.discard'), onClick: handleDiscard, disabled: !isNavigationDirty || isSaving || isPublishing }}
+                discardAction={{ label: t('storefront.cms.navigationEditor.discard'), onClick: handleDiscard, disabled: (!isNavigationDirty && !navigation.hasPendingChanges) || isSaving || isPublishing }}
                 saveAction={{ label: t('storefront.cms.navigationEditor.saveDraft'), busyLabel: t('storefront.cms.navigationEditor.saving'), onClick: () => void handleSave(false), disabled: !isNavigationDirty || isPublishing, busy: isSaving }}
                 publishAction={{ label: t('storefront.cms.navigationEditor.publish'), busyLabel: t('storefront.cms.navigationEditor.publishing'), onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving || (!isNavigationDirty && !navigation.hasPendingChanges), busy: isPublishing }}
             />
@@ -602,6 +610,10 @@ export function NavigationEditor() {
             </div>
 
             {/* Links Content */}
+            {activeTab === 'header' && <HeaderAnnouncementSettings value={navigation.draft.announcement} onChange={(announcement) => {
+                setNavigation({ ...navigation, draft: { ...navigation.draft, announcement }, hasPendingChanges: true })
+                setNavigationDirty(true)
+            }} />}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-6">
                     <h2 className="text-lg font-semibold text-gray-900">

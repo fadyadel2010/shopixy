@@ -11,6 +11,7 @@ using PointOfSale.API.Exceptions;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.API.Services.Audit;
 using PointOfSale.API.Services;
+using PointOfSale.API.Services.Storefront;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Tests.Infrastructure;
 
@@ -18,6 +19,31 @@ namespace PointOfSale.Tests.Admin;
 
 public sealed class AdminStoreConfigControllerHardeningTests
 {
+    [Fact]
+    public async Task DraftPreview_RejectsInvalidThemeCapabilityBeforeReadingDraft()
+    {
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        var controller = CreateController(service.Object, Guid.NewGuid());
+        Assert.IsType<UnauthorizedObjectResult>(await controller.GetStoreConfigPreview(CancellationToken.None, "invalid-or-expired"));
+        service.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task DraftPreview_UsesExistingTenantBoundSignedThemeSelectionWithoutActivatingIt()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        service.Setup(s => s.GetStoreConfigPreviewAsync(tenantId, It.IsAny<string>(), It.IsAny<CancellationToken>(), "fashion"))
+            .ReturnsAsync(new AdminStoreConfigResponse { TenantId = tenantId, StorefrontTheme = "fashion" });
+        var tokens = new Mock<IStorefrontThemePreviewTokenService>();
+        string? theme = "fashion";
+        tokens.Setup(s => s.TryValidate("signed-candidate", tenantId, out theme)).Returns(true);
+        var controller = CreateController(service.Object, tenantId, tokens.Object);
+        var result = Assert.IsType<OkObjectResult>(await controller.GetStoreConfigPreview(CancellationToken.None, "signed-candidate"));
+        Assert.Equal("fashion", Assert.IsType<AdminStoreConfigResponse>(result.Value).StorefrontTheme);
+        service.VerifyAll();
+        service.VerifyNoOtherCalls();
+    }
     [Fact]
     public async Task GetStoreConfigPreview_WhenHeaderDoesNotMatchTrustedTenant_UsesTenantContext()
     {
@@ -265,7 +291,7 @@ public sealed class AdminStoreConfigControllerHardeningTests
         Assert.Equal("CONCURRENCY_CONFLICT", error.Code);
     }
 
-    private static AdminStoreConfigController CreateController(IAdminStoreConfigService service, Guid tenantId)
+    private static AdminStoreConfigController CreateController(IAdminStoreConfigService service, Guid tenantId, IStorefrontThemePreviewTokenService? tokens = null)
     {
         return new AdminStoreConfigController(
             service,
@@ -273,7 +299,7 @@ public sealed class AdminStoreConfigControllerHardeningTests
             Mock.Of<IStoreConfigAuditService>(),
             new TestTenantContext(tenantId),
             NullLogger<AdminStoreConfigController>.Instance,
-            CreateStorefrontUrlResolver())
+            CreateStorefrontUrlResolver(), tokens)
         {
             ControllerContext = new ControllerContext
             {

@@ -145,6 +145,10 @@ export class SelfHealingService {
         forceResetCallback: (tenantId: string) => Promise<void>,
         getSessionsCallback: () => WhatsAppSession[]
     ): void {
+        if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+        }
+
         this.forceResetCallback = forceResetCallback;
         this.getSessionsCallback = getSessionsCallback;
 

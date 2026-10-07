@@ -487,7 +487,9 @@ export function StorefrontBuilderPage() {
             }
 
             const preview = deriveCurrentVendorScopedDto(
-                await storeConfigService.getPreviewConfig({ signal: controller.signal }),
+                await storeConfigService.getPreviewConfig({ signal: controller.signal,
+                    ...(searchParams.get('themePreviewToken') ? { params: { preview: true, draftThemePreviewToken: searchParams.get('themePreviewToken') } } : {}),
+                }),
                 currentUser,
             )
             if (controller.signal.aborted) {
@@ -517,7 +519,7 @@ export function StorefrontBuilderPage() {
                 setIsLoadingPreview(false)
             }
         }
-    }, [currentUser, isDirty, isRTL, persistPageLayout, sections, storeConfig])
+    }, [currentUser, isDirty, isRTL, persistPageLayout, sections, storeConfig, searchParams])
 
     const handlePublish = async () => {
         try {
@@ -597,8 +599,20 @@ export function StorefrontBuilderPage() {
         onPreview: handlePreview,
     })
 
-    const handleDiscard = useCallback(() => {
+    const handleDiscard = useCallback(async () => {
         abortPendingSave()
+        const published = targetPage === 'home' ? storeConfig?.livePages?.home?.sections : null
+        if (published) {
+            // Admit the discard candidate as the current edit before saving it,
+            // so the save concurrency guard can still detect genuinely newer edits.
+            useBuilderStore.getState().setSections(published)
+            const result = await persistPageLayout(useBuilderStore.getState().sections)
+            if (!result.saved) return
+            admitSections(filterSectionsForPage(getAcceptedSectionsFromConfig(result.config, targetPage, templateIdFromUrl), targetPage))
+            markClean()
+            setFeedback({ kind: 'info', title: t('storefront.homepageEditor.changesDiscarded'), message: isRTL ? 'تمت استعادة النسخة المنشورة إلى المسودة.' : 'The published version has been restored to the draft.' })
+            return
+        }
         admitSections(
             filterSectionsForPage(
                 getAcceptedSectionsFromConfig(storeConfig, targetPage, templateIdFromUrl),
@@ -609,7 +623,7 @@ export function StorefrontBuilderPage() {
         setSaveError(null)
         setSaveStatus('idle')
         setFeedback({ kind: 'info', title: t('storefront.homepageEditor.changesDiscarded'), message: t('storefront.homepageEditor.serverDraftRestored') })
-    }, [abortPendingSave, admitSections, getAcceptedSectionsFromConfig, markClean, storeConfig, targetPage, templateIdFromUrl])
+    }, [abortPendingSave, admitSections, getAcceptedSectionsFromConfig, markClean, persistPageLayout, storeConfig, targetPage, templateIdFromUrl, isRTL, t])
 
     const handleLoadLatest = useCallback(async () => {
         setConflict(null)
@@ -690,7 +704,7 @@ export function StorefrontBuilderPage() {
 
     if (!storeConfig) {
         return (
-            <div className="h-screen flex flex-col bg-gray-100 -m-6 -mt-6">
+            <div className="min-h-screen 2xl:h-screen min-w-0 flex flex-col bg-gray-100 -mx-4 sm:-mx-6 lg:-mx-8 -mt-6">
                 <div className="min-h-10 bg-white border-b border-gray-200 flex flex-wrap items-center justify-between gap-2 px-4 py-2">
                     <button
                         onClick={handleExit}
@@ -744,7 +758,7 @@ export function StorefrontBuilderPage() {
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
         >
-            <div className="h-screen flex flex-col bg-gray-100 -m-6 -mt-6">
+            <div className="min-h-screen 2xl:h-screen min-w-0 flex flex-col bg-gray-100 -mx-4 sm:-mx-6 lg:-mx-8 -mt-6">
                 <div className="min-h-10 border-b border-gray-200 bg-white px-4 py-2">
                     <StorefrontBreadcrumbs
                         appendCurrentLabel={isProductTemplatePage}
@@ -771,6 +785,7 @@ export function StorefrontBuilderPage() {
                     saveStatus={saveStatus}
                     saveError={saveError}
                     lastSavedAt={lastSavedAt}
+                    hasPendingDraft={JSON.stringify(storeConfig?.pages?.home) !== JSON.stringify(storeConfig?.livePages?.home)}
                     onRetrySave={handleRetrySave}
                 />
 
@@ -834,7 +849,7 @@ export function StorefrontBuilderPage() {
                 )}
 
                 {/* Main Content */}
-                <div className="flex-1 flex overflow-hidden">
+                <div className="min-w-0 flex-1 flex flex-col 2xl:flex-row 2xl:overflow-hidden">
                     {/* Left: Section Palette */}
                     <SectionPalette pageKey={targetPage} />
 

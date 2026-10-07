@@ -136,6 +136,37 @@ public sealed class AdminStoreConfigPublishReliabilityTests
         Assert.Equal(0, config.LiveVersion);
     }
 
+    [Fact]
+    public async Task HomepagePublication_StagesTenantScopedRevisionEvent_WhileDraftSaveCannotPublish()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = CreateDbContext(Guid.NewGuid().ToString("N"), tenantId);
+        var config = new StoreConfig { Id = Guid.NewGuid(), TenantId = tenantId, StoreName = "Event fixture",
+            ThemeId = "default", ThemePresetKey = "default", LiveVersion = 8,
+            VersionsJson = "[{\"Version\":8}]", CustomizationJson = BuildPageCustomizationJson() };
+        context.StoreConfigs.Add(config);
+        await context.SaveChangesAsync();
+        var publisher = new Mock<IEventPublisher>();
+        StoreConfigPublishedEvent? captured = null;
+        publisher.Setup(p => p.PublishAsync(It.IsAny<StoreConfigPublishedEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<StoreConfigPublishedEvent, CancellationToken>((message, _) => captured = message)
+            .Returns(Task.CompletedTask);
+        var service = CreateService(context, publisher.Object);
+        await service.UpdatePageLayoutAsync(tenantId, "home", new Dictionary<string, object> { ["sections"] = Array.Empty<object>() }, "draft");
+        Assert.Null(captured);
+        Assert.Equal(8, config.LiveVersion);
+        await service.PublishPageAsync(tenantId, "home", "publish");
+        Assert.NotNull(captured);
+        Assert.Equal(tenantId, captured!.TenantId);
+        Assert.Equal(config.Id, captured.StoreConfigId);
+        Assert.Equal(9, captured.ConfigVersion);
+        Assert.Equal(9, captured.EventVersion);
+        Assert.Equal("publish", captured.CorrelationId);
+        Assert.False(string.IsNullOrWhiteSpace(captured.IdempotencyKey));
+        Assert.DoesNotContain("CustomizationJson", JsonSerializer.Serialize(captured));
+        Assert.DoesNotContain("preview", JsonSerializer.Serialize(captured), StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

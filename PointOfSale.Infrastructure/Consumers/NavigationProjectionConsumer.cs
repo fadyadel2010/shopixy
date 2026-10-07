@@ -23,7 +23,8 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// 4. Upsert into MongoDB storefront_navigation
 /// </summary>
 public class NavigationProjectionConsumer :
-    IConsumer<NavigationPublishedEvent>
+    IConsumer<NavigationPublishedEvent>,
+    IConsumer<StoreConfigRolledBackEvent>
 {
     private const string ConsumerName = nameof(NavigationProjectionConsumer);
 
@@ -55,12 +56,30 @@ public class NavigationProjectionConsumer :
         await ProjectNavigationAsync(@event, context.CancellationToken);
     }
 
+    // StoreConfig rollback restores Navigation's live branch as part of the
+    // existing version snapshot. Recompose the derivative projection from SQL.
+    public Task Consume(ConsumeContext<StoreConfigRolledBackEvent> context)
+    {
+        var source = context.Message;
+        return ProjectNavigationAsync(new NavigationPublishedEvent
+        {
+            EventId = source.EventId,
+            OccurredAtUtc = source.OccurredAtUtc,
+            EventVersion = source.EventVersion,
+            TenantId = source.TenantId,
+            StoreConfigId = source.StoreConfigId,
+            CorrelationId = source.CorrelationId,
+            PublishedAtUtc = source.UpdatedAtUtc
+        }, context.CancellationToken, nameof(StoreConfigRolledBackEvent));
+    }
+
     /// <summary>
     /// Core projection logic - extracts LIVE navigation from StoreConfig and upserts to MongoDB.
     /// </summary>
     private async Task ProjectNavigationAsync(
         NavigationPublishedEvent @event,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string eventType = nameof(NavigationPublishedEvent))
     {
         var tenantId = @event.TenantId;
         var storeConfigId = @event.StoreConfigId;
@@ -73,7 +92,7 @@ public class NavigationProjectionConsumer :
 
         var fenceKey = new ProjectionEventFenceKey(
             ConsumerName,
-            nameof(NavigationPublishedEvent),
+            eventType,
             storeConfigId);
 
         await using var fence = await ProjectionEventFence.TryAcquireAsync(
@@ -348,6 +367,8 @@ public class NavigationProjectionConsumer :
     private NavigationMenu ExtractNavigationMenu(JsonElement menuElement)
     {
         var menu = new NavigationMenu();
+        if (menuElement.ValueKind == JsonValueKind.Object && menuElement.TryGetProperty("announcement", out var announcement))
+            menu.Announcement = announcement.Deserialize<PointOfSale.Core.Models.HeaderAnnouncementConfig>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
         // Support both { "links": [...] } and direct [...] array
         JsonElement linksElement;

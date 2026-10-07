@@ -8,6 +8,13 @@
 import { AuthStatePersistence, AuthStateData } from '../AuthStatePersistence';
 import { createClient, RedisClientType } from 'redis';
 
+jest.mock('@whiskeysockets/baileys', () => ({
+  BufferJSON: {
+    replacer: (_key: string, value: unknown) => value,
+    reviver: (_key: string, value: unknown) => value
+  }
+}));
+
 // Mock Redis
 jest.mock('redis', () => {
   const mockData = new Map<string, string>();
@@ -17,7 +24,7 @@ jest.mock('redis', () => {
       connect: jest.fn().mockResolvedValue(undefined),
       quit: jest.fn().mockResolvedValue(undefined),
       get: jest.fn((key: string) => Promise.resolve(mockData.get(key) || null)),
-      set: jest.fn((key: string, value: string, options?: any) => {
+      set: jest.fn((key: string, value: string, _options?: any) => {
         mockData.set(key, value);
         return Promise.resolve('OK');
       }),

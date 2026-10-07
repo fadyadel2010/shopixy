@@ -32,7 +32,7 @@ const PhoenixHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
     return (
         <>
-            <AnnouncementMarquee text={labels.announcement} />
+            <AnnouncementMarquee {...model.announcement} text={labels.announcement} />
 
             {/* Floating white pill, centered on the canvas, sticky. */}
             <div className={`sticky top-0 z-30 w-full ${PHOENIX_HEADER_SHELL}`}>

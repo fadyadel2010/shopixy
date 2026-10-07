@@ -245,6 +245,20 @@ public sealed class EntityExposureHardeningTests
         Assert.Same(originalResult, filteredResult);
     }
 
+    [Fact]
+    public async Task PreventEntityExposureFilter_AllowsHeaderAnnouncementConfigurationDtos()
+    {
+        var payload = new PointOfSale.API.DTOs.Admin.AdminNavigationResponse
+        {
+            Draft = new()
+            {
+                Announcement = new PointOfSale.Core.Models.HeaderAnnouncementConfig { Text = "Announcement" }
+            }
+        };
+        var original = new ObjectResult(payload);
+        Assert.Same(original, await ExecuteFilterAsync(original));
+    }
+
     private static async Task<IActionResult> ExecuteFilterAsync(IActionResult result)
     {
         var filter = new PreventEntityExposureFilter(

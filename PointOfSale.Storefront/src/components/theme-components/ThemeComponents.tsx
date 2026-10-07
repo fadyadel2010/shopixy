@@ -268,12 +268,14 @@ export function ThemeHeroCTA({
     children,
     align = 'left',
     className,
+    color,
 }: {
     themeId?: string | null;
     href: string;
     children: React.ReactNode;
     align?: ThemeComponentAlign;
     className?: string;
+    color?: string;
 }) {
     const justify = align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start';
 
@@ -281,6 +283,7 @@ export function ThemeHeroCTA({
         <div className={cx('flex', justify, className)}>
             <AffiliateLink
                 href={href}
+                style={color ? { color, borderColor: color } : undefined}
                 className={cx(
                     'inline-flex min-h-11 items-center justify-center gap-2',
                     buttonStyles[normalizeThemeComponentTheme(themeId)]

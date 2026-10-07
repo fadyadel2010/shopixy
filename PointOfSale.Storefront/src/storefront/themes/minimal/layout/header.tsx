@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { HeaderAnnouncement } from '@/storefront/presentation/HeaderAnnouncement';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 
@@ -9,6 +10,7 @@ const MinimalHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
     return (
         <>
+            <HeaderAnnouncement model={model} className="bg-slate-900 text-white" />
             <header className="sticky top-0 z-30 border-b border-black/10 bg-white/95 backdrop-blur">
                 <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:py-4">
                     <AffiliateLink href="/" className="min-w-0 max-w-[44vw] truncate text-lg font-semibold uppercase tracking-[0.08em] text-slate-900 sm:text-xl md:max-w-xs">

@@ -95,7 +95,7 @@ export function SectionPalette({ pageKey = 'home' }) {
     }
 
     return (
-        <div className="w-64 h-full bg-gray-50 border-r border-gray-200 flex flex-col">
+        <div className="w-full 2xl:w-64 shrink-0 2xl:h-full bg-gray-50 border-r border-gray-200 flex flex-col">
             {/* Header */}
             <div className="p-4 border-b border-gray-200 bg-white">
                 <h2 className="text-lg font-semibold text-gray-900">

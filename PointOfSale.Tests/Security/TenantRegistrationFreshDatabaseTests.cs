@@ -45,6 +45,12 @@ public sealed class TenantRegistrationFreshDatabaseTests
         Assert.Equal(1, await context.Users.IgnoreQueryFilters().CountAsync());
         Assert.Equal(1, await context.StoreConfigs.IgnoreQueryFilters().CountAsync());
 
+        var owner = await context.Users.IgnoreQueryFilters().SingleAsync();
+        Assert.Equal(UserRole.Owner, owner.Role);
+        var permissions = PointOfSale.Core.Security.PosRolePermissionCatalog.GetPermissions(owner.Role);
+        Assert.Contains(PointOfSale.Core.Security.PosPermissions.StorefrontPaymentsManage, permissions);
+        Assert.Contains(PointOfSale.Core.Security.PosPermissions.ShippingManage, permissions);
+
         var warehouseId = await context.Warehouses.IgnoreQueryFilters()
             .Where(warehouse => warehouse.IsDefault)
             .Select(warehouse => warehouse.Id)

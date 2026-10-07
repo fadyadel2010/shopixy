@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { CuratedProductSelector } from './CuratedProductSelector'
+import { HomepageImageField } from './HomepageImageField'
 
 function getLocalizedText(value, isRTL) {
     if (!value) {
@@ -180,6 +181,9 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
                 )
 
             case 'image':
+                if (field.key === 'backgroundImage' && section.type === 'hero-banner') {
+                    return <HomepageImageField key={fieldKey} label={label} value={value || ''} onChange={onValueChange} />
+                }
                 return (
                     <div key={fieldKey}>
                         <FieldLabel>{label}</FieldLabel>

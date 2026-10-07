@@ -4,6 +4,11 @@
  */
 
 export interface StoreConfig {
+    previewChrome?: {
+        runtimeUrl: string;
+        navigation: import('./cms').Navigation;
+        footerByLanguage: Record<'en' | 'ar', import('./cms').StorefrontFooter>;
+    };
     tenantId?: string;
     storeName: string;
     storeDescription?: string;

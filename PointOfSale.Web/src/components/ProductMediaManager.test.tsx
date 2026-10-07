@@ -36,7 +36,7 @@ describe('product media upload contract', () => {
             expect(options.idempotencyKey).toBeTruthy()
             const item = { ...data, id: crypto.randomUUID(), position: stored.length + 1 }
             stored.push(item)
-            return Promise.resolve({ data: item })
+            return Promise.resolve({ data: item, headers: { 'x-product-previous-version': `${stored.length}`, 'x-product-version': `${stored.length + 1}` } })
         })
         showError.mockReset()
         showSuccess.mockReset()
@@ -66,6 +66,20 @@ describe('product media upload contract', () => {
         await waitFor(() => expect(screen.getAllByAltText('Uploaded product')).toHaveLength(2))
         fireEvent.change(input, { target: { files: [new File(['c'], 'c.jpg', { type: 'image/jpeg' })] } })
         await waitFor(() => expect(screen.getAllByAltText('Uploaded product')).toHaveLength(3))
+    })
+
+    it('reports each successful registration version to the editor in mutation order', async () => {
+        const onMediaChanged = vi.fn()
+        const { container } = render(<ProductMediaManager productId={productId} onMediaChanged={onMediaChanged} />)
+        await screen.findByText('Upload Images')
+        fireEvent.change(container.querySelector('input[accept="image/jpeg,image/png,image/webp"]')!, {
+            target: { files: [new File(['a'], 'a.jpg', { type: 'image/jpeg' }), new File(['b'], 'b.jpg', { type: 'image/jpeg' })] },
+        })
+        await waitFor(() => expect(onMediaChanged).toHaveBeenCalledTimes(2))
+        expect(onMediaChanged.mock.calls.map(([headers]) => headers)).toEqual([
+            { 'x-product-previous-version': '1', 'x-product-version': '2' },
+            { 'x-product-previous-version': '2', 'x-product-version': '3' },
+        ])
     })
 
     it('rejects invalid MIME and leaves empty selections untouched', async () => {

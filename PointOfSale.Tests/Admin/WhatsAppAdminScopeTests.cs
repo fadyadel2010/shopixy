@@ -100,10 +100,12 @@ public sealed class WhatsAppAdminScopeTests
 
         var ok = Assert.IsType<OkObjectResult>(action.Result);
         var templates = Assert.IsType<List<WhatsAppTemplateDto>>(ok.Value);
-        Assert.Equal(4, templates.Count);
+        Assert.Equal(8, templates.Count);
         Assert.All(templates, template => Assert.True(template.IsDefault));
         Assert.Equal(2, templates.Count(template => template.Type == "OrderConfirmation"));
         Assert.Equal(2, templates.Count(template => template.Type == "Otp"));
+        Assert.Equal(2, templates.Count(template => template.Type == "AbandonedCartRecoveryFirst"));
+        Assert.Equal(2, templates.Count(template => template.Type == "AbandonedCartRecoverySecond"));
         accountService.VerifyAll();
     }
 
@@ -164,8 +166,7 @@ public sealed class WhatsAppAdminScopeTests
         IPhoneNumberNormalizer? phoneNumberNormalizer = null) =>
         new(
             accountService,
-            Mock.Of<IWhatsAppWebEngine>(),
-            new ServiceCollection().BuildServiceProvider(),
+            Mock.Of<IWhatsAppTransport>(),
             dbContext,
             tenantContext,
             Mock.Of<IWhatsAppKillSwitch>(),

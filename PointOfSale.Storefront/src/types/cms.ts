@@ -47,7 +47,17 @@ export interface Navigation {
 }
 
 export interface NavigationMenu {
+    announcement?: HeaderAnnouncementConfig | null;
     links: NavigationLink[];
+}
+
+export interface HeaderAnnouncementConfig {
+    enabled: boolean;
+    text: string;
+    textAr: string;
+    link: string;
+    backgroundColor: string;
+    textColor: string;
 }
 
 export interface NavigationLink {

@@ -15,11 +15,12 @@ import { useStoreConfigStore } from '@/store/storeConfigStore'
 
 import { normalizeStoreConfig } from './normalizeStoreConfig'
 import { AuthoringDialog } from '../../authoringPlatform'
+import { ThemeRuntimePreview } from './ThemeRuntimePreview'
 
 const DEVICE_SIZES = [
     { key: 'desktop', icon: Monitor, width: '100%', label: { en: 'Desktop', ar: 'سطح المكتب' } },
     { key: 'tablet', icon: Tablet, width: '768px', label: { en: 'Tablet', ar: 'لوحي' } },
-    { key: 'mobile', icon: Smartphone, width: '375px', label: { en: 'Mobile', ar: 'جوال' } },
+    { key: 'mobile', icon: Smartphone, width: '390px', label: { en: 'Mobile', ar: 'جوال' } },
 ]
 
 function PreviewThemeProvider({ tenantId, storeConfig, children }) {
@@ -105,7 +106,7 @@ export function PreviewModal({
             titleClassName="sr-only"
         >
         <div className="flex h-full flex-col">
-            <div className="flex h-14 items-center justify-between border-b border-slate-700 bg-slate-900 px-4">
+            <div className="flex min-h-14 flex-wrap gap-2 items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2">
                 <div className="flex items-center gap-3">
                     <div 
                         id="preview-modal-title"
@@ -114,7 +115,7 @@ export function PreviewModal({
                         <AlertTriangle size={14} />
                         {isRTL ? 'معاينة المسودة' : 'DRAFT PREVIEW'}
                     </div>
-                    <span className="text-sm text-slate-300">
+                    <span className="hidden md:inline text-sm text-slate-300">
                         {isRTL
                             ? 'تعرض هذه النافذة المسودة المصادق عليها فقط ولن تستخدم أي محتوى حي كبديل.'
                             : 'This preview uses authenticated draft data only and will never fall back to live content.'}
@@ -153,9 +154,9 @@ export function PreviewModal({
                 </div>
             </div>
 
-            <div className="flex-1 overflow-auto p-4">
+            <div className="flex-1 overflow-auto p-0 md:p-4">
                 <div
-                    className="mx-auto overflow-hidden rounded-[28px] border border-slate-700 bg-white shadow-[0_32px_100px_-40px_rgba(15,23,42,0.85)] transition-all duration-300"
+                    className={`mx-auto overflow-hidden rounded-[28px] ${currentPage === 'home' ? '' : 'border border-slate-700'} bg-white shadow-[0_32px_100px_-40px_rgba(15,23,42,0.85)] transition-all duration-300`}
                     style={{
                         width: currentDevice?.width ?? '100%',
                         maxWidth: '100%',
@@ -197,6 +198,9 @@ export function PreviewModal({
                                 </p>
                             </div>
                         </div>
+                    ) : currentPage === 'home' ? (
+                        <ThemeRuntimePreview config={previewConfig} tenantId={tenantId} language={isRTL ? 'ar' : 'en'}
+                            viewportWidth={activeDevice === 'mobile' ? 390 : activeDevice === 'tablet' ? 768 : undefined} />
                     ) : (
                         <PreviewThemeProvider tenantId={tenantId} storeConfig={previewConfig}>
                             <main className="min-h-full bg-background text-text">

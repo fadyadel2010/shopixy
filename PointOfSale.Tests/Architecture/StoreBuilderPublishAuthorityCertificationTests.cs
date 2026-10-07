@@ -80,7 +80,7 @@ public sealed class StoreBuilderPublishAuthorityCertificationTests
         Assert.Contains("LoadCurrentStoreConfigProjectionAuthorityAsync", projection, StringComparison.Ordinal);
         Assert.Contains("BuildFreshStoreConfigEventFilter", projection, StringComparison.Ordinal);
         Assert.Contains("filter.Ne(x => x.LastEventId, eventId)", projection, StringComparison.Ordinal);
-        Assert.Contains("filter.Lt(x => x.LastEventVersion, eventVersion)", projection, StringComparison.Ordinal);
+        Assert.Contains("filter.Lt(x => x.LiveVersion, eventVersion)", projection, StringComparison.Ordinal);
         Assert.Contains("await db.KeyDeleteAsync(new RedisKey[] { configKey });", projection, StringComparison.Ordinal);
         Assert.Contains("from storeConfig in dbContext.StoreConfigs.AsNoTracking().IgnoreQueryFilters()", lineage, StringComparison.Ordinal);
         Assert.Contains("storeConfig.Id == storeConfigId", lineage, StringComparison.Ordinal);

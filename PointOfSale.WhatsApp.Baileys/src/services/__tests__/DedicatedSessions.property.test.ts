@@ -15,10 +15,11 @@ jest.mock('redis', () => {
   
   return {
     createClient: jest.fn(() => ({
+      on: jest.fn(),
       connect: jest.fn().mockResolvedValue(undefined),
       quit: jest.fn().mockResolvedValue(undefined),
       get: jest.fn((key: string) => Promise.resolve(mockData.get(key) || null)),
-      set: jest.fn((key: string, value: string, options?: any) => {
+      set: jest.fn((key: string, value: string, _options?: any) => {
         mockData.set(key, value);
         return Promise.resolve('OK');
       }),
@@ -32,6 +33,7 @@ jest.mock('redis', () => {
 });
 
 jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
   default: jest.fn(() => ({
     ev: {
       on: jest.fn()
@@ -47,7 +49,8 @@ jest.mock('@whiskeysockets/baileys', () => ({
     loggedOut: 401
   },
   Browsers: {
-    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0'])
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
   }
 }));
 
@@ -57,6 +60,7 @@ jest.mock('qrcode', () => ({
 
 jest.mock('../../utils/logger', () => ({
   createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -102,7 +106,7 @@ describe('Dedicated Sessions Property Tests', () => {
 
             // Sessions should be different
             expect(session1.tenantId).not.toBe(session2.tenantId);
-            expect(session1.createdAt).not.toEqual(session2.createdAt);
+            expect(session1.sessionId).not.toBe(session2.sessionId);
 
             // Modify session1
             session1.status = ConnectionStatus.CONNECTED;
@@ -123,6 +127,10 @@ describe('Dedicated Sessions Property Tests', () => {
         fc.asyncProperty(
           fc.array(fc.uuid(), { minLength: 2, maxLength: 10 }),
           async (tenantIds) => {
+            for (const session of sessionManager.getActiveSessions()) {
+              await sessionManager.closeSession(session.tenantId);
+            }
+
             // Ensure unique tenant IDs
             const uniqueTenantIds = Array.from(new Set(tenantIds));
             fc.pre(uniqueTenantIds.length >= 2);

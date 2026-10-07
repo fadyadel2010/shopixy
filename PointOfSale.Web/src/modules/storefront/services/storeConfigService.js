@@ -138,7 +138,7 @@ export const storeConfigService = {
     },
 
     async createThemePreviewLink(themeId) {
-        const response = await api.post(`/admin/store-config/theme/preview-link/${encodeURIComponent(themeId)}`)
+        const response = await api.post(`/admin/store-config/theme/preview-link/${encodeURIComponent(themeId)}`, {})
         const previewUrl = typeof response.data?.previewUrl === 'string' ? response.data.previewUrl.trim() : ''
         const previewToken = typeof response.data?.previewToken === 'string' ? response.data.previewToken.trim() : ''
         const expiresAtUtc = typeof response.data?.expiresAtUtc === 'string' ? response.data.expiresAtUtc : ''

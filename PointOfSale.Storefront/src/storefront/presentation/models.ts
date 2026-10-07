@@ -11,6 +11,7 @@ export interface HeaderNavigationLinkPresentationModel {
 }
 
 export interface HeaderPresentationModel {
+    announcement?: import('@/types/cms').HeaderAnnouncementConfig | null;
     storeName: string;
     headerVariant: 'standard' | 'centered' | 'minimal';
     isHome: boolean;

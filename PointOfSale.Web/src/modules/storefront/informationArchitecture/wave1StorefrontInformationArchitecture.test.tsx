@@ -57,6 +57,7 @@ const ownerUser = {
         'storefront.design.manage',
         'storefront.domains.manage',
         'storefront.auth.manage',
+        'shipping.manage',
     ],
     navigationCapabilities: [
         'commercehub.orders.view',
@@ -505,7 +506,11 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
                 .find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-operations-orders')
             fireEvent.click(ordersGroup)
 
-            // Clicking should toggle — now children should be visible
+            // New actors discover the Operations hierarchy expanded initially.
+            // The first click collapses it; the second reopens it.
+            expect(ordersGroup).toHaveAttribute('aria-expanded', 'false')
+            fireEvent.click(ordersGroup)
+            expect(ordersGroup).toHaveAttribute('aria-expanded', 'true')
             const ordersLink = (await screen.findAllByRole('link', { name: 'Orders' }))
                 .find((el) => el.getAttribute('href') === '/ecommerce/orders')
             expect(ordersLink).toBeInTheDocument()

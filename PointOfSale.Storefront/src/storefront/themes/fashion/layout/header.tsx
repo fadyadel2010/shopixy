@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { HeaderAnnouncement } from '@/storefront/presentation/HeaderAnnouncement';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 
@@ -9,6 +10,7 @@ const FashionHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
     return (
         <>
+            <HeaderAnnouncement model={model} className="bg-[#161311] text-white" />
             <header className="sticky top-0 z-30 border-b border-white/10 bg-[#161311] text-white shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
                 <div className="mx-auto max-w-7xl px-4 py-3 sm:py-4">
                     <div className="flex items-center justify-end text-[11px] uppercase tracking-[0.32em] text-white/60">

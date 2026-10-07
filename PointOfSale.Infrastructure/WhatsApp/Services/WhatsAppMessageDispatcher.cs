@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Events.WhatsApp;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.WhatsApp;
-using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.WhatsApp.Interfaces;
 
@@ -19,7 +18,7 @@ namespace PointOfSale.Infrastructure.WhatsApp.Services;
 /// 2. Kill switch enforcement
 /// 3. Circuit breaker checks
 /// 4. Rate limiting
-/// 5. Feature gate routing (Playwright vs Baileys)
+/// 5. Baileys transport dispatch
 /// 6. Actual message dispatch via transport layer
 /// 
 /// PHONE NORMALIZATION:
@@ -27,24 +26,15 @@ namespace PointOfSale.Infrastructure.WhatsApp.Services;
 /// - Uses tenant's default country for local number resolution
 /// - Fails gracefully with FAILED_INVALID_PHONE status
 /// 
-/// TRANSPORT ABSTRACTION & FEATURE GATE ROUTING:
-/// - Supports two transport implementations: Playwright and Baileys
-/// - Routes based on tenant's UseBaileys feature gate
-/// - No automatic fallback (explicit routing for safety)
+/// TRANSPORT AUTHORITY:
+/// - Baileys is the sole WhatsApp transport
+/// - There is no browser-based fallback
 /// - All existing business logic preserved (OTP, feature gates, circuit breaker)
-/// 
-/// STRANGLER FIG PATTERN:
-/// - Both transports coexist during migration
-/// - Feature gate enables gradual rollout
-/// - Instant rollback by toggling feature gate
-/// - Zero downtime migration
 /// </summary>
 public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
 {
     private readonly IWhatsAppMessageLogService _logService;
-    private readonly IWhatsAppTransport _playwrightTransport;
-    private readonly IWhatsAppTransport _baileysTransport;
-    private readonly ApplicationDbContext _dbContext;
+    private readonly IWhatsAppTransport _transport;
     private readonly IWhatsAppRateLimiter _rateLimiter;
     private readonly IWhatsAppFeatureGateService _featureGate;
     private readonly IEventPublisher _eventPublisher;
@@ -57,9 +47,7 @@ public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
 
     public WhatsAppMessageDispatcher(
         IWhatsAppMessageLogService logService,
-        [FromKeyedServices("playwright")] IWhatsAppTransport playwrightTransport,
-        [FromKeyedServices("baileys")] IWhatsAppTransport baileysTransport,
-        ApplicationDbContext dbContext,
+        [FromKeyedServices("baileys")] IWhatsAppTransport transport,
         IWhatsAppRateLimiter rateLimiter,
         IWhatsAppFeatureGateService featureGate,
         IEventPublisher eventPublisher,
@@ -71,9 +59,7 @@ public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
         ILogger<WhatsAppMessageDispatcher> logger)
     {
         _logService = logService;
-        _playwrightTransport = playwrightTransport;
-        _baileysTransport = baileysTransport;
-        _dbContext = dbContext;
+        _transport = transport;
         _rateLimiter = rateLimiter;
         _featureGate = featureGate;
         _eventPublisher = eventPublisher;
@@ -266,37 +252,15 @@ public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
         // Message text is rebuilt from current SQL authority. Mongo/event payload text is not send authority.
         var messageText = authorized.MessageText;
 
-        // =====================================================================
-        // 7. FEATURE GATE ROUTING (Playwright vs Baileys)
-        // =====================================================================
-        // Select transport based on tenant's UseBaileys feature gate.
-        // NO automatic fallback - explicit routing for safety and observability.
-        // Strangler fig pattern: both transports coexist during migration.
-        // =====================================================================
-        var tenant = await _dbContext.Tenants.FindAsync(tenantId);
-        if (tenant == null)
-        {
-            _logger.LogError("Tenant {TenantId} not found", tenantId);
-            await CompleteAsync("SKIPPED", "Tenant not found");
-            if (isOtpMessage)
-            {
-                _telemetry.RecordOtpDispatchFailed(tenantId, "whatsapp", "tenant_not_found");
-            }
-            return;
-        }
-
-        var transport = tenant.UseBaileys ? _baileysTransport : _playwrightTransport;
-        var transportName = tenant.UseBaileys ? "Baileys" : "Playwright";
-
         _logger.LogInformation(
-            "[WhatsApp] Routing to {Transport} transport | Tenant: {TenantId} | UseBaileys: {UseBaileys}",
-            transportName, tenantId, tenant.UseBaileys);
+            "[WhatsApp] Routing to Baileys transport | Tenant: {TenantId}",
+            tenantId);
 
         // 8. Send via WhatsApp Transport Layer (using NORMALIZED phone)
         // Transport abstraction allows switching between Playwright and Baileys
         try 
         {
-            var result = await transport.SendMessageAsync(
+            var result = await _transport.SendMessageAsync(
                 log.TenantId, 
                 normalizedPhone, 
                 messageText, 
@@ -312,7 +276,7 @@ public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
                 
                 _logger.LogInformation(
                     "[WhatsApp] Message sent via {Transport} | Tenant: {TenantId} | MessageId: {MessageId}",
-                    transportName, tenantId, result.MessageId);
+                    "Baileys", tenantId, result.MessageId);
                 
                 await _eventPublisher.PublishAsync(new WhatsAppMessageSentEvent
                 {
@@ -338,7 +302,7 @@ public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
                 
                 _logger.LogWarning(
                     "[WhatsApp] Message send failed via {Transport} | Tenant: {TenantId} | Error: {Error}",
-                    transportName, tenantId, result.ErrorMessage);
+                    "Baileys", tenantId, result.ErrorMessage);
                 
                 await _eventPublisher.PublishAsync(new WhatsAppMessageFailedEvent
                 {
@@ -361,7 +325,7 @@ public class WhatsAppMessageDispatcher : IWhatsAppMessageDispatcher
         {
             _logger.LogError(ex, 
                 "[WhatsApp] Exception dispatching message via {Transport} | Tenant: {TenantId} | LogId: {LogId}",
-                transportName, tenantId, messageLogId);
+                "Baileys", tenantId, messageLogId);
             await _circuitBreaker.RecordFailureAsync(accountId);
             await CompleteAsync("DELIVERY_UNKNOWN", ex.Message);
             if (isOtpMessage)

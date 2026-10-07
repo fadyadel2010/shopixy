@@ -768,7 +768,8 @@ public sealed class EventOutboxConsistencyArchitectureTests
         Assert.Contains("BuildFreshStoreConfigEventFilter", storefrontConfigConsumer, StringComparison.Ordinal);
         Assert.Contains("filter.Ne(x => x.LastEventId, eventId)", storefrontConfigConsumer, StringComparison.Ordinal);
         Assert.Contains("filter.Lt(x => x.LastEventOccurredAtUtc, occurredAtUtc)", storefrontConfigConsumer, StringComparison.Ordinal);
-        Assert.Contains("filter.Lt(x => x.LastEventVersion, eventVersion)", storefrontConfigConsumer, StringComparison.Ordinal);
+        Assert.Contains("filter.Lt(x => x.LiveVersion, eventVersion)", storefrontConfigConsumer, StringComparison.Ordinal);
+        Assert.Contains("LiveVersion = sqlConfig.LiveVersion", storefrontConfigConsumer, StringComparison.Ordinal);
         Assert.Contains("ReplaceOneAsync", storefrontConfigConsumer, StringComparison.Ordinal);
         Assert.Contains("new ReplaceOptions { IsUpsert = false }", storefrontConfigConsumer, StringComparison.Ordinal);
         Assert.Contains("replaceResult.IsAcknowledged && replaceResult.MatchedCount == 0", storefrontConfigConsumer, StringComparison.Ordinal);

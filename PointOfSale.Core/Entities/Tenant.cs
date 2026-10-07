@@ -106,7 +106,7 @@ public class Tenant
     /// Default: false (Playwright) for backward compatibility.
     /// Phase 4: Backend Integration - Gradual rollout with instant rollback capability.
     /// </summary>
-    public bool UseBaileys { get; set; } = false;
+    public bool UseBaileys { get; set; } = true;
 
     public bool IsOperational => Status == TenantStatus.Active && DeletedAtUtc == null;
 
@@ -144,4 +144,3 @@ public class Tenant
         IsActive = Status == TenantStatus.Active && DeletedAtUtc == null;
     }
 }
-

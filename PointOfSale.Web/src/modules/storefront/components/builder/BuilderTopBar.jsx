@@ -35,6 +35,7 @@ export function BuilderTopBar({
     saveError = null,
     lastSavedAt = null,
     onRetrySave,
+    hasPendingDraft = false,
 }) {
     const { i18n, t } = useTranslation()
     const isRTL = i18n.language === 'ar'
@@ -117,7 +118,7 @@ export function BuilderTopBar({
             leading={leading}
             previewAction={{ label: t('storefront.homepageEditor.previewDraft'), onClick: onPreview, disabled: isSaving || isPublishing, title: t('storefront.homepageEditor.previewHint') }}
             historyAction={{ label: t('storefront.homepageEditor.history'), onClick: onHistory, disabled: isSaving || isPublishing }}
-            discardAction={{ label: t('storefront.homepageEditor.discard'), onClick: onDiscard, disabled: !isDirty || isSaving || isPublishing }}
+            discardAction={{ label: t('storefront.homepageEditor.discard'), onClick: onDiscard, disabled: (!isDirty && !hasPendingDraft) || isSaving || isPublishing }}
             saveAction={{ label: t('storefront.saveDraft'), busyLabel: t('storefront.homepageEditor.saving'), onClick: onSave, disabled: !isDirty || isPublishing, busy: isSaving }}
             publishAction={{ label: showTemplateControls ? t('storefront.homepageEditor.publishTemplate') : t('storefront.homepageEditor.publishHomepage'), busyLabel: t('storefront.homepageEditor.publishing'), onClick: onPublish, disabled: isSaving, busy: isPublishing }}
         />

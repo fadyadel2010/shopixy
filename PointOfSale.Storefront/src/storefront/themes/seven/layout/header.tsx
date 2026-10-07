@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { HeaderAnnouncement } from '@/storefront/presentation/HeaderAnnouncement';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 
@@ -9,6 +10,7 @@ const SevenHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
     return (
         <>
+            <HeaderAnnouncement model={model} className="bg-[#9D7877] text-white" />
             <header className="sticky top-0 z-30 bg-[#9D7877] text-white shadow-md">
                 <div className="mx-auto max-w-7xl px-4 py-3 sm:py-4">
                     <div className="flex items-center justify-between">
@@ -30,11 +32,11 @@ const SevenHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
                         {/* Right Icons */}
                         <div className="flex items-center gap-2 lg:gap-3">
                             <SearchSlot className="inline-flex h-9 w-9 items-center justify-center rounded-full text-white hover:bg-white/10 hover:text-white" />
-                            <LanguageSlot variant="text" size="sm" className="text-white hover:text-white/80" />
+                            <div className="hidden md:block"><LanguageSlot variant="text" size="sm" className="text-white hover:text-white/80" /></div>
                             <div className="hidden md:block">
                                 <AuthenticationSlot variant="desktop" />
                             </div>
-                            <WishlistSlot className="text-white hover:bg-white/10 hover:text-white" />
+                            <div className="hidden md:block"><WishlistSlot className="text-white hover:bg-white/10 hover:text-white" /></div>
                             <CartSlot className="text-white hover:bg-white/10 hover:text-white" />
                             <button
                                 type="button"
@@ -54,6 +56,10 @@ const SevenHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
                 {mobileOpen ? (
                     <div className="border-t border-white/20 bg-[#9D7877] px-4 py-4 md:hidden">
                         <div className="space-y-2">
+                            <div className="flex items-center gap-3">
+                                <LanguageSlot variant="text" size="sm" className="text-white" />
+                                <WishlistSlot className="text-white hover:bg-white/10" />
+                            </div>
                             <SearchSlot onClick={() => setMobileOpen(false)} className="block w-full rounded-lg px-4 py-3 text-left text-sm uppercase tracking-[0.16em] text-white transition-colors hover:opacity-80">
                                 {labels.search}
                             </SearchSlot>

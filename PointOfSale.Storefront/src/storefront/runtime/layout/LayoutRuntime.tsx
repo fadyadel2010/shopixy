@@ -118,12 +118,14 @@ export const HeaderRuntime: React.FC<HeaderRuntimeProps> = ({ component: Compone
     const headerLinks = useNavigationStore(selectHeaderLinks);
     const isLoading = useNavigationStore(selectNavigationLoading);
     const error = useNavigationStore(selectNavigationError);
+    const announcement = useNavigationStore((state) => state.navigation?.header.announcement);
 
     useEffect(() => {
         void loadNavigation();
     }, [loadNavigation]);
 
     const model = useMemo<HeaderPresentationModel>(() => ({
+        announcement,
         storeName,
         headerVariant: layout.headerVariant,
         isHome: location.pathname === '/',
@@ -145,7 +147,9 @@ export const HeaderRuntime: React.FC<HeaderRuntimeProps> = ({ component: Compone
         },
         labels: {
             account: t('header.account'),
-            announcement: t('announcement.defaultText'),
+            announcement: announcement
+                ? (language === 'ar' && announcement.textAr ? announcement.textAr : announcement.text)
+                : t('announcement.defaultText'),
             closeMenu: t('header.closeMenu'),
             mainNavigation: t('accessibility.mainNavigation'),
             menu: t('header.menu'),
@@ -155,7 +159,7 @@ export const HeaderRuntime: React.FC<HeaderRuntimeProps> = ({ component: Compone
             searchProducts: t('header.searchProducts'),
             viewCart: t('header.viewCart'),
         },
-    }), [error, headerLinks, isLoading, language, layout.headerVariant, location.pathname, storeName, t]);
+    }), [announcement, error, headerLinks, isLoading, language, layout.headerVariant, location.pathname, storeName, t]);
 
     return (
         <HeaderRuntimeContext.Provider value={model}>

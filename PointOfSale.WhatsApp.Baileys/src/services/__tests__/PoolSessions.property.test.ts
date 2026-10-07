@@ -13,15 +13,49 @@ import fc from 'fast-check';
 import { PoolManager } from '../PoolManager';
 import { SessionManager } from '../SessionManager';
 import { MessageSender } from '../MessageSender';
-import { SessionMode, ConnectionStatus } from '../../models/Session';
+import { SessionMode, ConnectionStatus, PoolMember } from '../../models/Session';
 import { MessageType } from '../../models/Message';
-import { createClient, RedisClientType } from 'redis';
+import { RedisClientType } from 'redis';
+
+jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    ev: { on: jest.fn() },
+    sendMessage: jest.fn(),
+    logout: jest.fn().mockResolvedValue(undefined)
+  })),
+  useMultiFileAuthState: jest.fn(() => ({
+    state: {},
+    saveCreds: jest.fn()
+  })),
+  DisconnectReason: { loggedOut: 401 },
+  Browsers: {
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
+  },
+  proto: { WebMessageInfo: {} }
+}));
+
+jest.mock('qrcode', () => ({
+  toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,mockQRCode')
+}));
+
+jest.mock('../../utils/logger', () => ({
+  createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+  }))
+}));
 
 // Mock Redis client
 const createMockRedis = (): RedisClientType => {
   const storage = new Map<string, { value: string; expiry?: number }>();
 
   return {
+    on: jest.fn(),
     connect: jest.fn().mockResolvedValue(undefined),
     quit: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockImplementation(async (key: string) => {
@@ -93,11 +127,14 @@ describe('Pool Sessions - Property-Based Tests', () => {
       await fc.assert(
         fc.asyncProperty(
           // Generate array of tenant IDs (1-20 tenants)
-          fc.array(fc.string({ minLength: 1, maxLength: 10 }), { minLength: 1, maxLength: 20 }),
+          fc.uniqueArray(fc.string({ minLength: 1, maxLength: 10 }), { minLength: 1, maxLength: 20 }),
           async (tenantIds) => {
             // Reset pool state
             for (const member of (poolManager as any).poolMembers.values()) {
               member.activeConnections = 0;
+            }
+            for (const tenantId of tenantIds) {
+              await poolManager.clearTenantPoolMapping(tenantId);
             }
 
             const selections: string[] = [];
@@ -165,7 +202,7 @@ describe('Pool Sessions - Property-Based Tests', () => {
           fc.array(fc.string({ minLength: 1, maxLength: 10 }), { minLength: 1, maxLength: 10 }),
           async (tenantIds) => {
             // Mark one member as inactive
-            const members = Array.from((poolManager as any).poolMembers.values());
+            const members = Array.from((poolManager as any).poolMembers.values()) as PoolMember[];
             members[0].status = 'inactive';
 
             // Select pool members

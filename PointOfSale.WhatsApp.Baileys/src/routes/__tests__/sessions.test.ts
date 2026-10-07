@@ -13,6 +13,7 @@ import { SessionMode, ConnectionStatus } from '../../models/Session';
 // Mock dependencies
 jest.mock('redis', () => ({
   createClient: jest.fn(() => ({
+    on: jest.fn(),
     connect: jest.fn().mockResolvedValue(undefined),
     quit: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
@@ -23,6 +24,7 @@ jest.mock('redis', () => ({
 }));
 
 jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
   default: jest.fn(() => ({
     ev: {
       on: jest.fn()
@@ -37,7 +39,8 @@ jest.mock('@whiskeysockets/baileys', () => ({
     loggedOut: 401
   },
   Browsers: {
-    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0'])
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
   }
 }));
 
@@ -47,6 +50,7 @@ jest.mock('qrcode', () => ({
 
 jest.mock('../../utils/logger', () => ({
   createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -165,15 +169,15 @@ describe('Session Routes', () => {
       expect(response.body.error).toContain('not available for pool sessions');
     });
 
-    it('should return 404 if QR code not available', async () => {
+    it('should return 408 if QR generation times out', async () => {
       await sessionManager.getOrCreateSession('test-tenant-7', SessionMode.DEDICATED);
 
       const response = await request(app)
         .get('/sessions/test-tenant-7/qr')
-        .expect(404);
+        .expect(408);
 
       expect(response.body.success).toBe(false);
-      expect(response.body.error).toContain('QR code not available');
+      expect(response.body.error).toContain('QR code generation timeout');
     });
 
     it('should reject empty tenant ID', async () => {

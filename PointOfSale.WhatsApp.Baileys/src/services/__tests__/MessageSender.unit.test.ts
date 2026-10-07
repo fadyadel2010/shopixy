@@ -6,12 +6,14 @@
 
 import { MessageSender } from '../MessageSender';
 import { SessionManager } from '../SessionManager';
+import { PoolManager } from '../PoolManager';
 import { MessageType } from '../../models/Message';
 import { ConnectionStatus, SessionMode } from '../../models/Session';
 
 // Mock dependencies
 jest.mock('redis', () => ({
   createClient: jest.fn(() => ({
+    on: jest.fn(),
     connect: jest.fn().mockResolvedValue(undefined),
     quit: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
@@ -22,6 +24,7 @@ jest.mock('redis', () => ({
 }));
 
 jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
   default: jest.fn(() => ({
     ev: {
       on: jest.fn()
@@ -37,7 +40,8 @@ jest.mock('@whiskeysockets/baileys', () => ({
     loggedOut: 401
   },
   Browsers: {
-    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0'])
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
   },
   proto: {
     WebMessageInfo: {}
@@ -50,6 +54,7 @@ jest.mock('qrcode', () => ({
 
 jest.mock('../../utils/logger', () => ({
   createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -64,7 +69,10 @@ describe('MessageSender Unit Tests', () => {
   beforeEach(async () => {
     sessionManager = new SessionManager();
     await sessionManager.initialize();
-    messageSender = new MessageSender(sessionManager);
+    messageSender = new MessageSender(
+      sessionManager,
+      new PoolManager(sessionManager.getRedisClient())
+    );
   });
 
   afterEach(async () => {
@@ -142,7 +150,10 @@ describe('MessageSender Unit Tests', () => {
   });
 
   describe('Session Validation', () => {
-    it('should fail if session not found', async () => {
+    it('should fail if a missing session cannot reconnect', async () => {
+      const connectSpy = jest.spyOn(sessionManager, 'connectSession')
+        .mockRejectedValueOnce(new Error('Session not connected'));
+
       const result = await messageSender.sendTextMessage({
         tenantId: 'non-existent-tenant',
         phone: '+1234567890',
@@ -151,7 +162,8 @@ describe('MessageSender Unit Tests', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Session not found');
+      expect(result.error).toContain('not connected');
+      connectSpy.mockRestore();
     });
 
     it('should fail if session not connected', async () => {
@@ -181,7 +193,7 @@ describe('MessageSender Unit Tests', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('socket not available');
+      expect(result.error?.toLowerCase()).toContain('socket not available');
     });
   });
 

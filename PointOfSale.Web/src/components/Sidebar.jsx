@@ -42,6 +42,11 @@ import {
     isStorefrontNodeActive,
     resolveStorefrontScreen,
 } from '../modules/storefront/informationArchitecture'
+import {
+    readSidebarExpansion,
+    serializeSidebarExpansion,
+    sidebarActorScope,
+} from '../modules/storefront/informationArchitecture/sidebarExpansion'
 
 
 
@@ -75,24 +80,27 @@ const STOREFRONT_ICONS = {
     Globe,
 }
 
-const readExpandedMenus = () => {
+const readExpandedMenus = (scope) => {
     try {
         const storefrontValue = window.localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY)
         const operationsValue = window.localStorage.getItem(STOREFRONT_OPERATIONS_SIDEBAR_STATE_KEY)
-        const parsedStorefront = storefrontValue ? JSON.parse(storefrontValue) : null
-        const parsedOperations = operationsValue ? JSON.parse(operationsValue) : null
-        const merged = { ...(parsedStorefront || {}), ...(parsedOperations || {}) }
-        return typeof merged === 'object' && !Array.isArray(merged) ? merged : {}
+        return readSidebarExpansion(scope, STOREFRONT_PRODUCT_NAVIGATION, [storefrontValue, operationsValue])
     } catch {
-        return {}
+        return readSidebarExpansion(scope, STOREFRONT_PRODUCT_NAVIGATION, [])
     }
 }
 
 export default function Sidebar({ isOpen, onClose }) {
+    const user = useAuthStore((state) => state.user)
+    const scope = sidebarActorScope(user)
+    return <SidebarContent key={scope || 'anonymous'} isOpen={isOpen} onClose={onClose} scope={scope} />
+}
+
+function SidebarContent({ isOpen, onClose, scope }) {
     const { t } = useTranslation()
     const { user } = useAuthStore()
     const location = useLocation()
-    const [expandedMenus, setExpandedMenus] = useState(readExpandedMenus)
+    const [expandedMenus, setExpandedMenus] = useState(() => readExpandedMenus(scope))
     const { dir, isRTL } = useRTL()
 
     const toggleMenu = (menuKey) => {
@@ -121,13 +129,13 @@ export default function Sidebar({ isOpen, onClose }) {
     }
 
     // Translate the merged Storefront tree and project POS permissions onto it.
-    const localizeStorefrontProductNode = (node) => ({
+    const localizeStorefrontProductNode = (node, inheritedPermission) => ({
         ...node,
         label: t(node.labelKey, node.fallbackLabel),
-        permission: node.permission || (node.path?.startsWith('/ecommerce')
+        permission: node.permission || inheritedPermission || (node.children ? undefined : node.path?.startsWith('/ecommerce')
             ? 'storefront.orders.view'
             : 'storefront.design.manage'),
-        children: node.children?.map(localizeStorefrontProductNode),
+        children: node.children?.map(child => localizeStorefrontProductNode(child, node.permission || inheritedPermission)),
     })
 
     // New navigation structure with renamed items and proper order
@@ -351,8 +359,7 @@ export default function Sidebar({ isOpen, onClose }) {
         },
     ]
 
-    // Filter menu items based on user roles
-    // Backend returns single 'role' string (e.g., "Owner", "Admin")
+    // Filter the navigation tree using backend-derived permissions/capabilities.
     // Constitutional law (ONLINE_STORE_CANONICAL_BLUEPRINT.md §17 Law 16):
     //   The Storefront product must never disappear. When capability-based
     //   filtering removes all children of a Storefront-product section, a
@@ -391,7 +398,8 @@ export default function Sidebar({ isOpen, onClose }) {
         }
 
         const children = item.children?.map(filterMenuNode).filter(Boolean)
-        if (item.children && children.length === 0) {
+        const hasAccessibleDestination = (node) => !node.placeholder && Boolean(node.path || node.children?.some(hasAccessibleDestination))
+        if (item.children && !children.some(hasAccessibleDestination)) {
             // Storefront product sections must never vanish — render a placeholder
             // (ONLINE_STORE_CANONICAL_BLUEPRINT.md §12.6, §17 Law 16)
             if (STOREFRONT_PRODUCT_KEYS.has(item.key)) {
@@ -416,14 +424,15 @@ export default function Sidebar({ isOpen, onClose }) {
     }
 
     useEffect(() => {
+        if (!scope) return
         try {
-            const serialized = JSON.stringify(expandedMenus)
+            const serialized = serializeSidebarExpansion(scope, expandedMenus)
             window.localStorage.setItem(STOREFRONT_SIDEBAR_STATE_KEY, serialized)
             window.localStorage.setItem(STOREFRONT_OPERATIONS_SIDEBAR_STATE_KEY, serialized)
         } catch {
             // Navigation remains functional when browser storage is unavailable.
         }
-    }, [expandedMenus])
+    }, [expandedMenus, scope])
 
     useEffect(() => {
         setExpandedMenus((previous) => {
@@ -469,9 +478,11 @@ export default function Sidebar({ isOpen, onClose }) {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
                     </button>
-                    <div id={submenuId} className={`overflow-hidden transition-all duration-300 ${expandedMenus[node.key] ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                        <div className={`mt-1 space-y-1 ${isRTL ? 'pr-4' : 'pl-4'}`}>
-                            {node.children.map((child) => renderNestedNode(child, depth + 1))}
+                    <div id={submenuId} inert={expandedMenus[node.key] ? undefined : ''} className={`grid transition-[grid-template-rows,opacity] duration-300 ${expandedMenus[node.key] ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                        <div className="min-h-0 overflow-hidden">
+                            <div className={`mt-1 space-y-1 ${isRTL ? 'pr-4' : 'pl-4'}`}>
+                                {node.children.map((child) => renderNestedNode(child, depth + 1))}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -581,11 +592,14 @@ export default function Sidebar({ isOpen, onClose }) {
                                     {/* Submenu */}
                                     <div
                                         id={`sidebar-submenu-${item.key}`}
-                                        className={`overflow-hidden transition-all duration-300 ${expandedMenus[item.key] ? 'max-h-[1200px] opacity-100 mt-1' : 'max-h-0 opacity-0'
+                                        inert={expandedMenus[item.key] ? undefined : ''}
+                                        className={`grid transition-[grid-template-rows,opacity] duration-300 ${expandedMenus[item.key] ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
                                             }`}
                                     >
-                                        <div className={`space-y-1 ${isRTL ? 'pr-4' : 'pl-4'}`}>
-                                            {item.children.map((child) => renderNestedNode(child))}
+                                        <div className="min-h-0 overflow-hidden">
+                                            <div className={`space-y-1 ${expandedMenus[item.key] ? 'mt-1' : ''} ${isRTL ? 'pr-4' : 'pl-4'}`}>
+                                                {item.children.map((child) => renderNestedNode(child))}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

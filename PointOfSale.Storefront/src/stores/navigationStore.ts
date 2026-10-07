@@ -9,6 +9,7 @@
  */
 
 import { create } from 'zustand';
+import { useStoreConfigStore } from '@/store/storeConfigStore';
 import { fetchNavigation } from '@/services/api/storefrontApi';
 import {
     getRuntimeCacheIdentity,
@@ -54,6 +55,11 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
     loadedAt: null,
 
     loadNavigation: async (options = {}) => {
+        const preview = useStoreConfigStore.getState();
+        if (preview.configSource === 'preview' && preview.config.previewChrome) {
+            set({ navigation: preview.config.previewChrome.navigation, loading: false, error: null });
+            return;
+        }
         const identity = getRuntimeCacheIdentity('navigation');
         const state = get();
 
@@ -75,7 +81,7 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
         }
 
         const requestGeneration = navigationGeneration;
-        set({ loading: true, error: null });
+        set({ loading: true, error: null, ...(state.cacheIdentity && state.cacheIdentity !== identity ? { navigation: null } : {}) });
 
         let requestRecord!: NavigationRequest;
         const promise = (async () => {

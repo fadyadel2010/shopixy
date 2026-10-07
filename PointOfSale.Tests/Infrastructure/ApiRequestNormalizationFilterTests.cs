@@ -15,6 +15,26 @@ namespace PointOfSale.Tests.Infrastructure;
 public class ApiRequestNormalizationFilterTests
 {
     [Fact]
+    public async Task HeaderAnnouncement_OptionalEmptyFieldsPassCanonicalRequestNormalization()
+    {
+        var context = CreateActionExecutingContext(new Dictionary<string, object?>
+        {
+            ["request"] = new AdminNavigationRequest
+            {
+                Announcement = new PointOfSale.Core.Models.HeaderAnnouncementConfig { Text = "Collection" }
+            }
+        }, "announcement-validation");
+        var nextInvoked = false;
+        await new ApiRequestNormalizationFilter().OnActionExecutionAsync(context, () =>
+        {
+            nextInvoked = true;
+            return Task.FromResult(new ActionExecutedContext(context, [], context.Controller));
+        });
+        Assert.True(nextInvoked);
+        Assert.Null(context.Result);
+    }
+
+    [Fact]
     public async Task OnActionExecutionAsync_InvalidPayload_ReturnsStructuredValidationContract()
     {
         var filter = new ApiRequestNormalizationFilter();

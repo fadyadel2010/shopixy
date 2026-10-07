@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { createHash } from 'node:crypto'
@@ -39,18 +39,32 @@ function createStorefrontCsp({ allowReactRefreshPreamble }: { allowReactRefreshP
 }
 
 // https://vitejs.dev/config/
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
     const isDevServer = command === 'serve'
+    const adminOrigin = loadEnv(mode, process.cwd()).VITE_ADMIN_ORIGIN || (isDevServer ? 'http://localhost:5173' : '')
     const storefrontCsp = createStorefrontCsp({
         allowReactRefreshPreamble: isDevServer,
     })
+    const draftPreviewCsp = storefrontCsp.replace("frame-ancestors 'none'", `frame-ancestors ${adminOrigin || "'none'"}`)
 
     return {
         plugins: [
             react(),
             {
                 name: 'shopixy-storefront-csp',
-                transformIndexHtml() {
+                configureServer(server) {
+                    server.middlewares.use((req, res, next) => {
+                        res.setHeader('Content-Security-Policy', req.url?.split('?')[0] === '/draft-preview.html' ? draftPreviewCsp : storefrontCsp)
+                        next()
+                    })
+                },
+                configurePreviewServer(server) {
+                    server.middlewares.use((req, res, next) => {
+                        res.setHeader('Content-Security-Policy', req.url?.split('?')[0] === '/draft-preview.html' ? draftPreviewCsp : storefrontCsp)
+                        next()
+                    })
+                },
+                transformIndexHtml(_html, context) {
                     if (isDevServer) {
                         return []
                     }
@@ -60,7 +74,7 @@ export default defineConfig(({ command }) => {
                             tag: 'meta',
                             attrs: {
                                 'http-equiv': 'Content-Security-Policy',
-                                content: storefrontCsp,
+                                content: context.filename.endsWith('draft-preview.html') ? draftPreviewCsp : storefrontCsp,
                             },
                             injectTo: 'head-prepend',
                         },
@@ -77,9 +91,6 @@ export default defineConfig(({ command }) => {
         server: {
             fs: {
                 allow: [path.resolve(__dirname), path.resolve(__dirname, '../theme-authority')],
-            },
-            headers: {
-                'Content-Security-Policy': storefrontCsp,
             },
             port: 5174,
             proxy: {
@@ -105,9 +116,12 @@ export default defineConfig(({ command }) => {
                 },
             },
         },
-        preview: {
-            headers: {
-                'Content-Security-Policy': storefrontCsp,
+        build: {
+            rollupOptions: {
+                input: {
+                    storefront: path.resolve(__dirname, 'index.html'),
+                    draftPreview: path.resolve(__dirname, 'draft-preview.html'),
+                },
             },
         },
     }

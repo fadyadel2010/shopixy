@@ -62,6 +62,51 @@ public sealed class ProductResponseMapperTests
         var response = product.ToResponseDto();
 
         Assert.Equal("/media/primary.png,/media/second.png", response.Images);
+        Assert.Equal(response.Images, product.ToBarcodeResponseDto(null).Images);
+    }
+
+    [Fact]
+    public async Task PosQuickAccess_UsesCanonicalMediaForSimpleVariantAndFallbackLines()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options, new TestTenantContext(tenantId));
+        var product = new Product
+        {
+            Id = Guid.NewGuid(), TenantId = tenantId, Name = "POS media", HasVariants = true,
+            IsActive = true, Images = "/legacy-must-not-win.png",
+            Category = new Category { Id = Guid.NewGuid(), TenantId = tenantId, Name = "Media" }
+        };
+        product.CategoryId = product.Category.Id;
+        var primary = new ProductMedia { Id = Guid.NewGuid(), TenantId = tenantId, ProductId = product.Id,
+            MediaType = "image", Url = "/primary.png", Position = 1 };
+        var selected = new ProductMedia { Id = Guid.NewGuid(), TenantId = tenantId, ProductId = product.Id,
+            MediaType = "image", Url = "/variant.png", Position = 2 };
+        product.Media.Add(primary);
+        product.Media.Add(selected);
+        product.Variants.Add(new ProductVariant { Id = Guid.NewGuid(), TenantId = tenantId,
+            ProductId = product.Id, IsActive = true, IsDefault = true, MediaId = selected.Id, Price = 25 });
+        product.Variants.Add(new ProductVariant { Id = Guid.NewGuid(), TenantId = tenantId,
+            ProductId = product.Id, IsActive = true, Price = 25 });
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var controller = CreateProductsController(db, tenantId);
+        var result = await controller.QuickAccess();
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(result.Result).Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var images = json.RootElement.EnumerateArray().Select(item => item.GetProperty("images").GetString()).ToList();
+        Assert.Contains("/primary.png", images);
+        Assert.Contains("/variant.png", images);
+        Assert.DoesNotContain("/legacy-must-not-win.png", images);
+
+        product = await db.Products.Include(p => p.Media).Include(p => p.Variants).SingleAsync();
+        product.HasVariants = false;
+        await db.SaveChangesAsync();
+        result = await controller.QuickAccess();
+        using var simpleJson = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(result.Result).Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        Assert.Equal("/primary.png", simpleJson.RootElement[0].GetProperty("images").GetString());
     }
 
     [Fact]

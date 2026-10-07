@@ -65,6 +65,7 @@ public class StorefrontNavigationDocument
 /// </summary>
 public class NavigationMenu
 {
+    public PointOfSale.Core.Models.HeaderAnnouncementConfig? Announcement { get; set; }
     /// <summary>
     /// Menu links.
     /// </summary>

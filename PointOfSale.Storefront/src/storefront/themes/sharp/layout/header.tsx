@@ -30,7 +30,7 @@ const SharpHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
     return (
         <>
-            <AnnouncementMarquee text={labels.announcement} />
+            <AnnouncementMarquee {...model.announcement} text={labels.announcement} />
 
             <header
                 role="banner"

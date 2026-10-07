@@ -1,12 +1,12 @@
 /**
  * Pearl Theme — Header (Phase T1.1)
  *
- * Layout identity: transparent over hero, centered brand, centered uppercase
+ * Layout identity: dark site chrome, centered brand, centered uppercase
  * navigation, search + cart icons, sticky with scroll elevation, graceful
  * mobile degradation.
  *
  * Runtime injects localized navigation and mandatory capability slots. Only
- * the visual shell (transparent-over-hero, centered, red accent, Jost
+ * the visual shell (dark header, centered, red accent, Jost
  * uppercase nav) is Pearl-specific.
  */
 
@@ -30,14 +30,14 @@ const PearlHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
     return (
         <>
-            <AnnouncementMarquee text={labels.announcement} />
+            <AnnouncementMarquee {...model.announcement} text={labels.announcement} />
 
             <header
                 role="banner"
                 className={`sticky top-0 z-30 w-full transition-colors duration-300 ${
                     isScrolled
                         ? 'bg-[#141218]/95 shadow-[0_18px_40px_rgba(0,0,0,0.22)]'
-                        : 'bg-transparent'
+                        : 'bg-[#141218]'
                 } text-white`}
             >
                 <div className={`${PEARL_CONTAINER} py-3 sm:py-4`}>

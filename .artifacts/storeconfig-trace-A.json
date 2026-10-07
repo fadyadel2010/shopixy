@@ -1,0 +1,520 @@
+[
+  {
+    "sql": {
+      "Id": "9cd01634-f469-4b76-ad20-13a74b88cf13",
+      "TenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+      "LiveVersion": 229,
+      "UpdatedAtUtc": "2026-10-07T21:34:45.233836Z",
+      "customization": {
+        "navigation": {
+          "live": {
+            "header": {
+              "announcement": null,
+              "links": [
+                {
+                  "label": "Home",
+                  "labelAr": "",
+                  "authoringType": "custom",
+                  "type": "internal",
+                  "targetId": "",
+                  "collectionKey": "",
+                  "path": "/",
+                  "slug": "",
+                  "openInNewTab": false,
+                  "order": 0,
+                  "enabled": true
+                },
+                {
+                  "label": "Shop",
+                  "labelAr": "",
+                  "authoringType": "collection",
+                  "type": "internal",
+                  "targetId": "",
+                  "collectionKey": "all-products",
+                  "path": "/products",
+                  "slug": "",
+                  "openInNewTab": false,
+                  "order": 1,
+                  "enabled": true
+                }
+              ]
+            },
+            "footer": {
+              "links": [
+                {
+                  "label": "About Us",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "04899853-5c84-5dab-b25a-f56bd7d6f6b2",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "about",
+                  "openInNewTab": false,
+                  "order": 0,
+                  "enabled": true
+                },
+                {
+                  "label": "Contact",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "a7f6f34e-f508-51d8-a874-11bda02f2f04",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "contact",
+                  "openInNewTab": false,
+                  "order": 1,
+                  "enabled": true
+                },
+                {
+                  "label": "Privacy Policy",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "ea226064-75cc-54a2-bd52-804ae60c168f",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "privacy",
+                  "openInNewTab": false,
+                  "order": 2,
+                  "enabled": true
+                },
+                {
+                  "label": "Terms \u0026 Conditions",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "6f8955d1-895d-5ae9-a83c-e8379cc6ad0b",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "terms",
+                  "openInNewTab": false,
+                  "order": 3,
+                  "enabled": true
+                }
+              ]
+            }
+          },
+          "draft": {
+            "header": {
+              "announcement": null,
+              "links": [
+                {
+                  "label": "Home",
+                  "labelAr": "",
+                  "authoringType": "custom",
+                  "type": "internal",
+                  "targetId": "",
+                  "collectionKey": "",
+                  "path": "/",
+                  "slug": "",
+                  "openInNewTab": false,
+                  "order": 0,
+                  "enabled": true
+                },
+                {
+                  "label": "Shop",
+                  "labelAr": "",
+                  "authoringType": "collection",
+                  "type": "internal",
+                  "targetId": "",
+                  "collectionKey": "all-products",
+                  "path": "/products",
+                  "slug": "",
+                  "openInNewTab": false,
+                  "order": 1,
+                  "enabled": true
+                }
+              ]
+            },
+            "footer": {
+              "links": [
+                {
+                  "label": "About Us",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "04899853-5c84-5dab-b25a-f56bd7d6f6b2",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "about",
+                  "openInNewTab": false,
+                  "order": 0,
+                  "enabled": true
+                },
+                {
+                  "label": "Contact",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "a7f6f34e-f508-51d8-a874-11bda02f2f04",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "contact",
+                  "openInNewTab": false,
+                  "order": 1,
+                  "enabled": true
+                },
+                {
+                  "label": "Privacy Policy",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "ea226064-75cc-54a2-bd52-804ae60c168f",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "privacy",
+                  "openInNewTab": false,
+                  "order": 2,
+                  "enabled": true
+                },
+                {
+                  "label": "Terms \u0026 Conditions",
+                  "labelAr": "",
+                  "authoringType": "cms",
+                  "type": "cms",
+                  "targetId": "6f8955d1-895d-5ae9-a83c-e8379cc6ad0b",
+                  "collectionKey": "",
+                  "path": "",
+                  "slug": "terms",
+                  "openInNewTab": false,
+                  "order": 3,
+                  "enabled": true
+                }
+              ]
+            }
+          },
+          "lastPublishedAt": "2026-10-07T20:46:58.9110209Z"
+        },
+        "pages": {
+          "home": {
+            "live": {
+              "sections": [
+                {
+                  "id": "section_59dbdb72acf455958a366b2024148be9",
+                  "type": "hero-banner",
+                  "order": 0,
+                  "enabled": true,
+                  "settings": {
+                    "title": "CERT Convergence A",
+                    "subtitle": "Discover amazing products",
+                    "ctaText": "Shop Now",
+                    "ctaLink": "/products",
+                    "backgroundImage": "/api/storefront/homepage-media/e9c9d01a-7a4c-412a-9642-fb92f8304b10",
+                    "backgroundColor": "#111827",
+                    "overlayOpacity": 40,
+                    "textColor": "#ffffff",
+                    "alignment": "left",
+                    "height": "large",
+                    "highlights": []
+                  }
+                },
+                {
+                  "id": "section_238ebcf3f65759afacee660dca783b42",
+                  "type": "featured-products",
+                  "order": 1,
+                  "enabled": true,
+                  "settings": {
+                    "title": "Featured Products",
+                    "subtitle": "",
+                    "displayStyle": "carousel",
+                    "source": "all",
+                    "maxItems": 8,
+                    "productIds": [],
+                    "showBadge": true,
+                    "badgeText": "Featured"
+                  }
+                },
+                {
+                  "id": "section_f59399355bc55d3bba01b1cd8f8bfc29",
+                  "type": "category-grid",
+                  "order": 2,
+                  "enabled": true,
+                  "settings": {
+                    "title": "Shop by Category",
+                    "subtitle": "",
+                    "source": "all",
+                    "maxItems": 6,
+                    "categoryIds": [],
+                    "columns": 3
+                  }
+                },
+                {
+                  "id": "section_e4fe6ded2cf258d5b9a281775ce0dc1c",
+                  "type": "newsletter-signup",
+                  "order": 3,
+                  "enabled": true,
+                  "settings": {
+                    "heading": "Stay in the loop",
+                    "subheading": "Subscribe to our newsletter for exclusive offers and updates",
+                    "buttonText": "Subscribe",
+                    "backgroundColor": "#111827",
+                    "textColor": "#ffffff"
+                  }
+                }
+              ]
+            },
+            "draft": {
+              "sections": [
+                {
+                  "id": "section_59dbdb72acf455958a366b2024148be9",
+                  "type": "hero-banner",
+                  "order": 0,
+                  "enabled": true,
+                  "settings": {
+                    "title": "CERT Convergence A",
+                    "subtitle": "Discover amazing products",
+                    "ctaText": "Shop Now",
+                    "ctaLink": "/products",
+                    "backgroundImage": "/api/storefront/homepage-media/e9c9d01a-7a4c-412a-9642-fb92f8304b10",
+                    "backgroundColor": "#111827",
+                    "overlayOpacity": 40,
+                    "textColor": "#ffffff",
+                    "alignment": "left",
+                    "height": "large",
+                    "highlights": []
+                  }
+                },
+                {
+                  "id": "section_238ebcf3f65759afacee660dca783b42",
+                  "type": "featured-products",
+                  "order": 1,
+                  "enabled": true,
+                  "settings": {
+                    "title": "Featured Products",
+                    "subtitle": "",
+                    "displayStyle": "carousel",
+                    "source": "all",
+                    "maxItems": 8,
+                    "productIds": [],
+                    "showBadge": true,
+                    "badgeText": "Featured"
+                  }
+                },
+                {
+                  "id": "section_f59399355bc55d3bba01b1cd8f8bfc29",
+                  "type": "category-grid",
+                  "order": 2,
+                  "enabled": true,
+                  "settings": {
+                    "title": "Shop by Category",
+                    "subtitle": "",
+                    "source": "all",
+                    "maxItems": 6,
+                    "categoryIds": [],
+                    "columns": 3
+                  }
+                },
+                {
+                  "id": "section_e4fe6ded2cf258d5b9a281775ce0dc1c",
+                  "type": "newsletter-signup",
+                  "order": 3,
+                  "enabled": true,
+                  "settings": {
+                    "heading": "Stay in the loop",
+                    "subheading": "Subscribe to our newsletter for exclusive offers and updates",
+                    "buttonText": "Subscribe",
+                    "backgroundColor": "#111827",
+                    "textColor": "#ffffff"
+                  }
+                }
+              ]
+            },
+            "lastPublishedAt": "2026-10-07T21:34:45.2337846Z"
+          }
+        },
+        "storefrontTheme": "alizon"
+      }
+    },
+    "mongo": [
+      {
+        "_id": "9cd01634-f469-4b76-ad20-13a74b88cf13",
+        "TenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+        "TenantSlug": "ahramstore",
+        "SchemaVersion": 1,
+        "ThemeVersion": 0,
+        "UpdatedAt": {
+          "$date": "2026-10-07T21:34:46.003Z"
+        },
+        "LastEventId": "80dfa210-94ae-4b22-9388-ada47e20a6c0",
+        "LastEventOccurredAtUtc": {
+          "$date": "2026-10-07T21:34:45.237Z"
+        },
+        "LastEventVersion": 229,
+        "LiveVersion": 229,
+        "LastCurrencyEventId": null,
+        "LastCurrencyEventOccurredAtUtc": null,
+        "LastCurrencyEventVersion": 0,
+        "StoreName": "AhramStore",
+        "StoreDescription": null,
+        "StorefrontTheme": "alizon",
+        "StorefrontStatus": "live",
+        "MaintenanceMessage": null,
+        "Currency": "EGP",
+        "Theme": {
+          "_id": "default",
+          "Mode": "light",
+          "Tokens": {
+            "Colors": {
+              "primary": "#2563eb",
+              "secondary": "#0f172a",
+              "background": "#ffffff",
+              "text": "#020617",
+              "muted": "#64748b"
+            },
+            "Typography": {
+              "fontFamily": "Inter",
+              "baseSize": "16px"
+            },
+            "Radius": {
+              "base": "8px"
+            }
+          }
+        },
+        "Behavior": {
+          "EnableGuestCheckout": true,
+          "ShowOutOfStockProducts": false,
+          "EnableSearch": true,
+          "FailCheckoutOnPromotionError": true
+        },
+        "Pages": {
+          "Home": {
+            "Sections": [
+              {
+                "_id": "section_59dbdb72acf455958a366b2024148be9",
+                "Type": "hero-banner",
+                "Enabled": true,
+                "Order": 0,
+                "Settings": {
+                  "title": "CERT Convergence A",
+                  "subtitle": "Discover amazing products",
+                  "ctaText": "Shop Now",
+                  "ctaLink": "/products",
+                  "backgroundImage": "/api/storefront/homepage-media/e9c9d01a-7a4c-412a-9642-fb92f8304b10",
+                  "backgroundColor": "#111827",
+                  "overlayOpacity": 40.0,
+                  "textColor": "#ffffff",
+                  "alignment": "left",
+                  "height": "large",
+                  "highlights": []
+                }
+              },
+              {
+                "_id": "section_238ebcf3f65759afacee660dca783b42",
+                "Type": "featured-products",
+                "Enabled": true,
+                "Order": 1,
+                "Settings": {
+                  "title": "Featured Products",
+                  "subtitle": "",
+                  "displayStyle": "carousel",
+                  "source": "all",
+                  "maxItems": 8.0,
+                  "productIds": [],
+                  "showBadge": true,
+                  "badgeText": "Featured"
+                }
+              },
+              {
+                "_id": "section_f59399355bc55d3bba01b1cd8f8bfc29",
+                "Type": "category-grid",
+                "Enabled": true,
+                "Order": 2,
+                "Settings": {
+                  "title": "Shop by Category",
+                  "subtitle": "",
+                  "source": "all",
+                  "maxItems": 6.0,
+                  "categoryIds": [],
+                  "columns": 3.0
+                }
+              },
+              {
+                "_id": "section_e4fe6ded2cf258d5b9a281775ce0dc1c",
+                "Type": "newsletter-signup",
+                "Enabled": true,
+                "Order": 3,
+                "Settings": {
+                  "heading": "Stay in the loop",
+                  "subheading": "Subscribe to our newsletter for exclusive offers and updates",
+                  "buttonText": "Subscribe",
+                  "backgroundColor": "#111827",
+                  "textColor": "#ffffff"
+                }
+              }
+            ]
+          },
+          "Product": {
+            "Sections": []
+          },
+          "Category": {
+            "Sections": []
+          }
+        },
+        "ProductTemplates": {},
+        "SmartOffers": [],
+        "PromotionRanking": {
+          "Enabled": true,
+          "BaseBoost": 5.0,
+          "HighDiscountBoost": 10.0,
+          "HighDiscountThreshold": 20.0,
+          "MaxTotalBoost": 25.0,
+          "EnableTimeDecay": true,
+          "TimeDecayScaleDays": 7.0,
+          "TimeDecayOffsetDays": 1.0,
+          "TimeDecayMinimum": 0.29999999999999999,
+          "CategoryOverrides": {}
+        },
+        "CommerceAiEnabled": false,
+        "CommerceAiWidgetStyle": "minimal",
+        "CommerceAiWidgetPosition": "bottom-right",
+        "CommerceAiAutoGreetingEnabled": false,
+        "CommerceAiAutoGreetingMessage": "",
+        "CommerceAiPersonality": "friendly"
+      }
+    ],
+    "processed": [
+      {
+        "EventId": "80dfa210-94ae-4b22-9388-ada47e20a6c0",
+        "EventType": "StoreConfigUpdatedEvent",
+        "ProcessedAtUtc": "2026-10-07T21:34:46.30881Z"
+      },
+      {
+        "EventId": "80dfa210-94ae-4b22-9388-ada47e20a6c0",
+        "EventType": "StoreConfigPublishedEvent",
+        "ProcessedAtUtc": "2026-10-07T21:34:46.070388Z"
+      },
+      {
+        "EventId": "cef35313-77d6-4bb2-b758-eaeb9f0a4ea8",
+        "EventType": "StoreConfigPublishedEvent",
+        "ProcessedAtUtc": "2026-10-07T21:34:15.007263Z"
+      },
+      {
+        "EventId": "cef35313-77d6-4bb2-b758-eaeb9f0a4ea8",
+        "EventType": "StoreConfigUpdatedEvent",
+        "ProcessedAtUtc": "2026-10-07T21:34:14.943337Z"
+      },
+      {
+        "EventId": "410dbf40-bd05-463d-989e-8de761c36e31",
+        "EventType": "StoreConfigUpdatedEvent",
+        "ProcessedAtUtc": "2026-10-07T21:33:58.9701Z"
+      },
+      {
+        "EventId": "410dbf40-bd05-463d-989e-8de761c36e31",
+        "EventType": "StoreConfigPublishedEvent",
+        "ProcessedAtUtc": "2026-10-07T21:33:58.948415Z"
+      },
+      {
+        "EventId": "b805c7eb-5468-4341-a541-a77fd3ff5df9",
+        "EventType": "StoreConfigUpdatedEvent",
+        "ProcessedAtUtc": "2026-10-07T20:47:05.835824Z"
+      },
+      {
+        "EventId": "27d9f116-b37f-413e-892e-64c6aafb5506",
+        "EventType": "StoreConfigPublishedEvent",
+        "ProcessedAtUtc": "2026-10-07T20:46:56.156675Z"
+      }
+    ]
+  }
+]

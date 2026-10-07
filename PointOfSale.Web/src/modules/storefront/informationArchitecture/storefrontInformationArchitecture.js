@@ -150,6 +150,7 @@ export const STOREFRONT_NAVIGATION = {
 
 export const OPERATIONS_NAVIGATION = {
     key: 'operations',
+    initialExpansion: 'subtree',
     labelKey: 'storefront.operations',
     fallbackLabel: 'Operations',
     icon: 'ShoppingBasket',
@@ -164,6 +165,7 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             key: 'operations-orders',
+            permission: 'storefront.orders.view',
             labelKey: 'storefront.operationsOrders',
             fallbackLabel: 'Orders',
             icon: 'Package',
@@ -214,6 +216,7 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             key: 'operations-payments',
+            permission: 'storefront.payments.manage',
             labelKey: 'storefront.operationsPayments',
             fallbackLabel: 'Payments',
             icon: 'CreditCard',
@@ -236,6 +239,7 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             key: 'operations-catalog',
+            permission: 'storefront.promotions.manage',
             labelKey: 'storefront.operationsCatalog',
             fallbackLabel: 'Catalog',
             icon: 'Tag',
@@ -265,6 +269,7 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             key: 'operations-shipping',
+            permission: 'shipping.manage',
             labelKey: 'storefront.operationsShipping',
             fallbackLabel: 'Shipping',
             icon: 'Truck',
@@ -288,6 +293,7 @@ export const OPERATIONS_NAVIGATION = {
             children: [
                 {
                     screenIds: ['pixel-tracking'],
+                    permission: 'storefront.analytics.configure',
                     path: '/ecommerce/pixel-tracking',
                     labelKey: 'nav.pixelTracking',
                     fallbackLabel: 'Pixel Tracking',
@@ -295,6 +301,7 @@ export const OPERATIONS_NAVIGATION = {
                 },
                 {
                     screenIds: ['conversion-funnels'],
+                    permission: 'storefront.analytics.view',
                     path: '/analytics/funnels',
                     labelKey: 'analytics.conversionFunnels',
                     fallbackLabel: 'Conversion Funnels',
@@ -302,6 +309,7 @@ export const OPERATIONS_NAVIGATION = {
                 },
                 {
                     key: 'operations-marketing-attribution',
+                    permission: 'storefront.analytics.view',
                     labelKey: 'storefront.operationsMarketingAttribution',
                     fallbackLabel: 'Marketing Attribution',
                     icon: 'BarChart3',
@@ -333,6 +341,7 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             screenIds: ['commerce-ai'],
+            permission: 'storefront.design.manage',
             path: '/ecommerce/commerce-ai',
             labelKey: 'commerceAi.title',
             fallbackLabel: 'Commerce AI',
@@ -340,6 +349,7 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             screenIds: ['auth-providers'],
+            permission: 'storefront.auth.manage',
             path: '/ecommerce/auth-providers',
             labelKey: 'nav.authProviders',
             fallbackLabel: 'Auth Providers',
@@ -353,6 +363,7 @@ export const OPERATIONS_NAVIGATION = {
             children: [
                 {
                     screenIds: ['storefront-analytics'],
+                    permission: 'storefront.analytics.view',
                     path: '/analytics/storefront',
                     labelKey: 'storefrontAnalytics.title',
                     fallbackLabel: 'Storefront Analytics',
@@ -360,6 +371,7 @@ export const OPERATIONS_NAVIGATION = {
                 },
                 {
                     screenIds: ['analytics-settings'],
+                    permission: 'storefront.analytics.configure',
                     path: '/settings/analytics',
                     labelKey: 'nav.analyticsSettings',
                     fallbackLabel: 'Analytics Settings',
@@ -372,6 +384,7 @@ export const OPERATIONS_NAVIGATION = {
 
 export const STOREFRONT_PRODUCT_NAVIGATION = {
     key: 'storefront',
+    defaultExpanded: true,
     labelKey: 'storefront.ia.root',
     fallbackLabel: 'Storefront',
     icon: 'Store',

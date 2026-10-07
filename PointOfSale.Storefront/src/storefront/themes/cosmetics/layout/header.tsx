@@ -1,40 +1,23 @@
 import React, { useState } from 'react';
+import { HeaderAnnouncement } from '@/storefront/presentation/HeaderAnnouncement';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
-import { useScrollPosition } from '@/hooks/useScrollPosition';
 import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 import { COSMETICS_FONT, cosmeticsNavLinkClass } from './cosmeticsTokens';
 
 const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
-    const { isHome, labels, storeName } = model;
+    const { labels, storeName } = model;
     const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
-    const { isScrolled } = useScrollPosition({ threshold: 12 });
     const [mobileOpen, setMobileOpen] = useState(false);
-    const transparent = isHome && !isScrolled;
     const displayStoreName = storeName?.trim() ?? '';
 
     return (
         <>
-            <div className={`${COSMETICS_FONT} relative z-40 flex h-12 items-center justify-center bg-[#E7DFDB] px-10 text-center text-xs font-medium uppercase tracking-[0.12em] text-[#D15F61]`}>
-                <button className="absolute left-4 top-1/2 -translate-y-1/2 text-[#D15F61]/70" type="button" aria-label={labels.previous}>
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                        <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} />
-                    </svg>
-                </button>
-                <span>{labels.announcement}</span>
-                <button className="absolute right-4 top-1/2 -translate-y-1/2 text-[#D15F61]/70" type="button" aria-label={labels.next}>
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                        <path d="m9 18 6-6-6-6" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} />
-                    </svg>
-                </button>
-            </div>
+            <HeaderAnnouncement model={{ ...model, announcement: model.announcement ?? { enabled: true, text: labels.announcement, textAr: '', link: '', backgroundColor: '', textColor: '' } }}
+                className={`${COSMETICS_FONT} relative z-40 bg-[#E7DFDB] text-[#D15F61] uppercase tracking-[0.12em]`} />
 
             <header
                 role="banner"
-                className={`${COSMETICS_FONT} sticky top-0 z-40 h-[52px] border-b transition-all duration-300 md:h-[58px] ${
-                    transparent
-                        ? 'border-transparent bg-white/[0.05] text-white'
-                        : 'border-black/10 bg-white text-[#D05D61] shadow-[0_4px_20px_rgba(13,13,18,0.06)]'
-                }`}
+                className={`${COSMETICS_FONT} sticky top-0 z-40 h-[52px] border-b border-black/10 bg-white text-[#D05D61] shadow-[0_4px_20px_rgba(13,13,18,0.06)] md:h-[58px]`}
             >
                 <div className="grid h-full grid-cols-[1fr_auto_1fr] items-center px-4 md:px-10">
                     <div className="flex items-center gap-3">
@@ -60,9 +43,7 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
                         <NavigationSlot
                             className="hidden items-center gap-5 lg:flex"
                             ariaLabel={labels.mainNavigation}
-                            linkClassName={(link) => transparent
-                                ? cosmeticsNavLinkClass(link.isActive)
-                                : cosmeticsNavLinkClass(link.isActive).replace('text-white/90', 'text-[#D05D61]')}
+                            linkClassName={(link) => cosmeticsNavLinkClass(link.isActive).replace('text-white/90', 'text-[#D05D61]')}
                         />
                     </div>
 
@@ -72,15 +53,15 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
 
                     <div className="flex items-center justify-end gap-2">
                         <div className="hidden md:block">
-                            <LanguageSlot variant="text" size="sm" className={transparent ? 'text-white/80' : 'text-[#D05D61]'} />
+                            <LanguageSlot variant="text" size="sm" className="text-[#D05D61]" />
                         </div>
                         <div className="hidden lg:block">
                             <AuthenticationSlot variant="desktop" />
                         </div>
                         <div className="hidden md:block">
-                            <WishlistSlot className={transparent ? 'text-white hover:bg-white/10' : 'text-[#D05D61] hover:bg-[#E7DFDB]/60'} />
+                            <WishlistSlot className="text-[#D05D61] hover:bg-[#E7DFDB]/60" />
                         </div>
-                        <CartSlot className={transparent ? 'text-white hover:bg-white/10' : 'text-[#D05D61] hover:bg-[#E7DFDB]/60'} />
+                        <CartSlot className="text-[#D05D61] hover:bg-[#E7DFDB]/60" />
                     </div>
                 </div>
 

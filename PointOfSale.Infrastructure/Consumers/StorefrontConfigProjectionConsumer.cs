@@ -27,7 +27,9 @@ public class StorefrontConfigProjectionConsumer :
     IConsumer<StoreConfigUpdatedEvent>,
     IConsumer<StoreConfigPublishedEvent>,
     IConsumer<StoreConfigCreatedEvent>,
-    IConsumer<StoreConfigRolledBackEvent>
+    IConsumer<StoreConfigRolledBackEvent>,
+    IConsumer<NavigationPublishedEvent>,
+    IConsumer<StorefrontThemeActivatedEvent>
 {
     private const string ConsumerName = nameof(StorefrontConfigProjectionConsumer);
 
@@ -99,6 +101,14 @@ public class StorefrontConfigProjectionConsumer :
     }
 
     // Handle generic StoreConfigUpdatedEvent
+    public Task Consume(ConsumeContext<NavigationPublishedEvent> context) => ProjectStoreConfigAsync(
+        context.Message.TenantId, context.Message.StoreConfigId, context.Message.EventId,
+        context.Message.OccurredAtUtc, context.Message.EventVersion, nameof(NavigationPublishedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<StorefrontThemeActivatedEvent> context) => ProjectStoreConfigAsync(
+        context.Message.TenantId, context.Message.StoreConfigId, context.Message.EventId,
+        context.Message.OccurredAtUtc, context.Message.EventVersion, nameof(StorefrontThemeActivatedEvent), context.CancellationToken);
+
     public Task Consume(ConsumeContext<StoreConfigUpdatedEvent> context)
     {
         _logger.LogInformation("Received StoreConfigUpdatedEvent");
@@ -123,9 +133,9 @@ public class StorefrontConfigProjectionConsumer :
     {
         if (!tenantId.HasValue)
         {
-            _logger.LogError("StoreConfig event missing TenantId. Skipping projection.");
+            _logger.LogError("StoreConfig event missing TenantId. Rejecting projection for broker retry/error handling.");
             _publishTelemetry.RecordPublishFailure(eventType, "projection", "missing_tenant");
-            return;
+            throw new InvalidOperationException("StoreConfig projection requires a tenant identity.");
         }
 
         _logger.LogInformation("Projecting StoreConfig for Tenant {TenantId} | EventType: {EventType}", tenantId, eventType);
@@ -144,14 +154,26 @@ public class StorefrontConfigProjectionConsumer :
 
             if (fence == null)
             {
-                _logger.LogInformation(
-                    "StoreConfig projection duplicate or active replay collapsed before projection side effects | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventType: {EventType} | EventId: {EventId}",
-                    tenantId.Value,
-                    storeConfigId,
-                    eventType,
-                    eventId);
-                _publishTelemetry.RecordPublishSuccess(eventType, "projection");
-                return;
+                // A completed event can still repair a lost derivative document. The SQL
+                // authority and atomic Mongo freshness/key guards remain mandatory below.
+                using var cursor = await _collection.FindAsync(
+                    Builders<StorefrontConfigDocument>.Filter.Eq(x => x.TenantId, tenantId.Value),
+                    new FindOptions<StorefrontConfigDocument, StorefrontConfigDocument>(), cancellationToken);
+                var document = await cursor.FirstOrDefaultAsync(cancellationToken);
+                var currentRevision = await _dbContext.StoreConfigs.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.Id == storeConfigId && c.TenantId == tenantId.Value)
+                    .Select(c => (int?)c.LiveVersion).SingleOrDefaultAsync(cancellationToken);
+                if (document != null && (!currentRevision.HasValue || document.LiveVersion >= currentRevision.Value))
+                {
+                    _logger.LogInformation(
+                        "StoreConfig projection duplicate or active replay collapsed before projection side effects | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventType: {EventType} | EventId: {EventId}",
+                        tenantId.Value,
+                        storeConfigId,
+                        eventType,
+                        eventId);
+                    _publishTelemetry.RecordPublishSuccess(eventType, "projection");
+                    return;
+                }
             }
 
             completeFence = true;
@@ -164,6 +186,13 @@ public class StorefrontConfigProjectionConsumer :
 
             if (lineage == null)
             {
+                // A malformed/misrouted event must not delete another aggregate's
+                // valid tenant projection. Inactive/deleted tenant fail-closed behavior
+                // remains below; a mismatched current config is a retry/error condition.
+                var mismatchedConfig = await _dbContext.StoreConfigs.AsNoTracking().IgnoreQueryFilters()
+                    .AnyAsync(c => c.TenantId == tenantId.Value && c.Id != storeConfigId, cancellationToken);
+                if (mismatchedConfig)
+                    throw new InvalidOperationException("StoreConfig event aggregate does not belong to the tenant's current configuration.");
                 await FailClosedStoreConfigProjectionAsync(
                     tenantId.Value,
                     storeConfigId,
@@ -175,6 +204,10 @@ public class StorefrontConfigProjectionConsumer :
 
             var storeConfig = lineage.StoreConfig;
             var tenant = lineage.Tenant;
+            // Events invalidate a derivative; they are not content snapshots. Fence using
+            // the revision actually recomposed from SQL, never the event schema version.
+            // This also admits legacy schema-v1 deliveries behind a schema-v2 watermark.
+            eventVersion = Math.Max(1, storeConfig.LiveVersion);
 
             var themePresetKey = string.IsNullOrWhiteSpace(storeConfig.ThemeLivePresetKey)
                 ? "default"
@@ -214,7 +247,7 @@ public class StorefrontConfigProjectionConsumer :
                 tenantId.Value,
                 eventId,
                 occurredAtUtc,
-                eventVersion);
+                storeConfig.LiveVersion);
             RequireReviewedStoreConfigMutation(
                 DangerousProjectionPrimitive.MongoFullDocumentReplace,
                 tenantId.Value,
@@ -459,12 +492,15 @@ public class StorefrontConfigProjectionConsumer :
         var filter = Builders<StorefrontConfigDocument>.Filter;
         return filter.And(
             filter.Eq(x => x.TenantId, tenantId),
-            filter.Ne(x => x.LastEventId, eventId),
             filter.Or(
-                filter.Exists(x => x.LastEventVersion, false),
-                filter.Lt(x => x.LastEventVersion, eventVersion),
+                filter.Ne(x => x.LastEventId, eventId),
+                filter.Exists(x => x.LiveVersion, false),
+                filter.Lt(x => x.LiveVersion, eventVersion)),
+            filter.Or(
+                filter.Exists(x => x.LiveVersion, false),
+                filter.Lt(x => x.LiveVersion, eventVersion),
                 filter.And(
-                    filter.Eq(x => x.LastEventVersion, eventVersion),
+                    filter.Eq(x => x.LiveVersion, eventVersion),
                     filter.Or(
                         filter.Exists(x => x.LastEventOccurredAtUtc, false),
                         filter.Eq(x => x.LastEventOccurredAtUtc, null),
@@ -518,6 +554,7 @@ public class StorefrontConfigProjectionConsumer :
         {
             Id = sqlConfig.Id.ToString(), 
             TenantId = sqlConfig.TenantId,
+            LiveVersion = sqlConfig.LiveVersion,
             TenantSlug = tenant.Slug ?? string.Empty,
             UpdatedAt = DateTime.UtcNow,
             SchemaVersion = 1,

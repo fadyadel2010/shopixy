@@ -12,10 +12,14 @@
  */
 
 import React from 'react';
+import { AnnouncementLink } from '@/storefront/presentation/HeaderAnnouncement';
 import { useTranslation } from '@/i18n';
 import { ALIZON_BRAND_BG, ALIZON_EYEBROW, ALIZON_FONT_BODY } from './alizonTokens';
 
 export interface AnnouncementMarqueeProps {
+    link?: string;
+    backgroundColor?: string;
+    textColor?: string;
     /** Enable/disable the strip. Defaults to true. */
     enabled?: boolean;
     /** Explicit text (LTR). When omitted, falls back to the i18n default. */
@@ -61,6 +65,7 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
     text,
     textAr,
     accentClass = ALIZON_BRAND_BG,
+    link, backgroundColor, textColor,
 }) => {
     const { t, language, direction } = useTranslation();
     const resolved = resolveAnnouncement({
@@ -82,16 +87,18 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
     return (
         <div
             role="region"
+            style={{ backgroundColor: backgroundColor || undefined, color: textColor || undefined }}
             aria-label={t('announcement.label')}
             dir={resolved.isRTL ? 'rtl' : 'ltr'}
             className={`${accentClass} overflow-hidden`}
         >
-            <div
+            <AnnouncementLink link={link}><div
                 className={`flex w-max ${ALIZON_FONT_BODY} animate-[marquee_22s_linear_infinite] items-center`}
                 aria-hidden={false}
             >
                 {items.map((_, index) => (
                     <span
+                        style={{ color: textColor || undefined }}
                         key={index}
                         className={`${ALIZON_EYEBROW} whitespace-nowrap px-6 py-2 text-white`}
                     >
@@ -99,7 +106,7 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
                         <span className="px-6 opacity-70">&#10022;</span>
                     </span>
                 ))}
-            </div>
+            </div></AnnouncementLink>
         </div>
     );
 };

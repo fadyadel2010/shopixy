@@ -491,6 +491,7 @@ function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, isL
 
 const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     productId,
+    productMediaRevision = 0,
     forceMatrixMode = false,
     productSkuPrefix = '',
     onVariantDraftChange = null,
@@ -1788,6 +1789,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                             {visibleMatrixRows.length > 0 && (
                                 <VariantMatrixTable
                                     productId={productId}
+                                    productMediaRevision={productMediaRevision}
                                     rows={visibleMatrixRows}
                                     selectedKeys={selectedKeys}
                                     onToggleSelect={handleToggleSelect}

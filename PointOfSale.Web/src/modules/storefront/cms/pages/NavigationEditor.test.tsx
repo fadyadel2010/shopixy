@@ -122,6 +122,19 @@ describe('NavigationEditor', () => {
         expect(cmsService.publishNavigation).not.toHaveBeenCalled()
     })
 
+    it('discards a saved announcement draft by saving the published snapshot and stays clean', async () => {
+        const published = { enabled: false, text: 'Published', textAr: '', link: '', backgroundColor: '', textColor: '' }
+        const data = { ...snapshot('4', true), draft: { ...snapshot().draft, announcement: { ...published, enabled: true, text: 'Saved draft' } }, live: { ...snapshot().live, announcement: published } }
+        cmsService.getNavigation.mockResolvedValue(data)
+        cmsService.updateNavigation.mockImplementation(async (candidate) => ({ ...candidate, rowVersion: '5', hasPendingChanges: false }))
+        renderEditor()
+        await screen.findByRole('heading', { name: 'Navigation' })
+        fireEvent.click(screen.getByRole('button', { name: 'storefront.cms.navigationEditor.discard' }))
+        await waitFor(() => expect(cmsService.updateNavigation).toHaveBeenCalledWith(expect.objectContaining({ draft: data.live }), expect.anything()))
+        await waitFor(() => expect(useCmsStore.getState().isNavigationDirty).toBe(false))
+        expect(useCmsStore.getState().navigation.draft.announcement).toEqual(published)
+    })
+
     it('edits backend-issued targets, enabled state, and an explicit Arabic label', async () => {
         renderEditor('/storefront/navigation?view=footer')
         await screen.findByText('About')

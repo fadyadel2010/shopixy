@@ -26,7 +26,7 @@ public sealed class StoreBuilderEndToEndAuthorityCertificationTests
         Assert.Contains("buildIfMatchOptions(rowVersion", builder, StringComparison.Ordinal);
         Assert.Contains("const acceptedConfig = admitWorkspaceConfig(response)", builder, StringComparison.Ordinal);
         Assert.Contains("const result = await persistPageLayout(sections)", builder, StringComparison.Ordinal);
-        Assert.Contains("storeConfigService.getPreviewConfig({ signal: controller.signal })", builder, StringComparison.Ordinal);
+        Assert.Contains("storeConfigService.getPreviewConfig(", builder, StringComparison.Ordinal);
         Assert.Contains("const acceptedConfig = admitWorkspaceConfig(response, result.config)", builder, StringComparison.Ordinal);
         Assert.Contains("await loadPageData(targetPage, templateIdFromUrl)", builder, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage", builder, StringComparison.OrdinalIgnoreCase);

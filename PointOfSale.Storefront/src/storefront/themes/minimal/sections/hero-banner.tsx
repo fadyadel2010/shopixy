@@ -40,16 +40,16 @@ const HeroBanner: React.FC<any> = ({
         >
             <div className={`mx-auto flex max-w-5xl flex-col justify-center px-6 py-16 lg:px-10 ${resolvedHeightClass}`}>
                 <div className={`mx-auto flex max-w-3xl flex-col ${resolvedAlignmentClass}`}>
-                    <div className="mb-8 text-xs font-medium uppercase tracking-[0.3em] text-slate-500">
+                    <div className="mb-8 text-xs font-medium uppercase tracking-[0.3em] text-slate-500" style={{ color: textColor || undefined }}>
                         {t('home.welcome', { storeName: '' })}
                     </div>
 
-                    <h1 className="max-w-3xl text-balance text-4xl font-normal leading-tight text-slate-950 sm:text-5xl lg:text-6xl">
+                    <h1 className="max-w-3xl text-balance text-4xl font-normal leading-tight text-slate-950 sm:text-5xl lg:text-6xl" style={{ color: textColor || undefined }}>
                         {title || t('home.welcome', { storeName: '' })}
                     </h1>
 
                     {subtitle && (
-                        <p className="mx-auto mt-6 max-w-xl text-base leading-8 text-slate-600">
+                        <p className="mx-auto mt-6 max-w-xl text-base leading-8 text-slate-600" style={{ color: textColor || undefined }}>
                             {subtitle}
                         </p>
                     )}
@@ -60,6 +60,7 @@ const HeroBanner: React.FC<any> = ({
                             href={ctaLink || '/products'}
                             align={alignment || 'center'}
                             className="mt-9"
+                            color={textColor}
                         >
                             {ctaText}
                         </ThemeHeroCTA>

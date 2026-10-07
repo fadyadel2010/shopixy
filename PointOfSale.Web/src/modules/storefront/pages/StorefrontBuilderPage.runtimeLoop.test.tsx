@@ -73,6 +73,25 @@ afterEach(() => {
 })
 
 describe('StorefrontBuilderPage runtime load stability', () => {
+    it('discards a saved media draft through the existing save authority and restores the published reference locally', async () => {
+        const imageA = '/api/storefront/homepage-media/11111111-1111-4111-8111-111111111111'
+        const imageB = '/api/storefront/homepage-media/22222222-2222-4222-8222-222222222222'
+        const section = { id: 'section_12345678', type: 'hero-banner', enabled: true, order: 0, settings: { title: 'Hero', subtitle: '', ctaText: 'Shop', ctaLink: '/products', backgroundImage: imageB, backgroundColor: '#ffffff', overlayOpacity: 20, textColor: '#000000', alignment: 'left', height: 'large', highlights: [] } }
+        const published = { ...section, settings: { ...section.settings, backgroundImage: imageA } }
+        const config = admittedConfig({ pages: { home: { sections: [section] } }, livePages: { home: { sections: [published] } } })
+        vi.mocked(storeConfigService.getStoreConfig).mockResolvedValue(config)
+        vi.mocked(storeConfigService.getRuntimeStoreConfig).mockResolvedValue(config)
+        vi.mocked(storeConfigService.updatePageLayout).mockResolvedValue({ ...config, rowVersion: 'rv-2', pages: config.livePages })
+        render(<MemoryRouter initialEntries={['/storefront/homepage']}><StorefrontBuilderPage /></MemoryRouter>)
+        await screen.findByTestId('builder-canvas')
+        await waitFor(() => expect(useBuilderStore.getState().sections).toHaveLength(1))
+        fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+        await waitFor(() => expect(storeConfigService.updatePageLayout).toHaveBeenCalled())
+        await waitFor(() => expect(useBuilderStore.getState().sections[0].settings.backgroundImage).toBe(imageA))
+        await waitFor(() => expect(useBuilderStore.getState().isSaving).toBe(false))
+        expect(useBuilderStore.getState().isDirty).toBe(false)
+    })
+
     it('does not reload the backend when admitting storeConfig updates local state', async () => {
         vi.mocked(storeConfigService.getStoreConfig).mockResolvedValue(admittedConfig())
         vi.mocked(storeConfigService.getRuntimeStoreConfig).mockResolvedValue(admittedConfig({ rowVersion: 'runtime-rv' }))

@@ -76,7 +76,8 @@ public sealed class StorefrontConfigProjectionConsumerTests
                         "id": "draft-home",
                         "type": "hero",
                         "enabled": true,
-                        "order": 0
+                        "order": 0,
+                        "settings": { "backgroundImage": "/api/storefront/homepage-media/22222222-2222-4222-8222-222222222222" }
                       }
                     ]
                   },
@@ -86,7 +87,8 @@ public sealed class StorefrontConfigProjectionConsumerTests
                         "id": "live-home",
                         "type": "hero",
                         "enabled": true,
-                        "order": 0
+                        "order": 0,
+                        "settings": { "backgroundImage": "/api/storefront/homepage-media/11111111-1111-4111-8111-111111111111" }
                       }
                     ]
                   }
@@ -171,6 +173,7 @@ public sealed class StorefrontConfigProjectionConsumerTests
         Assert.Equal("SAR", capturedDocument.Currency);
         Assert.Single(capturedDocument.Pages.Home.Sections);
         Assert.Equal("live-home", capturedDocument.Pages.Home.Sections[0].Id);
+        Assert.Equal("/api/storefront/homepage-media/11111111-1111-4111-8111-111111111111", capturedDocument.Pages.Home.Sections[0].Settings["backgroundImage"]);
         Assert.DoesNotContain(capturedDocument.Pages.Home.Sections, section => section.Id == "draft-home");
     }
 

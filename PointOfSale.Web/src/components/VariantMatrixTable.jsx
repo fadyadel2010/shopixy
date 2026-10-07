@@ -26,15 +26,16 @@ function getResolvedThumbnail(row, mediaById) {
         return mediaById.get(row.mediaId)?.url || null
     }
 
-    if (row.imageUrl) {
+    if (mediaById.size === 0 && !row.mediaId && row.imageUrl) {
         return row.imageUrl
     }
 
-    return null
+    return mediaById.values().next().value?.url || null
 }
 
 export default function VariantMatrixTable({
     productId,
+    productMediaRevision = 0,
     rows,
     selectedKeys,
     onToggleSelect,
@@ -78,7 +79,7 @@ export default function VariantMatrixTable({
         return () => {
             isMounted = false
         }
-    }, [productId])
+    }, [productId, productMediaRevision])
 
     const allSelected = rows.length > 0 && rows.every(row => selectedKeys.has(row.key))
     const mediaById = useMemo(() => new Map(productMedia.map(item => [item.id, item])), [productMedia])
@@ -90,13 +91,15 @@ export default function VariantMatrixTable({
         }
 
         if (mediaItem) {
+            setProductMedia(current => sortMedia([...current.filter(item => item.id !== mediaItem.id), mediaItem]))
             onRowChange(activePickerRow.key, {
                 mediaId: mediaItem.id,
                 imageUrl: ''
             })
         } else {
             onRowChange(activePickerRow.key, {
-                mediaId: null
+                mediaId: null,
+                imageUrl: ''
             })
         }
 

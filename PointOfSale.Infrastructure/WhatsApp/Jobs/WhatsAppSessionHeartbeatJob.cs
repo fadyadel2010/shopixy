@@ -13,32 +13,24 @@ namespace PointOfSale.Infrastructure.WhatsApp.Jobs;
 /// Hangfire job that periodically checks the health of all active WhatsApp sessions.
 /// Runs every 5 minutes for connected accounts.
 /// 
-/// TRANSPORT-AWARE: Routes to Playwright or Baileys based on tenant's UseBaileys flag.
-/// - Playwright tenants: Uses IWhatsAppWebEngine for browser-based session management
-/// - Baileys tenants: Uses Baileys HTTP transport for lightweight session management
+/// Baileys is the sole WhatsApp session authority.
 /// </summary>
 public class WhatsAppSessionHeartbeatJob
 {
     private readonly ApplicationDbContext _dbContext;
-    private readonly IWhatsAppWebEngine _webEngine;
-    private readonly IWhatsAppSessionManager _sessionManager;
     private readonly IEventPublisher _eventPublisher;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IWhatsAppTransport _transport;
     private readonly ILogger<WhatsAppSessionHeartbeatJob> _logger;
 
     public WhatsAppSessionHeartbeatJob(
         ApplicationDbContext dbContext,
-        IWhatsAppWebEngine webEngine,
-        IWhatsAppSessionManager sessionManager,
         IEventPublisher eventPublisher,
-        IServiceProvider serviceProvider,
+        [FromKeyedServices("baileys")] IWhatsAppTransport transport,
         ILogger<WhatsAppSessionHeartbeatJob> logger)
     {
         _dbContext = dbContext;
-        _webEngine = webEngine;
-        _sessionManager = sessionManager;
         _eventPublisher = eventPublisher;
-        _serviceProvider = serviceProvider;
+        _transport = transport;
         _logger = logger;
     }
 
@@ -52,67 +44,21 @@ public class WhatsAppSessionHeartbeatJob
         // CRITICAL: Must ignore query filters because this job runs without tenant context
         // The global filter (TenantId == CurrentTenantId) would return 0 rows when CurrentTenantId is null
         
-        // Load accounts WITH their tenant to check UseBaileys flag
-        var allAccounts = await _dbContext.WhatsAppAccounts
+        var accounts = await _dbContext.WhatsAppAccounts
             .IgnoreQueryFilters() // Required for cross-tenant background jobs
-            .Include(a => a.Tenant) // Include tenant for UseBaileys check
             .Where(a => a.Enabled)
             .ToListAsync(ct);
 
-        // Separate accounts by transport type
-        var playwrightAccounts = allAccounts.Where(a => !a.Tenant.UseBaileys).ToList();
-        var baileysAccounts = allAccounts.Where(a => a.Tenant.UseBaileys).ToList();
-
         _logger.LogInformation(
-            "[WhatsApp Heartbeat] Found {TotalCount} enabled accounts | Playwright: {PlaywrightCount} | Baileys: {BaileysCount}",
-            allAccounts.Count, playwrightAccounts.Count, baileysAccounts.Count);
+            "[WhatsApp Heartbeat] Found {Count} enabled Baileys accounts",
+            accounts.Count);
 
-        // Check Playwright accounts (legacy)
-        if (playwrightAccounts.Count > 0)
+        foreach (var account in accounts)
         {
-            _logger.LogInformation("[WhatsApp Heartbeat] Checking {Count} Playwright accounts", playwrightAccounts.Count);
-            foreach (var account in playwrightAccounts)
-            {
-                await CheckAndUpdatePlaywrightAccountAsync(account, ct);
-            }
-        }
-
-        // Check Baileys accounts (new)
-        if (baileysAccounts.Count > 0)
-        {
-            _logger.LogInformation("[WhatsApp Heartbeat] Checking {Count} Baileys accounts", baileysAccounts.Count);
-            foreach (var account in baileysAccounts)
-            {
-                await CheckAndUpdateBaileysAccountAsync(account, ct);
-            }
+            await CheckAndUpdateBaileysAccountAsync(account, ct);
         }
 
         _logger.LogInformation("[WhatsApp Heartbeat] Session health check completed");
-    }
-
-    /// <summary>
-    /// Check account status using Playwright engine (legacy browser-based)
-    /// </summary>
-    private async Task CheckAndUpdatePlaywrightAccountAsync(Core.Entities.WhatsAppAccount account, CancellationToken ct)
-    {
-        try
-        {
-            var status = await _webEngine.CheckConnectionAsync(account.Id, ct);
-            var isConnected = status.IsConnected && ConnectedPhoneMatches(account.PhoneNumber, status.ConnectedPhone);
-            var newStatus = isConnected
-                ? WhatsAppAccountStatus.Connected
-                : status.Status == WhatsAppAccountStatus.PendingQR
-                    ? WhatsAppAccountStatus.PendingQR
-                    : WhatsAppAccountStatus.Disconnected;
-
-            await UpdateAccountStatusIfChangedAsync(account, newStatus, isConnected, "Playwright", ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex,
-                "[WhatsApp Heartbeat] Error checking Playwright account | AccountId: {AccountId}",
-                account.Id);
-        }
     }
 
     /// <summary>
@@ -122,11 +68,7 @@ public class WhatsAppSessionHeartbeatJob
     {
         try
         {
-            // Get Baileys transport from keyed services
-            var baileysTransport = _serviceProvider.GetRequiredKeyedService<IWhatsAppTransport>("baileys");
-            
-            // Check status via HTTP call to Baileys service
-            var statusResult = await baileysTransport.GetStatusAsync(account.TenantId.ToString(), ct);
+            var statusResult = await _transport.GetStatusAsync(account.TenantId.ToString(), ct);
 
             if (!statusResult.Success || statusResult.Status == WhatsAppConnectionStatus.Unknown)
             {
@@ -249,11 +191,6 @@ public class WhatsAppSessionHeartbeatJob
                     OccurredAtUtc = DateTime.UtcNow
                 }, ct);
             }
-        }
-        else if (isConnected)
-        {
-            // Still connected - touch session to update last activity
-            await _sessionManager.TouchSessionAsync(account.Id, ct);
         }
     }
 }

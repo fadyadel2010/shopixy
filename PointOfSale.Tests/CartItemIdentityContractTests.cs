@@ -27,6 +27,46 @@ namespace PointOfSale.Tests;
 
 public sealed class CartItemIdentityContractTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CanonicalMedia_AddReadAndRedisReadback_RepairsStaleOrMissingImage(bool hasVariants)
+    {
+        await using var fixture = await CartFixture.CreateAsync(hasVariants);
+        var media = await fixture.SeedMediaAsync();
+        var cart = await fixture.Service.AddItemAsync(fixture.TenantId, fixture.Owner,
+            new AddCartItemRequest { ProductId = fixture.ProductId, VariantId = fixture.VariantId },
+            false, "media-add");
+        Assert.Equal(hasVariants ? media[1].Url : media[0].Url, Assert.Single(cart.Items).ThumbnailImage);
+
+        // Redis and Mongo both lack current media; SQL must repair the line.
+        fixture.RewritePersistedCart(persisted => persisted.Items[0].ThumbnailImage = null);
+        var read = await fixture.Service.GetCartAsync(fixture.TenantId, fixture.Owner, "media-read");
+        Assert.Equal(hasVariants ? media[1].Url : media[0].Url, Assert.Single(read.Items).ThumbnailImage);
+        Assert.Equal(read.Items[0].ThumbnailImage, Assert.Single(fixture.ReadPersistedCart()!.Items).ThumbnailImage);
+
+        await fixture.ChangeMediaAsync(media, removeSelected: false);
+        read = await fixture.Service.GetCartAsync(fixture.TenantId, fixture.Owner, "media-change");
+        Assert.Equal(media[2].Url, Assert.Single(read.Items).ThumbnailImage);
+        Assert.Equal(media[2].Url, Assert.Single(fixture.ReadPersistedCart()!.Items).ThumbnailImage);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CanonicalMedia_DeletedSelection_FallsBackAndDoesNotRetainDeadUrl(bool hasVariants)
+    {
+        await using var fixture = await CartFixture.CreateAsync(hasVariants);
+        var media = await fixture.SeedMediaAsync();
+        await fixture.Service.AddItemAsync(fixture.TenantId, fixture.Owner,
+            new AddCartItemRequest { ProductId = fixture.ProductId, VariantId = fixture.VariantId },
+            false, "media-delete-add");
+        await fixture.ChangeMediaAsync(media, removeSelected: true);
+        var read = await fixture.Service.GetCartAsync(fixture.TenantId, fixture.Owner, "media-delete-read");
+        Assert.Equal(media[2].Url, Assert.Single(read.Items).ThumbnailImage);
+        Assert.Equal(media[2].Url, Assert.Single(fixture.ReadPersistedCart()!.Items).ThumbnailImage);
+    }
+
     [Fact]
     public async Task SimpleProduct_AddGetUpdateGetDelete_UsesCanonicalVariantIdentity()
     {
@@ -421,6 +461,35 @@ public sealed class CartItemIdentityContractTests
         public Guid ProductId { get; }
         public Guid VariantId { get; }
         public CartOwner Owner { get; } = new() { OwnerType = "session", OwnerId = "cart-contract-session" };
+
+        public async Task<List<ProductMedia>> SeedMediaAsync()
+        {
+            var media = Enumerable.Range(0, 3).Select(index => new ProductMedia
+            {
+                Id = Guid.NewGuid(), TenantId = TenantId, ProductId = ProductId,
+                MediaType = "image", Url = $"/api/upload/product-media/{ProductId}/{Guid.NewGuid():N}.png",
+                Position = index + 1, CreatedAtUtc = DateTime.UtcNow
+            }).ToList();
+            _dbContext.ProductMedia.AddRange(media);
+            var variant = await _dbContext.ProductVariants.IgnoreQueryFilters().SingleAsync(v => v.Id == VariantId);
+            variant.MediaId = media[1].Id;
+            variant.ImageUrl = "/legacy-must-not-win.png";
+            await _dbContext.SaveChangesAsync();
+            return media;
+        }
+
+        public async Task ChangeMediaAsync(List<ProductMedia> media, bool removeSelected)
+        {
+            media[2].Position = 0;
+            var variant = await _dbContext.ProductVariants.IgnoreQueryFilters().SingleAsync(v => v.Id == VariantId);
+            variant.MediaId = removeSelected ? null : media[2].Id;
+            if (removeSelected)
+            {
+                _dbContext.ProductMedia.Remove(media[0]);
+                _dbContext.ProductMedia.Remove(media[1]);
+            }
+            await _dbContext.SaveChangesAsync();
+        }
 
         public static async Task<CartFixture> CreateAsync(
             bool hasVariants,

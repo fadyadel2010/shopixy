@@ -7,7 +7,6 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import { Boom } from '@hapi/boom';
-import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
 import { WhatsAppSession, SessionMode, ConnectionStatus, SessionMetadata } from '../models/Session';
 import { config } from '../config';
@@ -93,10 +92,15 @@ export class SessionManager {
     this.redis = createClient({
       socket: {
         host: config.redis.host,
-        port: config.redis.port
+        port: config.redis.port,
+        connectTimeout: 5000
       },
       password: config.redis.password,
-      database: config.redis.db
+      database: config.redis.db,
+      disableOfflineQueue: true
+    });
+    this.redis.on('error', (error) => {
+      logger.error({ err: error }, 'Redis client error');
     });
     this.cleanupInterval = null;
     this.staleSessionInterval = null;
@@ -193,7 +197,7 @@ export class SessionManager {
    * Generate a new session ID (UUID)
    */
   private generateSessionId(): string {
-    return uuidv4();
+    return crypto.randomUUID();
   }
 
   /**

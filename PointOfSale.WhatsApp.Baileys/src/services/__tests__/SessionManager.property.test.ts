@@ -13,14 +13,17 @@ import { SessionMode, ConnectionStatus } from '../../models/Session';
 // Mock Redis and Baileys dependencies
 jest.mock('redis', () => ({
   createClient: jest.fn(() => ({
+    on: jest.fn(),
     connect: jest.fn().mockResolvedValue(undefined),
     quit: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
-    set: jest.fn().mockResolvedValue('OK')
+    set: jest.fn().mockResolvedValue('OK'),
+    del: jest.fn().mockResolvedValue(1)
   }))
 }));
 
 jest.mock('@whiskeysockets/baileys', () => ({
+  __esModule: true,
   default: jest.fn(() => ({
     ev: {
       on: jest.fn()
@@ -35,7 +38,8 @@ jest.mock('@whiskeysockets/baileys', () => ({
     loggedOut: 401
   },
   Browsers: {
-    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0'])
+    ubuntu: jest.fn(() => ['Ubuntu', '20.04', '1.0']),
+    windows: jest.fn(() => ['Windows', 'Chrome', '1.0'])
   }
 }));
 
@@ -45,6 +49,7 @@ jest.mock('qrcode', () => ({
 
 jest.mock('../../utils/logger', () => ({
   createLogger: jest.fn(() => ({
+    child: jest.fn().mockReturnThis(),
     info: jest.fn(),
     debug: jest.fn(),
     warn: jest.fn(),
@@ -116,7 +121,7 @@ describe('SessionManager Property Tests', () => {
 
             // Sessions should be different
             expect(session1.tenantId).not.toBe(session2.tenantId);
-            expect(session1.createdAt).not.toEqual(session2.createdAt);
+            expect(session1.sessionId).not.toBe(session2.sessionId);
           }
         ),
         { numRuns: 50 }
@@ -322,6 +327,10 @@ describe('SessionManager Property Tests', () => {
           fc.array(fc.uuid(), { minLength: 0, maxLength: 20 }),
           fc.constantFrom(SessionMode.DEDICATED, SessionMode.POOL),
           async (tenantIds, mode) => {
+            for (const session of sessionManager.getActiveSessions()) {
+              await sessionManager.closeSession(session.tenantId);
+            }
+
             // Create sessions
             for (const tenantId of tenantIds) {
               await sessionManager.getOrCreateSession(tenantId, mode);

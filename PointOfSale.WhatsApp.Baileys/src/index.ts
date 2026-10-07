@@ -80,10 +80,12 @@ async function main() {
     app.get('/health', (_req, res) => {
       const poolStats = poolManager.getPoolStatistics();
       const diagnostics = sessionManager.getHealthDiagnostics();
+      const redisReady = sessionManager.getRedisClient().isReady;
 
-      res.json({
-        status: 'healthy',
+      res.status(redisReady ? 200 : 503).json({
+        status: redisReady ? 'healthy' : 'unhealthy',
         version: 'PHASE_3_RELIABLE', // Version marker for tracking
+        redis: redisReady ? 'ready' : 'unavailable',
         activeSessions: sessionManager.getSessionCount(),
         sessionsByStatus: diagnostics.sessionsByStatus,
         poolSessions: poolStats.totalConnections,
@@ -100,8 +102,17 @@ async function main() {
     // PHASE 2: Readiness probe (for Kubernetes/container orchestration)
     app.get('/ready', async (_req, res) => {
       try {
-        // Check if Redis is connected
-        const ping = await sessionManager.getRedisClient().ping();
+        const redis = sessionManager.getRedisClient();
+        if (!redis.isReady) {
+          res.status(503).json({ ready: false, reason: 'Redis client is not ready' });
+          return;
+        }
+
+        const ping = await Promise.race([
+          redis.ping(),
+          new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('Redis readiness check timed out')), 2000))
+        ]);
         if (ping !== 'PONG') {
           res.status(503).json({ ready: false, reason: 'Redis not responding' });
           return;

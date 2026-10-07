@@ -299,7 +299,7 @@ describe('Storefront constitutional information architecture', () => {
 
         await waitFor(() => {
             const stored = JSON.parse(window.localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY) || '{}')
-            expect(stored['storefront-catalog']).toBe(true)
+            expect(stored.expanded['storefront-catalog']).toBe(true)
         })
 
         firstRender.unmount()

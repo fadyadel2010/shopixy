@@ -167,7 +167,7 @@ export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId, tem
     const runtimeProductHero = isProductTemplate ? createMandatoryProductHeroSection(templateId) : null
 
     return (
-        <div className="h-full flex-1 overflow-auto bg-gray-100">
+        <div className="min-w-0 2xl:h-full flex-1 overflow-auto bg-gray-100">
             <div className="mx-auto min-h-full max-w-4xl p-6">
                 {storeConfig ? (
                     <BuilderThemeProvider tenantId={tenantId} storeConfig={storeConfig}>

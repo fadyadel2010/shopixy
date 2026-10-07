@@ -1,4 +1,18 @@
 {
+  "homepageMedia": {
+    "upload": "Upload image", "replace": "Replace image", "remove": "Remove image",
+    "selected": "Image selected", "uploading": "Uploading image…", "error": "Upload failed. Your previous image is unchanged. Try again.",
+    "invalid": "The image could not be loaded. Check the URL or upload an image.", "noImage": "No image selected",
+    "url": "Image URL (optional)", "preview": "Image preview", "limits": "JPEG, PNG, WebP or GIF, up to 10 MB.",
+    "invalidFile": "Select a JPEG, PNG, WebP or GIF image of 10 MB or less."
+  },
+  "headerAnnouncement": {
+    "reset": "Use theme announcement default",
+    "title": "Announcement bar", "description": "Global Header content, published together with Header and Footer navigation. Themes control its visual default.",
+    "enabled": "Show announcement bar", "text": "Announcement text (English)", "textAr": "Announcement text (Arabic)",
+    "link": "Announcement link (optional)", "backgroundColor": "Background color", "textColor": "Text color",
+    "themeDefault": "Use theme appearance", "preview": "Announcement preview", "default": "Using the theme announcement default. Edit a setting to author your own announcement."
+  },
   "app": {
     "name": "POS System",
     "logout": "Logout",

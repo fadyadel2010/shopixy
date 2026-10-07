@@ -9,9 +9,10 @@ public sealed class StoreBuilderPreviewAuthorityCertificationTests
         var previewModal = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/components/builder/PreviewModal.jsx");
         var service = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/services/storeConfigService.js");
 
-        Assert.Contains("const result = await persistPageLayout(sections)", builder, StringComparison.Ordinal);
+        Assert.Contains("? await persistPageLayout(sections)", builder, StringComparison.Ordinal);
         Assert.Contains("if (!result.saved)", builder, StringComparison.Ordinal);
-        Assert.Contains("storeConfigService.getPreviewConfig({ signal: controller.signal })", builder, StringComparison.Ordinal);
+        Assert.Contains("storeConfigService.getPreviewConfig(", builder, StringComparison.Ordinal);
+        Assert.Contains("draftThemePreviewToken:", builder, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentVendorScopedDto(", builder, StringComparison.Ordinal);
         Assert.Contains("Current backend storefront preview authority is unavailable.", builder, StringComparison.Ordinal);
         Assert.Contains("Draft preview could not be loaded. No live content was shown.", builder, StringComparison.Ordinal);
@@ -20,6 +21,10 @@ public sealed class StoreBuilderPreviewAuthorityCertificationTests
         Assert.Contains("This preview uses authenticated draft data only and will never fall back to live content.", previewModal, StringComparison.Ordinal);
         Assert.Contains("Live content will not be substituted automatically.", previewModal, StringComparison.Ordinal);
         Assert.Contains("setConfig(previousConfigRef.current)", previewModal, StringComparison.Ordinal);
+        Assert.Contains("<ThemeRuntimePreview", previewModal, StringComparison.Ordinal);
+        var runtime = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/storefront/preview/draftPreviewMain.tsx");
+        Assert.Contains("import { HomePage } from '@/pages/HomePage'", runtime, StringComparison.Ordinal);
+        Assert.Contains("<HomePage />", runtime, StringComparison.Ordinal);
 
         Assert.Contains("async getPreviewConfig(options = {})", service, StringComparison.Ordinal);
         Assert.Contains("api.get('/storefront/config/preview', withNoStoreHeaders({", service, StringComparison.Ordinal);
