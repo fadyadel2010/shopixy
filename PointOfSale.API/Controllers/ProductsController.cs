@@ -22,6 +22,7 @@ using PointOfSale.Core.Pagination;
 using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
+using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Mappers;
 
@@ -906,6 +907,7 @@ public class ProductsController : ControllerBase
         // Search products by name, barcode, or SKU
         // Also search variant barcodes and SKUs
         var products = await _context.Products
+            .Include(p => p.Media)
             .Include(p => p.Category)
             .Include(p => p.ProductUnits)
             .Include(p => p.Variants)
@@ -941,7 +943,7 @@ public class ProductsController : ControllerBase
             p.TaxRate,
             p.PriceIncludesTax,
             p.Unit,
-            p.Images,
+            Images = ProductMediaImageResolver.Resolve(p),
             p.HasVariants,
             CategoryName = p.Category?.Name,
             // Include variants with their stock
@@ -955,7 +957,8 @@ public class ProductsController : ControllerBase
                 v.Price,
                 v.CostPrice,
                 v.IsDefault,
-                v.ImageUrl,
+                ImageUrl = ProductMediaImageResolver.Resolve(p, v.Id),
+                v.MediaId,
                 Attributes = v.Attributes
                     .Select(a => new { a.Name, a.Value })
                     .ToList(),
@@ -998,6 +1001,7 @@ public class ProductsController : ControllerBase
     {
         // Get active products with their variants and stock
         var products = await _context.Products
+            .Include(p => p.Media)
             .Include(p => p.Category)
             .Include(p => p.ProductUnits)
             .Include(p => p.Variants)
@@ -1042,7 +1046,7 @@ public class ProductsController : ControllerBase
                         v.Barcode,
                         Price = v.Price,
                         StockQuantity = warehouseStock,
-                        Images = v.ImageUrl ?? p.Images,
+                        Images = ProductMediaImageResolver.Resolve(p, v.Id),
                         Attributes = v.Attributes
                             .Select(a => new { a.Name, a.Value })
                             .ToArray(),
@@ -1077,7 +1081,7 @@ public class ProductsController : ControllerBase
                     Barcode = defaultVariant?.Barcode ?? p.Barcode,
                     Price = CatalogPricingAuthority.ResolveSimpleSellingPrice(defaultUnit),
                     StockQuantity = warehouseStock,
-                    Images = p.Images,
+                    Images = ProductMediaImageResolver.Resolve(p, defaultVariant?.Id),
                     Attributes = defaultVariant != null 
                         ? defaultVariant.Attributes.Select(a => new { a.Name, a.Value }).ToArray()
                         : Array.Empty<object>(),

@@ -36,6 +36,9 @@ public static class NavigationStorageAdapter
     {
         return new AdminNavigationConfigResponse
         {
+            Announcement = element.TryGetProperty("header", out var header) && header.ValueKind == JsonValueKind.Object &&
+                header.TryGetProperty("announcement", out var announcement)
+                ? announcement.Deserialize<PointOfSale.Core.Models.HeaderAnnouncementConfig>(new JsonSerializerOptions(JsonSerializerDefaults.Web)) : null,
             Header = element.TryGetProperty("header", out var headerElement)
                 ? ExtractLinks(headerElement)
                 : new List<AdminNavigationLinkRequest>(),

@@ -306,6 +306,7 @@ public sealed class AdminCmsService : IAdminCmsService
             cancellationToken);
         response.Draft = new AdminNavigationConfigResponse
         {
+            Announcement = admittedDraft.Navigation.Announcement,
             Header = admittedDraft.Navigation.Header,
             Footer = admittedDraft.Navigation.Footer
         };
@@ -322,6 +323,7 @@ public sealed class AdminCmsService : IAdminCmsService
                 cancellationToken);
             response.Live = new AdminNavigationConfigResponse
             {
+                Announcement = admittedLive.Navigation.Announcement,
                 Header = admittedLive.Navigation.Header,
                 Footer = admittedLive.Navigation.Footer
             };
@@ -344,6 +346,7 @@ public sealed class AdminCmsService : IAdminCmsService
     {
         var request = new AdminNavigationRequest
         {
+            Announcement = navigation.Announcement,
             RowVersion = rowVersion,
             Header = navigation.Header,
             Footer = navigation.Footer
@@ -367,6 +370,7 @@ public sealed class AdminCmsService : IAdminCmsService
         var warnings = new List<AdminNavigationValidationWarningResponse>();
         var admittedNavigation = new AdminNavigationRequest
         {
+            Announcement = navigation.Announcement,
             RowVersion = rowVersion,
             Header = await AdmitMenuForLoadAsync(
                 tenantId,
@@ -585,6 +589,7 @@ public sealed class AdminCmsService : IAdminCmsService
         {
             ["header"] = new Dictionary<string, object>
             {
+                ["announcement"] = admitted.Announcement!,
                 ["links"] = admitted.Header.Select(NavigationStorageAdapter.ToStorage).ToList()
             },
             ["footer"] = new Dictionary<string, object>
@@ -669,6 +674,7 @@ public sealed class AdminCmsService : IAdminCmsService
             tenantId,
             new AdminNavigationRequest
             {
+                Announcement = draft.Announcement,
                 Header = draft.Header,
                 Footer = draft.Footer
             },
@@ -678,6 +684,7 @@ public sealed class AdminCmsService : IAdminCmsService
         {
             ["header"] = new Dictionary<string, object>
             {
+                ["announcement"] = admitted.Announcement!,
                 ["links"] = admitted.Header.Select(NavigationStorageAdapter.ToStorage).ToList()
             },
             ["footer"] = new Dictionary<string, object>

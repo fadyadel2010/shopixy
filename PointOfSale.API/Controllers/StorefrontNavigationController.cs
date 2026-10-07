@@ -116,7 +116,7 @@ public sealed class StorefrontNavigationController : ControllerBase
         };
     }
 
-    private static NavigationMenuDto ExtractMenu(JsonElement live, string location)
+    internal static NavigationMenuDto ExtractMenu(JsonElement live, string location)
     {
         if (!live.TryGetProperty(location, out var menu))
         {
@@ -133,6 +133,8 @@ public sealed class StorefrontNavigationController : ControllerBase
 
         return new NavigationMenuDto
         {
+            Announcement = menu.ValueKind == JsonValueKind.Object && menu.TryGetProperty("announcement", out var announcement)
+                ? announcement.Deserialize<PointOfSale.Core.Models.HeaderAnnouncementConfig>(new JsonSerializerOptions(JsonSerializerDefaults.Web)) : null,
             Links = links.EnumerateArray()
                 .Select((link, index) => new
                 {
@@ -270,6 +272,7 @@ public sealed class StorefrontNavigationController : ControllerBase
 
         return new NavigationMenuDto
         {
+            Announcement = menu.Announcement,
             Links = menu.Links
                 .Where(link => IsAuthoritativeTarget(
                     link,

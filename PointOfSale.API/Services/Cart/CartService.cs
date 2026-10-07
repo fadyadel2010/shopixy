@@ -600,6 +600,7 @@ public class CartService : ICartService
         {
             // Increment quantity (cap at max) - idempotent
             existingItem.Quantity = Math.Min(existingItem.Quantity + request.Quantity, MaxQuantityPerItem);
+            existingItem.ThumbnailImage = ProductMediaImageResolver.Resolve(product, variantId);
             ApplyAffiliateCartLineAdmission(existingItem, lineAdmission);
         }
         else
@@ -617,7 +618,7 @@ public class CartService : ICartService
             {
                 effectivePrice = variantPurchasability?.Price ?? ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant).Price;
                 sku = variant.SKU ?? product.SKU ?? string.Empty;
-                imageUrl = ResolveVariantImageUrl(product, variant);
+                imageUrl = ProductMediaImageResolver.Resolve(product, variant.VariantId);
                 variantAttributes = variant.Attributes
                     .Select(a => new CartVariantAttribute { Name = a.Name, Value = a.Value })
                     .ToList();
@@ -626,7 +627,7 @@ public class CartService : ICartService
             {
                 effectivePrice = productPurchasability.Price;
                 sku = product.SKU ?? string.Empty;
-                imageUrl = ResolvePrimaryProductImageUrl(product);
+                imageUrl = ProductMediaImageResolver.Resolve(product);
                 variantAttributes = new List<CartVariantAttribute>();
             }
             
@@ -2189,6 +2190,16 @@ public class CartService : ICartService
                             item.Quantity = availableStock;
                             cartWasUpdated = true;
                         }
+                    }
+
+                    // Redis owns line identity/quantity, never current media selection.
+                    // Repair missing, changed and removed image snapshots on every read,
+                    // before cart, checkout and order snapshot consumers receive the line.
+                    var currentImage = ProductMediaImageResolver.Resolve(product, item.VariantId);
+                    if (!string.Equals(item.ThumbnailImage, currentImage, StringComparison.Ordinal))
+                    {
+                        item.ThumbnailImage = currentImage;
+                        cartWasUpdated = true;
                     }
 
                     var admissionKey = (
@@ -3785,34 +3796,6 @@ public class CartService : ICartService
                 tenantId);
             throw new CurrencyNotConfiguredException(tenantId);
         }
-    }
-
-    private static string? ResolveVariantImageUrl(ProductDocument product, ProductVariantDocument variant)
-    {
-        if (variant.MediaId.HasValue)
-        {
-            var mediaUrl = (product.Media ?? new List<ProductMediaDocument>())
-                .Where(media => string.Equals(media.Type, "image", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(media => media.Position)
-                .FirstOrDefault(media => media.Id == variant.MediaId.Value)
-                ?.Url;
-
-            if (!string.IsNullOrWhiteSpace(mediaUrl))
-            {
-                return mediaUrl;
-            }
-        }
-
-        return ResolvePrimaryProductImageUrl(product);
-    }
-
-    private static string? ResolvePrimaryProductImageUrl(ProductDocument product)
-    {
-        return (product.Media ?? new List<ProductMediaDocument>())
-            .Where(media => string.Equals(media.Type, "image", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(media => media.Position)
-            .Select(media => media.Url)
-            .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services;
@@ -23,6 +24,7 @@ public class ProductMediaController : ControllerBase
     private readonly IProductMediaService _productMediaService;
     private readonly IProductMutationIdempotencyService _productMutationIdempotency;
     private readonly ITenantContext _tenantContext;
+    private string? _mediaMutationPreviousVersion;
 
     public ProductMediaController(
         ApplicationDbContext context,
@@ -82,6 +84,7 @@ public class ProductMediaController : ControllerBase
 
         try
         {
+            await CaptureMediaMutationVersionAsync(productId, cancellationToken);
             var media = await _productMediaService.AddMediaAsync(
                 productId,
                 new CreateProductMediaModel(request.Url, request.MediaType, request.Provider),
@@ -144,6 +147,7 @@ public class ProductMediaController : ControllerBase
 
         try
         {
+            await CaptureMediaMutationVersionAsync(productId, cancellationToken);
             await _productMediaService.RemoveMediaAsync(productId, mediaId, cancellationToken);
             return await CompleteProductMediaMutationIdempotencyAsync(
                 transaction,
@@ -195,6 +199,7 @@ public class ProductMediaController : ControllerBase
 
         try
         {
+            await CaptureMediaMutationVersionAsync(productId, cancellationToken);
             var reordered = await _productMediaService.ReorderMediaAsync(productId, request.MediaIds, cancellationToken);
             return await CompleteProductMediaMutationIdempotencyAsync(
                 transaction,
@@ -299,6 +304,16 @@ public class ProductMediaController : ControllerBase
             : (null, BuildProductMediaMutationReplayResponse(claim.Replay, conflictMessage, inProgressMessage));
     }
 
+    private async Task CaptureMediaMutationVersionAsync(Guid productId, CancellationToken cancellationToken)
+    {
+        // Track the exact version the media service will mutate. The editor may
+        // advance only from this version, never blindly adopt an unrelated edit.
+        var product = await _context.Products.SingleOrDefaultAsync(
+            item => item.Id == productId && item.TenantId == _tenantContext.RequiredTenantId,
+            cancellationToken);
+        _mediaMutationPreviousVersion = product?.RowVersion.ToString();
+    }
+
     private async Task<IActionResult> CompleteProductMediaMutationIdempotencyAsync(
         IDbContextTransaction transaction,
         ProductRequestIdempotency? record,
@@ -315,6 +330,14 @@ public class ProductMediaController : ControllerBase
 
         await _context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        if (snapshot.StatusCode is >= 200 and < 300 && _mediaMutationPreviousVersion != null)
+        {
+            var product = _context.Products.Local.Single(item => item.Id == productId &&
+                item.TenantId == _tenantContext.RequiredTenantId);
+            Response.Headers["X-Product-Previous-Version"] = _mediaMutationPreviousVersion;
+            Response.Headers["X-Product-Version"] = product.RowVersion.ToString();
+        }
 
         return result;
     }

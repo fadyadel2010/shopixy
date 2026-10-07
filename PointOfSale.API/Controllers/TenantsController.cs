@@ -265,18 +265,23 @@ public class TenantsController : ControllerBase
     }
 
     /// <summary>
-    /// Toggle UseBaileys flag for a tenant's WhatsApp transport.
+    /// Enforce the Baileys WhatsApp transport for a tenant.
     /// </summary>
     /// <remarks>
-    /// When UseBaileys is true:
-    /// - WhatsApp messages are routed to Baileys service (lightweight, ~20-40MB RAM)
-    /// 
-    /// When UseBaileys is false:
-    /// - WhatsApp messages are routed to Playwright engine (browser-based, ~300-600MB RAM)
+    /// Baileys is the sole supported runtime transport. Disabling it is rejected.
     /// </remarks>
     [HttpPatch("{id:guid}/whatsapp-transport")]
     public async Task<ActionResult> SetWhatsAppTransport(Guid id, [FromBody] SetWhatsAppTransportRequest request)
     {
+        if (!request.UseBaileys)
+        {
+            return BadRequest(new
+            {
+                error = "Baileys is the required WhatsApp transport.",
+                code = "BAILEYS_TRANSPORT_REQUIRED"
+            });
+        }
+
         var tenant = await _context.Tenants.FindAsync(id);
 
         if (tenant == null)
@@ -285,18 +290,16 @@ public class TenantsController : ControllerBase
         }
 
         var oldValue = tenant.UseBaileys;
-        tenant.UseBaileys = request.UseBaileys;
+        tenant.UseBaileys = true;
         await _context.SaveChangesAsync();
 
-        var transport = request.UseBaileys ? "Baileys" : "Playwright";
         _logger.LogInformation(
-            "Tenant WhatsApp transport changed: {TenantId} ({TenantName}) | {OldTransport} → {NewTransport}",
+            "Tenant WhatsApp transport enforced: {TenantId} ({TenantName}) | WasBaileys: {OldValue}",
             tenant.Id, tenant.Name, 
-            oldValue ? "Baileys" : "Playwright",
-            transport);
+            oldValue);
 
         return Ok(new { 
-            message = $"WhatsApp transport set to {transport}",
+            message = "WhatsApp transport set to Baileys",
             tenantId = tenant.Id,
             useBaileys = tenant.UseBaileys
         });

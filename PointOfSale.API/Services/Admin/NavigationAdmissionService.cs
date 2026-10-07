@@ -131,6 +131,7 @@ public sealed class NavigationAdmissionService
 
         return new AdminNavigationRequest
         {
+            Announcement = HeaderAnnouncementValidator.Validate(request.Announcement),
             RowVersion = request.RowVersion,
             Header = admittedHeader,
             Footer = admittedFooter

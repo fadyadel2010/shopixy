@@ -1506,26 +1506,14 @@ builder.Services.AddScoped<PointOfSale.Core.Interfaces.WhatsApp.IWhatsAppFeature
 // WhatsApp Infrastructure Services
 builder.Services.Configure<PointOfSale.Infrastructure.WhatsApp.WhatsAppRateLimitSettings>(builder.Configuration.GetSection("WhatsAppRateLimits"));
 
-builder.Services.AddSingleton<PointOfSale.Infrastructure.WhatsApp.Interfaces.IWhatsAppSessionManager, PointOfSale.Infrastructure.WhatsApp.Services.WhatsAppSessionManager>();
-// Playwright Engine must be Singleton to maintain browser instance
-builder.Services.AddSingleton<PointOfSale.Infrastructure.WhatsApp.Interfaces.IWhatsAppWebEngine, PointOfSale.Infrastructure.WhatsApp.Engine.PlaywrightWhatsAppEngine>();
 builder.Services.AddSingleton<PointOfSale.Infrastructure.WhatsApp.Interfaces.IWhatsAppRateLimiter, PointOfSale.Infrastructure.WhatsApp.Services.WhatsAppRateLimiter>();
 
 // =============================================================================
-// WhatsApp Transport Layer - Strangler Fig Pattern for Baileys Migration
+// WhatsApp Transport Layer
 // =============================================================================
-// Both Playwright and Baileys transports coexist during migration.
-// Dispatcher routes based on tenant's UseBaileys feature gate.
-// This enables gradual rollout with instant rollback capability.
-// 
-// Playwright Transport: Legacy (300-600 MB RAM per session)
-// Baileys Transport: New (20-40 MB RAM per session)
+// Baileys is the sole production WhatsApp transport. Browser automation is
+// reserved for UI testing and must never be used for message delivery.
 // =============================================================================
-
-// Register Playwright Transport (legacy)
-builder.Services.AddKeyedScoped<PointOfSale.Infrastructure.WhatsApp.Interfaces.IWhatsAppTransport, PointOfSale.Infrastructure.WhatsApp.Transport.PlaywrightTransport>("playwright");
-
-// Register Baileys Transport (new)
 builder.Services.AddHttpClient<PointOfSale.Infrastructure.WhatsApp.Transport.BaileysWhatsAppTransport>();
 builder.Services.AddKeyedScoped<PointOfSale.Infrastructure.WhatsApp.Interfaces.IWhatsAppTransport, PointOfSale.Infrastructure.WhatsApp.Transport.BaileysWhatsAppTransport>("baileys");
 
@@ -2235,6 +2223,22 @@ builder.Services.AddMassTransit(x =>
         {
             h.Username(rabbitMqSettings["Username"] ?? "guest");
             h.Password(rabbitMqSettings["Password"] ?? "guest");
+        });
+
+        // Compatibility drain for the durable pre-v2 queue. Deliver retained messages
+        // through the SAME SQL-recomposing, fenced consumer; never purge business events.
+        // Retain while older publishers/topologies may still route here.
+        cfg.ReceiveEndpoint("storefront-config-projection", endpoint =>
+        {
+            endpoint.UseMessageRetry(r => r.Exponential(5, TimeSpan.FromSeconds(1),
+                TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)));
+            endpoint.ConfigureConsumer<StorefrontConfigProjectionConsumer>(context);
+        });
+        // ConfigureConsumer above suppresses automatic endpoint generation for this
+        // consumer, so explicitly retain the current endpoint as well as the drain.
+        cfg.ReceiveEndpoint("storefront-config-projection-v2", endpoint =>
+        {
+            endpoint.ConfigureConsumer<StorefrontConfigProjectionConsumer>(context);
         });
 
         // =============================================================================
@@ -3859,9 +3863,7 @@ if (!isAuthoritativeDeterministicTestHost && !string.IsNullOrWhiteSpace(defaultC
 // WHATSAPP BACKGROUND JOBS (Phase 13)
 // =============================================================================
 // Session Heartbeat: Every 5 minutes
-// TRANSPORT-AWARE: Routes to Playwright or Baileys based on tenant's UseBaileys flag
-// - Playwright tenants: Uses browser-based session management (legacy)
-// - Baileys tenants: Uses lightweight HTTP-based session management (new)
+// Baileys is the sole session and delivery transport.
 
 // =============================================================================
 // ABANDONED CART RECOVERY SCANNER (Smart Cart Recovery Engine)

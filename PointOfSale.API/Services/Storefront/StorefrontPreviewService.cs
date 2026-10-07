@@ -32,6 +32,9 @@ public interface IStorefrontPreviewService
         Guid tenantId,
         CancellationToken cancellationToken = default);
 
+    Task<StorefrontPreviewConfigResult> GetConfigPreviewAsync(
+        Guid tenantId, CancellationToken cancellationToken, string storefrontThemeOverride);
+
     /// <summary>
     /// Gets the navigation draft for preview.
     /// </summary>
@@ -66,15 +69,22 @@ public class StorefrontPreviewService : IStorefrontPreviewService
     private readonly ApplicationDbContext _dbContext;
     private readonly ICmsPageReadService _cmsPageReadService;
     private readonly ILogger<StorefrontPreviewService> _logger;
+    private readonly IR2StorageService? _storage;
+    private readonly IStorefrontFooterReadService _footer;
 
     public StorefrontPreviewService(
         ApplicationDbContext dbContext,
         ICmsPageReadService cmsPageReadService,
-        ILogger<StorefrontPreviewService> logger)
+        ILogger<StorefrontPreviewService> logger,
+        IR2StorageService? storage = null,
+        IStorefrontFooterReadService? footer = null)
     {
         _dbContext = dbContext;
         _cmsPageReadService = cmsPageReadService;
         _logger = logger;
+        _storage = storage;
+        _footer = footer ?? new StorefrontFooterReadService(dbContext,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<StorefrontFooterReadService>.Instance);
     }
 
     public async Task<StorefrontPreviewPageResult> GetPagePreviewAsync(
@@ -116,9 +126,17 @@ public class StorefrontPreviewService : IStorefrontPreviewService
         }
     }
 
-    public async Task<StorefrontPreviewConfigResult> GetConfigPreviewAsync(
+    public Task<StorefrontPreviewConfigResult> GetConfigPreviewAsync(
         Guid tenantId,
         CancellationToken cancellationToken = default)
+        => GetConfigPreviewCoreAsync(tenantId, cancellationToken, null);
+
+    public Task<StorefrontPreviewConfigResult> GetConfigPreviewAsync(
+        Guid tenantId, CancellationToken cancellationToken, string storefrontThemeOverride)
+        => GetConfigPreviewCoreAsync(tenantId, cancellationToken, storefrontThemeOverride);
+
+    private async Task<StorefrontPreviewConfigResult> GetConfigPreviewCoreAsync(
+        Guid tenantId, CancellationToken cancellationToken, string? storefrontThemeOverride)
     {
         _logger.LogInformation("GetConfigPreview (DRAFT) | TenantId: {TenantId}", tenantId);
 
@@ -172,7 +190,35 @@ public class StorefrontPreviewService : IStorefrontPreviewService
                 config,
                 preset,
                 currency: tenant.Currency ?? string.Empty,
-                defaultCountryCode: CountryCodeHelper.NormalizeOrDefault(tenant.Country));
+                defaultCountryCode: CountryCodeHelper.NormalizeOrDefault(tenant.Country),
+                storefrontThemeOverride: storefrontThemeOverride);
+
+            previewConfig.PreviewChrome = new StorefrontPreviewChromeDto
+            {
+                Navigation = ResolveDraftNavigation(config.CustomizationJson, config.UpdatedAtUtc),
+                // Footer content has its own existing immediate/atomic save boundary, not
+                // a StoreConfig draft branch. Reuse its SQL read resolver in both locales.
+                FooterByLanguage = new()
+                {
+                    ["en"] = await _footer.GetFooterAsync(tenantId, "en", cancellationToken),
+                    ["ar"] = await _footer.GetFooterAsync(tenantId, "ar", cancellationToken)
+                }
+            };
+
+            if (_storage != null)
+            {
+                foreach (var section in previewConfig.Pages.Home.Sections)
+                {
+                    foreach (var key in section.Settings.Keys.ToArray())
+                    {
+                        var value = section.Settings[key]?.ToString();
+                        if (!HomepageMediaReferences.TryRead(value, out var id)) continue;
+                        var asset = await _dbContext.HomepageMediaAssets.AsNoTracking()
+                            .SingleOrDefaultAsync(asset => asset.Id == id && asset.TenantId == tenantId, cancellationToken);
+                        section.Settings[key] = asset == null ? "" : await _storage.CreateDownloadUrlAsync(asset.ObjectKey, TimeSpan.FromMinutes(5), cancellationToken);
+                    }
+                }
+            }
 
             return new StorefrontPreviewConfigResult
             {
@@ -282,6 +328,21 @@ public class StorefrontPreviewService : IStorefrontPreviewService
             _logger.LogWarning(ex, "Failed to extract draft navigation");
             return null;
         }
+    }
+
+    internal static NavigationDto ResolveDraftNavigation(string? json, DateTime updatedAt)
+    {
+        var result = new NavigationDto { UpdatedAtUtc = updatedAt };
+        if (string.IsNullOrWhiteSpace(json)) return result;
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("navigation", out var navigation)) return result;
+        // An explicitly empty draft stays empty. Only absence of a draft uses live.
+        var content = navigation.TryGetProperty("draft", out var draft) ? draft
+            : navigation.TryGetProperty("live", out var live) ? live : navigation;
+        if (content.ValueKind != JsonValueKind.Object) return result;
+        result.Header = Controllers.StorefrontNavigationController.ExtractMenu(content, "header");
+        result.Footer = Controllers.StorefrontNavigationController.ExtractMenu(content, "footer");
+        return result;
     }
 
 }

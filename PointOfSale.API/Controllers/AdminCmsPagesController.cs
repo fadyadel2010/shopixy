@@ -689,6 +689,10 @@ public sealed class AdminCmsPagesController : ControllerBase
                 "Navigation changed while you were editing it. Reload the latest navigation before saving again.",
                 cancellationToken);
         }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(AdminCmsApiErrorResponse.ValidationError(ex.Message, traceId));
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(AdminCmsApiErrorResponse.ValidationError(ex.Message, traceId));
@@ -742,6 +746,10 @@ public sealed class AdminCmsPagesController : ControllerBase
                 traceId,
                 "Navigation changed before publish completed. Reload the latest version and confirm the publish again.",
                 cancellationToken);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(AdminCmsApiErrorResponse.ValidationError(ex.Message, traceId));
         }
         catch (InvalidOperationException ex)
         {

@@ -229,6 +229,7 @@ public sealed class AdminCmsRollbackRequest
 
 public class AdminNavigationRequest
 {
+    public PointOfSale.Core.Models.HeaderAnnouncementConfig? Announcement { get; set; }
     public string? RowVersion { get; set; }
     public List<AdminNavigationLinkRequest> Header { get; set; } = new();
     public List<AdminNavigationLinkRequest> Footer { get; set; } = new();
@@ -263,6 +264,7 @@ public class AdminNavigationResponse
 
 public class AdminNavigationConfigResponse
 {
+    public PointOfSale.Core.Models.HeaderAnnouncementConfig? Announcement { get; set; }
     public List<AdminNavigationLinkRequest> Header { get; set; } = new();
     public List<AdminNavigationLinkRequest> Footer { get; set; } = new();
 }

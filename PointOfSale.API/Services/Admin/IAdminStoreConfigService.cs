@@ -125,6 +125,8 @@ public interface IAdminStoreConfigService
         CancellationToken cancellationToken = default,
         uint? expectedRowVersion = null);
 
+    Task<object> GetStoreConfigPreviewAsync(Guid tenantId, string traceId, CancellationToken cancellationToken, string themeId);
+
     Task<object> GetStoreConfigPreviewAsync(
         Guid tenantId,
         string traceId,

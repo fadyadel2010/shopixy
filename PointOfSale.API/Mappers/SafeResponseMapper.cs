@@ -135,7 +135,7 @@ public static class SafeResponseMapper
         TaxRate = product.TaxRate,
         Unit = product.Unit,
         MinimumStockLevel = product.MinimumStockLevel,
-        Images = product.Images,
+        Images = ResolveProductImages(product),
         IsActive = product.IsActive,
         TrackStock = product.TrackStock,
         HasVariants = product.HasVariants,

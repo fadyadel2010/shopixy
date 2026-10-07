@@ -730,7 +730,7 @@ public class AdminStoreConfigController : ControllerBase
     [Authorize(Roles = "Owner,Admin")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetStoreConfigPreview(CancellationToken cancellationToken = default)
+    public async Task<IActionResult> GetStoreConfigPreview(CancellationToken cancellationToken = default, [FromQuery(Name = "draftThemePreviewToken")] string? themePreviewToken = null)
     {
         var traceId = GetTraceId();
         var validation = ValidateTenantHeader(traceId);
@@ -738,10 +738,23 @@ public class AdminStoreConfigController : ControllerBase
 
         try
         {
-            var result = await _storeConfigService.GetStoreConfigPreviewAsync(
+            string? previewTheme = null;
+            if (!string.IsNullOrWhiteSpace(themePreviewToken) &&
+                (_themePreviewTokenService == null || !_themePreviewTokenService.TryValidate(themePreviewToken, validation.TenantId!.Value, out previewTheme)))
+            {
+                return Unauthorized(new { Code = "THEME_PREVIEW_INVALID", Message = "Theme preview capability is invalid or expired." });
+            }
+            var result = previewTheme != null
+                ? await _storeConfigService.GetStoreConfigPreviewAsync(validation.TenantId!.Value, traceId, cancellationToken, previewTheme)
+                : await _storeConfigService.GetStoreConfigPreviewAsync(
                 validation.TenantId!.Value,
                 traceId,
                 cancellationToken);
+            if (result is PointOfSale.API.DTOs.Storefront.StorefrontStoreConfigDto { PreviewChrome: not null } config)
+            {
+                config.PreviewChrome.RuntimeUrl = await _storefrontUrlResolver.ResolveByTenantIdAsync(
+                    validation.TenantId.Value, cancellationToken) + "/draft-preview.html";
+            }
             return Ok(result);
         }
         catch (Exception ex)

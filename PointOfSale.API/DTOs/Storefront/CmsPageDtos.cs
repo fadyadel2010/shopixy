@@ -51,6 +51,7 @@ public class NavigationDto
 
 public class NavigationMenuDto
 {
+    public PointOfSale.Core.Models.HeaderAnnouncementConfig? Announcement { get; set; }
     public List<NavigationLinkDto> Links { get; set; } = new();
 }
 

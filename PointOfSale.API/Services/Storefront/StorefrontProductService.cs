@@ -350,8 +350,6 @@ public class StorefrontProductService : IStorefrontProductService
         var variants = MapVariants(
             document,
             document.Variants,
-            document.Media,
-            images,
             document.HasActivePromotion,
             document.PromotionBadge,
             document.PromotionDiscountType,
@@ -418,8 +416,6 @@ public class StorefrontProductService : IStorefrontProductService
     private static List<ProductVariantDto> MapVariants(
         ProductDocument product,
         List<ProductVariantDocument>? variantDocs,
-        List<ProductMediaDocument>? productMedia,
-        List<string> productImages,
         bool hasActivePromotion,
         string? promotionBadge,
         string? promotionDiscountType,
@@ -457,7 +453,7 @@ public class StorefrontProductService : IStorefrontProductService
                         variantPurchasability.CanPurchase,
                         variantPurchasability.UnavailableReason),
                     MediaId = v.MediaId,
-                    ImageUrl = ResolveVariantImageUrl(v, productMedia, productImages),
+                    ImageUrl = ProductMediaImageResolver.Resolve(product, v.VariantId),
                     TotalStock = variantPurchasability.StockQuantity,
                     IsDefault = v.IsDefault,
                     IsActive = v.IsActive,
@@ -473,27 +469,6 @@ public class StorefrontProductService : IStorefrontProductService
                 };
             })
             .ToList();
-    }
-
-    private static string? ResolveVariantImageUrl(
-        ProductVariantDocument variant,
-        List<ProductMediaDocument>? productMedia,
-        List<string> productImages)
-    {
-        if (variant.MediaId.HasValue && productMedia != null)
-        {
-            var mediaMatch = productMedia
-                .Where(media => string.Equals(media.Type, "image", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(media => media.Position)
-                .FirstOrDefault(media => media.Id == variant.MediaId.Value);
-
-            if (!string.IsNullOrWhiteSpace(mediaMatch?.Url))
-            {
-                return mediaMatch.Url;
-            }
-        }
-
-        return productImages.FirstOrDefault();
     }
 
     private static List<ProductMediaDto> GetOrderedProductMedia(List<ProductMediaDocument>? media)

@@ -12,6 +12,10 @@ public class StorefrontStoreConfigDto
     /// </summary>
     public Guid TenantId { get; set; }
 
+    // Populated ONLY by the authenticated preview resolver; absent from public MapLive.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public StorefrontPreviewChromeDto? PreviewChrome { get; set; }
+
     public string StoreName { get; set; } = string.Empty;
     public string? StoreDescription { get; set; }
     public string StorefrontTheme { get; set; } = "modern";
@@ -70,6 +74,13 @@ public class StorefrontStoreConfigDto
     public bool CommerceAiAutoGreetingEnabled { get; set; } = false;
     public string CommerceAiAutoGreetingMessage { get; set; } = string.Empty;
     public string CommerceAiPersonality { get; set; } = "friendly";
+}
+
+public sealed class StorefrontPreviewChromeDto
+{
+    public string RuntimeUrl { get; set; } = string.Empty;
+    public NavigationDto Navigation { get; set; } = new();
+    public Dictionary<string, StorefrontFooterDto> FooterByLanguage { get; set; } = new();
 }
 
 public class StorefrontThemeConfigDto

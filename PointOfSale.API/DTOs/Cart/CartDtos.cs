@@ -401,8 +401,9 @@ public class CartItemDto
     public decimal LineTotal => UnitPrice * Quantity;
 
     /// <summary>
-    /// Thumbnail image URL (snapshot).
-    /// Uses variant image if set, falls back to product image.
+    /// Current canonical image URL, refreshed from SQL-composed media on cart read.
+    /// Simple products use primary media; variable products use the selected
+    /// variant's MediaId when present, otherwise product primary media.
     /// </summary>
     public string? ThumbnailImage { get; set; }
 

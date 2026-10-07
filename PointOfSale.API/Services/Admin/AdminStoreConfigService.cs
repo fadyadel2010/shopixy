@@ -332,7 +332,10 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             var pageContent = pages[pageId];
             var normalizedPage = NormalizeBuilderPageComposition(pageConfig, pageContent);
             if (pageId.Equals("home", StringComparison.OrdinalIgnoreCase))
+            {
                 await ValidateCuratedProductsAsync(normalizedPage, tenantId, cancellationToken);
+                await ValidateHomepageMediaAsync(normalizedPage, tenantId, cancellationToken);
+            }
             pageContent["draft"] = normalizedPage; // Replace draft entirely
 
             // Ensure LIVE exists if not present (don't break it)
@@ -421,7 +424,10 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                 : NormalizeBuilderPageComposition(draftConfig, pageContent);
 
             if (pageId.Equals("home", StringComparison.OrdinalIgnoreCase))
+            {
                 await ValidateCuratedProductsAsync(normalizedDraft, tenantId, cancellationToken);
+                await ValidateHomepageMediaAsync(normalizedDraft, tenantId, cancellationToken);
+            }
 
             pageContent["draft"] = normalizedDraft;
             pageContent["live"] = System.Text.Json.JsonSerializer.Deserialize<object>(
@@ -901,6 +907,13 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         return previewResult.Config;
     }
 
+    public async Task<object> GetStoreConfigPreviewAsync(Guid tenantId, string traceId, CancellationToken cancellationToken, string themeId)
+    {
+        var result = await _previewService.GetConfigPreviewAsync(tenantId, cancellationToken, themeId);
+        if (!result.Found || result.Config == null) throw new InvalidOperationException(result.ErrorMessage ?? "Store config not found");
+        return result.Config;
+    }
+
     #region Private Helpers
 
     private static string NormalizeStorefrontStatus(string? storefrontStatus)
@@ -1064,7 +1077,8 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                     ThemeId = config.ThemeId,
                     StoreName = config.StoreName,
                     UpdatedAtUtc = config.UpdatedAtUtc,
-                    ConfigVersion = config.LiveVersion
+                    ConfigVersion = config.LiveVersion,
+                    EventVersion = Math.Max(1, config.LiveVersion)
                 }, traceId, cancellationToken);
                 _logger.LogInformation(
                     "StoreConfigPublishedEvent staged for outbox (v{Version}) | TenantId: {TenantId} | ConfigId: {ConfigId} | TraceId: {TraceId}",
@@ -1079,7 +1093,8 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                     ThemeId = config.ThemeId,
                     StoreName = config.StoreName,
                     UpdatedAtUtc = config.UpdatedAtUtc,
-                    ConfigVersion = publishedVersion
+                    ConfigVersion = publishedVersion,
+                    EventVersion = Math.Max(1, config.LiveVersion)
                 }, traceId, cancellationToken);
                 _logger.LogInformation(
                     "StoreConfigRolledBackEvent staged for outbox (v{Version}) | TenantId: {TenantId} | ConfigId: {ConfigId} | TraceId: {TraceId}",
@@ -1093,7 +1108,8 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                     StoreConfigId = config.Id,
                     ThemeId = config.ThemeId,
                     StoreName = config.StoreName,
-                    UpdatedAtUtc = config.UpdatedAtUtc
+                    UpdatedAtUtc = config.UpdatedAtUtc,
+                    EventVersion = Math.Max(1, config.LiveVersion)
                 }, traceId, cancellationToken);
                 _logger.LogInformation(
                     "StoreConfigUpdatedEvent staged for outbox | TenantId: {TenantId} | ConfigId: {ConfigId} | TraceId: {TraceId}",
@@ -1333,6 +1349,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             ThemeLiveOverridesJson = config.ThemeLiveOverridesJson ?? "{}",
             DraftTheme = BuildAdminThemeView(presetKey, draftTheme),
             LiveTheme = BuildAdminThemeView(livePresetKey, liveTheme),
+            LivePages = StorefrontDraftConfigMapper.MapLive(config, liveThemePreset, "EGP", "EG").Pages,
             Pages = pages,
             ProductTemplates = productTemplates
         };
@@ -2073,6 +2090,21 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         }
 
         return StorefrontSectionContracts.NormalizeSectionType(sectionType);
+    }
+
+    private async Task ValidateHomepageMediaAsync(Dictionary<string, object> composition, Guid tenantId, CancellationToken cancellationToken)
+    {
+        var document = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(composition)) as JsonObject;
+        var ids = new HashSet<Guid>();
+        foreach (var image in HomepageMediaReferences.Images(document))
+        {
+            if (!image.StartsWith(HomepageMediaReferences.Prefix, StringComparison.Ordinal)) continue;
+            if (!HomepageMediaReferences.TryRead(image, out var id)) throw new ArgumentException("Invalid homepage media reference.");
+            ids.Add(id);
+        }
+        var count = await _dbContext.HomepageMediaAssets.AsNoTracking()
+            .CountAsync(asset => asset.TenantId == tenantId && ids.Contains(asset.Id), cancellationToken);
+        if (count != ids.Count) throw new ArgumentException("The selected homepage image is unavailable in this store. Upload it again.");
     }
 
     private async Task ValidateCuratedProductsAsync(

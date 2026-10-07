@@ -100,6 +100,7 @@ public class AdminStoreConfigRequest
 /// </summary>
 public class AdminStoreConfigResponse
 {
+    public Storefront.StorefrontPagesDto? LivePages { get; set; }
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public string RowVersion { get; set; } = "0";
