@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RefreshCw } from 'lucide-react'
 import { useWhatsAppAnalytics } from '../hooks/useWhatsAppAnalytics'
@@ -18,7 +18,7 @@ export default function WhatsAppLogsPage() {
     const [pagination, setPagination] = useState({ totalPages: 1, totalCount: 0 })
     const [selectedMessage, setSelectedMessage] = useState(null)
 
-    const fetchLogs = async () => {
+    const fetchLogs = useCallback(async () => {
         try {
             const data = await getLogs(filters, page)
             setLogs(data.items || [])
@@ -29,11 +29,11 @@ export default function WhatsAppLogsPage() {
         } catch (err) {
             showError(err.message)
         }
-    }
+    }, [getLogs, filters, page, showError])
 
     useEffect(() => {
         fetchLogs()
-    }, [page, filters]) // Auto-fetch on filter/page change
+    }, [fetchLogs]) // Auto-fetch on filter/page change
 
     const handleFilterChange = (e) => {
         const { name, value } = e.target

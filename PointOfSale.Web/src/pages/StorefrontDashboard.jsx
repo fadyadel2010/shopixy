@@ -88,7 +88,7 @@ export default function StorefrontDashboard() {
                             <button
                                 key={page.key}
                                 onClick={() => navigate(page.route)}
-                                className="group rounded-xl border border-gray-200 bg-white p-6 text-left transition-all hover:border-indigo-300 hover:shadow-md"
+                                className="group rounded-xl border border-gray-200 bg-white p-6 text-start transition-all hover:border-indigo-300 hover:shadow-md"
                             >
                                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 transition-colors group-hover:bg-indigo-600">
                                     <Icon size={24} className="text-indigo-600 transition-colors group-hover:text-white" />

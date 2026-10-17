@@ -7,12 +7,17 @@ import type {
     StorefrontPageType,
 } from '@/types';
 
-const SESSION_CACHE_KEY = 'smart_offers_cache_v1';
 const LOCAL_SEEN_PREFIX = 'offer_seen_';
 const SESSION_SEEN_PREFIX = 'offer_seen_session_';
 
 let inMemoryOffers: SmartOffer[] | null = null;
 let pendingLoad: Promise<SmartOffer[]> | null = null;
+let loadedScope: string | null = null;
+let loadedAt = 0;
+let pendingScope: string | null = null;
+let generation = 0;
+const MAX_AGE_MS = 60_000;
+const currentScope = () => getScopedStorageKey('smart_offers');
 
 export interface SmartOfferEligibilityInput {
     triggerType?: SmartOfferTriggerType;
@@ -29,40 +34,6 @@ function canUseStorage() {
 
 function getScopedStorageKey(key: string): string | null {
     return tryGetTenantScopedStorageKey(key);
-}
-
-function safelyReadSessionCache(): SmartOffer[] | null {
-    if (!canUseStorage()) {
-        return null;
-    }
-
-    try {
-        const storageKey = getScopedStorageKey(SESSION_CACHE_KEY);
-        const cached = storageKey ? window.sessionStorage.getItem(storageKey) : null;
-        if (!cached) {
-            return null;
-        }
-
-        const parsed = JSON.parse(cached);
-        return Array.isArray(parsed) ? parsed : null;
-    } catch {
-        return null;
-    }
-}
-
-function writeSessionCache(offers: SmartOffer[]) {
-    if (!canUseStorage()) {
-        return;
-    }
-
-    try {
-        const storageKey = getScopedStorageKey(SESSION_CACHE_KEY);
-        if (storageKey) {
-            window.sessionStorage.setItem(storageKey, JSON.stringify(offers));
-        }
-    } catch {
-        // Ignore storage quota errors.
-    }
 }
 
 function getDisplayCount(offerId: string): number {
@@ -141,45 +112,52 @@ export function detectStorefrontPageType(pathname: string): StorefrontPageType {
 }
 
 export async function loadSmartOffers(forceRefresh = false): Promise<SmartOffer[]> {
-    if (!forceRefresh && inMemoryOffers) {
+    const scope = currentScope();
+    if (!scope) return [];
+    if (!forceRefresh && loadedScope === scope && Date.now() - loadedAt < MAX_AGE_MS && inMemoryOffers) {
         return inMemoryOffers;
     }
 
-    if (!forceRefresh) {
-        const cached = safelyReadSessionCache();
-        if (cached) {
-            inMemoryOffers = cached;
-            return cached;
-        }
-    }
-
-    if (!forceRefresh && pendingLoad) {
+    if (!forceRefresh && pendingScope === scope && pendingLoad) {
         return pendingLoad;
     }
 
+    const request = ++generation;
+    pendingScope = scope;
     pendingLoad = fetchSmartOffers()
         .then((offers) => {
-            const sortedOffers = [...offers].sort((left, right) => right.priority - left.priority);
+            if (request !== generation || currentScope() !== scope) return [];
+            const sortedOffers = uniqueSortedOffers(offers);
             inMemoryOffers = sortedOffers;
-            writeSessionCache(sortedOffers);
+            loadedScope = scope;
+            loadedAt = Date.now();
             return sortedOffers;
         })
         .finally(() => {
-            pendingLoad = null;
+            if (request === generation) { pendingLoad = null; pendingScope = null; }
         });
 
     return pendingLoad;
 }
 
 export function getLoadedSmartOffers(): SmartOffer[] {
-    return inMemoryOffers ?? [];
+    return loadedScope === currentScope() && Date.now() - loadedAt < MAX_AGE_MS ? inMemoryOffers ?? [] : [];
+}
+
+function uniqueSortedOffers(offers: SmartOffer[]): SmartOffer[] {
+    const seen = new Set<string>();
+    return offers.filter(offer => {
+        if (!offer?.id || seen.has(offer.id)) return false;
+        seen.add(offer.id);
+        return true;
+    }).sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id));
 }
 
 export function getEligibleOffers(input: SmartOfferEligibilityInput = {}): SmartOffer[] {
-    const offers = input.offers ?? inMemoryOffers ?? [];
+    const offers = input.offers ?? getLoadedSmartOffers();
     const pageType = input.pageType ?? detectStorefrontPageType(input.pathname ?? window.location.pathname);
 
-    return offers
+    return uniqueSortedOffers(offers)
         .filter((offer) => {
             if (input.triggerType && offer.triggerType !== input.triggerType) {
                 return false;
@@ -203,7 +181,7 @@ export function getEligibleOffers(input: SmartOfferEligibilityInput = {}): Smart
 
             return true;
         })
-        .sort((left, right) => right.priority - left.priority);
+        .sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id));
 }
 
 export function getNextTimeDelaySeconds(
@@ -230,23 +208,17 @@ export function markOfferDisplayed(offer: SmartOffer) {
     const count = getDisplayCount(offer.id) + 1;
     const localSeenKey = getScopedStorageKey(`${LOCAL_SEEN_PREFIX}${offer.id}`);
     const sessionSeenKey = getScopedStorageKey(`${SESSION_SEEN_PREFIX}${offer.id}`);
-    if (localSeenKey) {
-        window.localStorage.setItem(localSeenKey, String(count));
-    }
-    if (sessionSeenKey) {
-        window.sessionStorage.setItem(sessionSeenKey, '1');
-    }
+    try {
+        if (localSeenKey) window.localStorage.setItem(localSeenKey, String(count));
+        if (sessionSeenKey) window.sessionStorage.setItem(sessionSeenKey, '1');
+    } catch { /* Storage restrictions must not crash browsing. */ }
 }
 
 export function resetSmartOfferSessionCache() {
+    generation++;
     inMemoryOffers = null;
-
-    if (!canUseStorage()) {
-        return;
-    }
-
-    const storageKey = getScopedStorageKey(SESSION_CACHE_KEY);
-    if (storageKey) {
-        window.sessionStorage.removeItem(storageKey);
-    }
+    loadedScope = null;
+    loadedAt = 0;
+    pendingLoad = null;
+    pendingScope = null;
 }

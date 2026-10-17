@@ -88,6 +88,7 @@ function requireRefundMediaPresentation(media: unknown, mediaUrls: unknown): voi
             !guid(evidence.mediaId) ||
             ids.has(evidence.mediaId) ||
             !text(evidence.url) ||
+            !text(evidence.mediaType) ||
             !REFUND_MEDIA_TYPES.has(evidence.mediaType) ||
             !text(evidence.mimeType) ||
             !money(evidence.sizeBytes) ||

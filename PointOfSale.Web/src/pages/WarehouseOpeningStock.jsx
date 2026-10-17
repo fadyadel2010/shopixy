@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
-import { useSettings } from '../contexts/SettingsContext'
 import api from '../services/api'
 import { useToast } from '../components/Toast'
 
@@ -14,7 +13,6 @@ import { useToast } from '../components/Toast'
 const WarehouseOpeningStock = () => {
     const { t } = useTranslation()
     const { confirm } = useConfirmDialog()
-    const { formatCurrency, settings } = useSettings()
     const { showSuccess, showError } = useToast()
 
     const [warehouses, setWarehouses] = useState([])
@@ -27,7 +25,6 @@ const WarehouseOpeningStock = () => {
     const [variants, setVariants] = useState([]) // All variants for selection
     const [selectedVariant, setSelectedVariant] = useState('')
     const [quantity, setQuantity] = useState('')
-    const [costPrice, setCostPrice] = useState('')
     const [notes, setNotes] = useState('')
     const [items, setItems] = useState([]) // Items to save
     const [variantSearch, setVariantSearch] = useState('')

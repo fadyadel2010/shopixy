@@ -4,38 +4,57 @@
  * 
  * Displays wishlist statistics and top products on the dashboard.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Heart, TrendingUp, Users, Package } from 'lucide-react'
 import api from '../services/api'
 import { useSettings } from '../contexts/SettingsContext'
+import { useAuthStore } from '../store/authStore'
+import { useLatestRequestGuard } from '../hooks/useLatestRequestGuard'
 
 export default function WishlistAnalyticsCard() {
-    const { t, i18n } = useTranslation()
+    const { i18n } = useTranslation()
     const { formatCurrency } = useSettings()
     const isRTL = i18n.language === 'ar'
+    const tenantId = useAuthStore(state => state.user?.tenantId)
+    const { beginRequest, isLatestRequest } = useLatestRequestGuard()
 
     const [data, setData] = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
 
-    useEffect(() => {
-        fetchAnalytics()
-    }, [])
-
-    const fetchAnalytics = async () => {
+    const fetchAnalytics = useCallback(async () => {
+        const requestId = beginRequest()
+        if (!tenantId) {
+            setData(null)
+            setLoading(false)
+            return
+        }
         try {
             setLoading(true)
+            setError(null)
             const response = await api.get('/admin/wishlist-analytics')
+            if (!isLatestRequest(requestId)) return
+            const value = response.data
+            if (!value || !Array.isArray(value.topProducts) || !value.recentActivity ||
+                ![value.totalWishlistItems, value.totalCustomersWithWishlists, value.averageItemsPerWishlist, value.recentActivity.itemsAddedLast7Days].every(number => Number.isFinite(number) && number >= 0)) {
+                throw new Error('Invalid wishlist analytics response.')
+            }
             setData(response.data)
             setError(null)
         } catch (err) {
-            console.error('Failed to load wishlist analytics:', err)
+            if (!isLatestRequest(requestId)) return
+            console.error('Failed to load wishlist analytics:', { status: err?.response?.status })
+            setData(null)
             setError('Failed to load data')
         } finally {
-            setLoading(false)
+            if (isLatestRequest(requestId)) setLoading(false)
         }
-    }
+    }, [tenantId, beginRequest, isLatestRequest])
+
+    useEffect(() => {
+        void fetchAnalytics()
+    }, [fetchAnalytics])
 
     if (loading) {
         return (
@@ -59,7 +78,10 @@ export default function WishlistAnalyticsCard() {
     }
 
     if (error || !data) {
-        return null // Hide if error or no data
+        return <div className="rounded-xl border border-gray-200 bg-white p-6" role="alert">
+            <p>{isRTL ? 'تعذر تحميل إحصائيات الأمنيات' : 'Unable to load wishlist analytics'}</p>
+            <button type="button" onClick={fetchAnalytics} className="mt-2 text-indigo-700 underline">{isRTL ? 'إعادة المحاولة' : 'Retry'}</button>
+        </div>
     }
 
     // Don't show if no wishlist activity at all
@@ -76,6 +98,7 @@ export default function WishlistAnalyticsCard() {
                 </div>
                 <div className="text-center py-8 text-gray-500">
                     <p>{isRTL ? 'لا توجد نشاطات أمنيات حتى الآن' : 'No wishlist activity yet'}</p>
+                    <button type="button" onClick={fetchAnalytics} className="mt-2 text-indigo-700 underline">{isRTL ? 'تحديث' : 'Refresh'}</button>
                 </div>
             </div>
         )
@@ -121,6 +144,7 @@ export default function WishlistAnalyticsCard() {
                     onClick={fetchAnalytics}
                     className="p-2 hover:bg-gray-50 rounded-lg transition-colors text-gray-400 hover:text-gray-600"
                     title={isRTL ? 'تحديث' : 'Refresh'}
+                    aria-label={isRTL ? 'تحديث' : 'Refresh'}
                 >
                     <TrendingUp size={18} />
                 </button>

@@ -188,6 +188,8 @@ public class ShipmentService : IShipmentService
             CarrierCode = normalizedCarrierCode,
             ShippingCost = order.ShippingCost,
             Currency = order.Currency,
+            IsCashOnDelivery = IsCashOnDelivery(order),
+            CodAmount = IsCashOnDelivery(order) ? order.Total : null,
             Status = isCarrierManaged
                 ? ShipmentStatus.PendingExternalRegistration
                 : ShipmentStatus.Pending,
@@ -219,6 +221,7 @@ public class ShipmentService : IShipmentService
             DestinationGeographicSnapshotCreatedAtUtc = order.ShippingAddressAdmissionEvidenceId.HasValue ? DateTime.UtcNow : null,
             DestinationGeographicSnapshotVersion = order.ShippingAddressAdmissionEvidenceId.HasValue ? 1 : null,
             RecipientPhone = order.GuestPhone ?? order.Customer?.Phone,
+            RecipientEmail = order.GuestEmail ?? order.Customer?.Email,
             EstimatedDeliveryDate = estimatedDelivery,
             ServiceLevel = serviceLevel,
             ExternalRegistrationRequestedAtUtc = isCarrierManaged ? DateTime.UtcNow : null,
@@ -672,11 +675,7 @@ public class ShipmentService : IShipmentService
 
     private static string? BuildTrackingUrl(string? template, string? trackingNumber)
     {
-        if (string.IsNullOrEmpty(template) || string.IsNullOrEmpty(trackingNumber))
-        {
-            return null;
-        }
-        return template.Replace("{tracking_number}", trackingNumber);
+        return PointOfSale.Core.Helpers.ShipmentTrackingUrl.Build(template, trackingNumber);
     }
 
     private static ShipmentDto MapToDto(Shipment shipment)
@@ -927,6 +926,9 @@ public class ShipmentService : IShipmentService
                     DeliveredAt = shipment.DeliveredAtUtc ?? authorityContext.BaseTimestampUtc,
                     CorrelationId = correlationId,
                     IdempotencyKey = $"order-delivered:{shipment.OrderId:N}:{authorityContext.OrderEventVersion}",
+                    ShipmentId = shipment.Id,
+                    DeliveryReference = shipment.Order?.DeliveryReference,
+                    ProofOfDeliveryUrl = shipment.Order?.ProofOfDeliveryUrl,
                     OccurredAtUtc = eventClock.Next()
                 }, cancellationToken);
 

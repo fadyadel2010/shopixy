@@ -1,11 +1,11 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useFormatting } from '../../hooks/useFormatting'
 import type { CreateServiceRequest } from '../types'
 
 interface ServiceFormModalProps {
+    isRTL: boolean
     serviceId?: string
-    initialData?: any
+    initialData?: Partial<CreateServiceRequest>
     onSubmit: (data: CreateServiceRequest) => Promise<void>
     onClose: () => void
 }
@@ -22,7 +22,7 @@ const CATEGORY_VALUES = [
     'Other',
 ] as const
 
-const PRICING_TYPES = ['Fixed', 'Hourly', 'Custom'] as const
+const PRICING_TYPES = ['Fixed', 'Hourly', 'Package'] as const
 const CURRENCIES = ['EGP', 'USD', 'EUR', 'GBP'] as const
 
 const parseStartingPrice = (value: string): number | undefined => {
@@ -38,9 +38,8 @@ type ServiceFormData = Omit<CreateServiceRequest, 'startingPrice'> & {
     startingPrice: string
 }
 
-export function ServiceFormModal({ serviceId, initialData, onSubmit, onClose }: ServiceFormModalProps) {
+export function ServiceFormModal({ serviceId, initialData, onSubmit, onClose, isRTL }: ServiceFormModalProps) {
     const { t } = useTranslation()
-    const { isRTL } = useFormatting()
     const [imageError, setImageError] = useState<string | null>(null)
     const [formData, setFormData] = useState<ServiceFormData>({
         title: initialData?.title || '',
@@ -213,9 +212,10 @@ export function ServiceFormModal({ serviceId, initialData, onSubmit, onClose }: 
                                 <select
                                     className="input"
                                     value={formData.pricingType}
-                                    onChange={(event) =>
-                                        setFormData({ ...formData, pricingType: event.target.value as any })
-                                    }
+                                    onChange={(event) => {
+                                        const pricingType = PRICING_TYPES.find(value => value === event.target.value)
+                                        if (pricingType) setFormData({ ...formData, pricingType })
+                                    }}
                                 >
                                     {PRICING_TYPES.map((pricingType) => (
                                         <option key={pricingType} value={pricingType}>

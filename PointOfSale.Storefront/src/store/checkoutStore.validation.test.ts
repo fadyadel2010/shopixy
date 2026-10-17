@@ -30,8 +30,8 @@ vi.mock('@/features/auth/authTelemetry', () => ({
 }));
 
 const cartId = '10000000-0000-0000-0000-000000000001';
-const shippingMethodA = '20000000-0000-0000-0000-000000000001';
-const shippingMethodB = '20000000-0000-0000-0000-000000000002';
+const shippingMethodA = '20000000-0000-4000-8000-000000000001';
+const shippingMethodB = '20000000-0000-4000-8000-000000000002';
 
 function createMemoryStorage(): Storage {
     const values = new Map<string, string>();
@@ -77,7 +77,7 @@ function systemField(systemFieldKey: string): CheckoutFieldDefinition {
 function cart(): CartDto {
     return {
         cartId,
-        tenantId: '40000000-0000-0000-0000-000000000001',
+        tenantId: '40000000-0000-4000-8000-000000000001',
         ownerType: 'session',
         ownerId: 'guest-session',
         items: [],
@@ -96,7 +96,7 @@ function cart(): CartDto {
 
 describe('checkout state authority regression', () => {
     beforeEach(() => {
-        useCartStore.setState({ cart: cart(), isLoading: false, isInitialized: true });
+        useCartStore.setState({ cart: cart(), isLoading: false, isInitialized: true, requiresRefresh: false, error: null });
         useCheckoutStore.getState().reset();
         useCheckoutStore.setState({
             address,
@@ -310,6 +310,7 @@ describe('checkout state authority regression', () => {
     });
 
     it('admits only the latest shipping selection response', async () => {
+        setResolvedTenant(cart().tenantId);
         const resolvers = new Map<string, (value: unknown) => void>();
         vi.spyOn(httpClient, 'post').mockImplementation((_url, payload) => {
             const methodId = (payload as { shippingMethodId: string }).shippingMethodId;
@@ -322,6 +323,8 @@ describe('checkout state authority regression', () => {
 
         resolvers.get(shippingMethodB)?.({
             data: {
+                tenantId: cart().tenantId,
+                shippingMethodId: shippingMethodB,
                 warehouseResolutionId: '60000000-0000-4000-8000-000000000002',
                 resolutionVersion: 2,
                 status: 'RESOLVED',
@@ -332,6 +335,8 @@ describe('checkout state authority regression', () => {
 
         resolvers.get(shippingMethodA)?.({
             data: {
+                tenantId: cart().tenantId,
+                shippingMethodId: shippingMethodA,
                 warehouseResolutionId: '60000000-0000-4000-8000-000000000003',
                 resolutionVersion: 1,
                 status: 'RESOLVED',
@@ -344,6 +349,56 @@ describe('checkout state authority regression', () => {
         expect(state.shippingMethodId).toBe(shippingMethodB);
         expect(state.warehouseResolutionId).toBe('60000000-0000-4000-8000-000000000002');
         expect(state.warehouseResolutionVersion).toBe(2);
+    });
+
+    it.each([undefined, 'UNKNOWN_PROVIDER_STATE'])('does not infer shipping availability from a list when status is %s', async status => {
+        setResolvedTenant(cart().tenantId);
+        const post = vi.spyOn(httpClient, 'post').mockResolvedValue({ data: { tenantId: cart().tenantId, shippingMethodsStatus: status,
+            shippingMethods: [{ tenantId: cart().tenantId, id: shippingMethodA, name: 'Synthetic method', price: 25, currency: 'EGP' }] } } as never);
+        await useCheckoutStore.getState().fetchShippingMethods({ force: true });
+        const state = useCheckoutStore.getState();
+        expect(state.shippingMethodsStatus).toBe('ERROR');
+        expect(state.warehouseResolutionId).toBeNull();
+        expect(state.isStepValid('shipping')).toBe(false);
+        expect(post).toHaveBeenCalledTimes(1);
+        expect(post.mock.calls[0][0]).toContain('/shipping-methods/preview');
+    });
+
+    it('a failed shipping selection clears warehouse authority and sends only session and method identities', async () => {
+        const post = vi.spyOn(httpClient, 'post').mockRejectedValue({ response: { status: 409, data: { code: 'WAREHOUSE_UNRESOLVED' } } });
+        await expect(useCheckoutStore.getState().setShippingMethod(shippingMethodB)).rejects.toBeDefined();
+        const state = useCheckoutStore.getState();
+        expect(state.warehouseResolutionId).toBeNull();
+        expect(state.shippingSelectionStatus).not.toBe('valid');
+        expect(state.isStepValid('shipping')).toBe(false);
+        expect(post.mock.calls[0][1]).toEqual({ checkoutSessionId: '50000000-0000-0000-0000-000000000001', shippingMethodId: shippingMethodB });
+    });
+
+    it.each(['tenant', 'method', 'expired', 'failed'])('rejects substituted or non-executable shipping selection: %s', async variant => {
+        setResolvedTenant(cart().tenantId);
+        vi.spyOn(httpClient, 'post').mockResolvedValue({ data: {
+            tenantId: variant === 'tenant' ? '40000000-0000-0000-0000-000000000099' : cart().tenantId,
+            shippingMethodId: variant === 'method' ? shippingMethodA : shippingMethodB,
+            warehouseResolutionId: '60000000-0000-4000-8000-000000000002',
+            resolutionVersion: 1,
+            status: variant === 'failed' ? 'FAILED' : 'RESOLVED',
+            expiresAtUtc: variant === 'expired' ? '2000-01-01T00:00:00Z' : '2099-01-01T00:00:00Z',
+        } } as never);
+        await expect(useCheckoutStore.getState().setShippingMethod(shippingMethodB)).rejects.toBeDefined();
+        expect(useCheckoutStore.getState().warehouseResolutionId).toBeNull();
+        expect(useCheckoutStore.getState().isStepValid('shipping')).toBe(false);
+    });
+
+    it('does not silently choose another method after a failed selection or on initial preview', async () => {
+        setResolvedTenant(cart().tenantId);
+        useCheckoutStore.setState({ shippingMethodId: null, shippingSelectionStatus: 'none' });
+        const post = vi.spyOn(httpClient, 'post').mockResolvedValue({ data: {
+            tenantId: cart().tenantId, shippingMethodsStatus: 'AVAILABLE',
+            shippingMethods: [{ tenantId: cart().tenantId, id: shippingMethodB, name: 'Manual', price: 25, currency: 'EGP' }],
+        } } as never);
+        await useCheckoutStore.getState().fetchShippingMethods({ force: true });
+        expect(useCheckoutStore.getState().shippingMethodId).toBeNull();
+        expect(post).toHaveBeenCalledTimes(1);
     });
 
     it('clears stale order results before validating a new checkout submission', async () => {
@@ -541,6 +596,13 @@ describe('checkout state authority regression', () => {
 
         expect(success).toBe(true);
         expect(useCheckoutStore.getState().orderResult?.orderId).toBe(responseOrder.orderId);
+        expect(useCheckoutStore.getState().step).toBe('shipping');
+        expect(useCheckoutStore.getState().shippingMethodId).toBeNull();
+        expect(useCheckoutStore.getState().shippingSelectionStatus).toBe('none');
+        expect(useCheckoutStore.getState().paymentSelectionStatus).toBe('none');
+        expect(useCheckoutStore.getState().pricing).toBeNull();
+        expect(useCheckoutStore.getState().address.fullName).toBe('');
+        expect(useCheckoutStore.getState().checkoutSessionId).toBeNull();
         expect(clearCart).toHaveBeenCalledTimes(1);
     },
     );

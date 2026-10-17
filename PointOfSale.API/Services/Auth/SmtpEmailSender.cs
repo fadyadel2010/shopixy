@@ -40,8 +40,7 @@ public class SmtpEmailSender : IEmailSender
     {
         if (!_settings.Enabled)
         {
-            _logger.LogWarning("SMTP is disabled. Email to {To} with subject '{Subject}' was not sent.", to, subject);
-            return;
+            throw new InvalidOperationException("SMTP email delivery is disabled.");
         }
 
         try
@@ -52,7 +51,7 @@ public class SmtpEmailSender : IEmailSender
                 EnableSsl = _settings.EnableSsl
             };
 
-            var message = new MailMessage
+            using var message = new MailMessage
             {
                 From = new MailAddress(_settings.FromEmail, _settings.FromName),
                 Subject = subject,
@@ -73,11 +72,11 @@ public class SmtpEmailSender : IEmailSender
 
             await client.SendMailAsync(message);
 
-            _logger.LogInformation("Email sent successfully to {To} with subject '{Subject}'", to, subject);
+            _logger.LogInformation("Email accepted by SMTP transport");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send email to {To} with subject '{Subject}'", to, subject);
+            _logger.LogWarning("SMTP email dispatch failed | ErrorType: {ErrorType}", ex.GetType().Name);
             throw;
         }
     }

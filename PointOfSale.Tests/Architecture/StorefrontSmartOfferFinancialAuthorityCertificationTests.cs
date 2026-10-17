@@ -22,7 +22,12 @@ public sealed class StorefrontSmartOfferFinancialAuthorityCertificationTests
         Assert.DoesNotContain("total", offerTypes, StringComparison.OrdinalIgnoreCase);
 
         Assert.Contains("fetchSmartOffers()", offerEngine, StringComparison.Ordinal);
-        Assert.Contains("writeSessionCache(sortedOffers)", offerEngine, StringComparison.Ordinal);
+        // Display candidates now have scoped, expiring, generation-fenced memory
+        // instead of an indefinitely reusable session-storage snapshot. Actual
+        // race behavior is exercised by smartOfferEngine.phase3.test.ts.
+        Assert.Contains("loadedScope = scope;", offerEngine, StringComparison.Ordinal);
+        Assert.Contains("request !== generation || currentScope() !== scope", offerEngine, StringComparison.Ordinal);
+        Assert.Contains("Date.now() - loadedAt < MAX_AGE_MS", offerEngine, StringComparison.Ordinal);
         Assert.Contains("getEligibleOffers", offerProvider, StringComparison.Ordinal);
         Assert.Contains("markOfferDisplayed(offer)", offerProvider, StringComparison.Ordinal);
         Assert.Contains("redeemSmartOffer(offer.id)", offerPopup, StringComparison.Ordinal);

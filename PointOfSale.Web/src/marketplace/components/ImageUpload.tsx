@@ -1,17 +1,16 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useFormatting } from '../../hooks/useFormatting';
 
 interface ImageUploadProps {
+  dir: 'rtl' | 'ltr';
   label: string;
   currentImage?: string;
   onImageChange: (imageUrl: string) => void;
   aspectRatio?: 'square' | 'wide' | 'cover';
 }
 
-export function ImageUpload({ label, currentImage, onImageChange, aspectRatio = 'square' }: ImageUploadProps) {
+export function ImageUpload({ label, currentImage, onImageChange, aspectRatio = 'square', dir }: ImageUploadProps) {
   const { t } = useTranslation();
-  const { dir } = useFormatting();
   const [preview, setPreview] = useState<string | null>(currentImage || null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);

@@ -35,7 +35,6 @@ const requiredEventsByStatus: Record<NonNullable<ReturnType<typeof normalizeServ
   cancelled: ['Requested', 'Cancelled'],
   completedByProvider: ['Requested', 'Accepted', 'CompletedByProvider'],
   completedByBuyer: ['Requested', 'Accepted', 'CompletedByProvider', 'CompletedByBuyer'],
-  expired: ['Requested'],
 }
 
 const allowedEventsByStatus: Record<NonNullable<ReturnType<typeof normalizeServiceRequestStatusKey>>, Set<AuditEventType>> = {
@@ -45,7 +44,6 @@ const allowedEventsByStatus: Record<NonNullable<ReturnType<typeof normalizeServi
   cancelled: new Set(['Requested', 'Accepted', 'Cancelled']),
   completedByProvider: new Set(['Requested', 'Accepted', 'CompletedByProvider']),
   completedByBuyer: new Set(['Requested', 'Accepted', 'CompletedByProvider', 'CompletedByBuyer']),
-  expired: new Set(['Requested']),
 }
 
 const isAuditEventType = (value: unknown): value is AuditEventType =>

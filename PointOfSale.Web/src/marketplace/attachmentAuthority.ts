@@ -1,7 +1,7 @@
 import type { ChatIdentityAuthority } from './chatAuthority'
+import { containsAsciiControl } from '../security/textCharacterPolicy'
 
 const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const unsafeFileNamePattern = /[\/\\\u0000-\u001f\u007f]/
 
 const normalizeGuid = (value: unknown) => {
   const normalized = String(value ?? '').trim().toLowerCase()
@@ -17,7 +17,8 @@ export const normalizeAttachmentFileName = (value: unknown) => {
 
   return value.length > 0
     && value.length <= 255
-    && !unsafeFileNamePattern.test(value)
+    && !containsAsciiControl(value)
+    && !value.includes('/') && !value.includes('\\')
     && value !== '.'
     && value !== '..'
       ? value

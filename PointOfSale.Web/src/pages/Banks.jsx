@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import api from '../services/api'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useToast } from '../components/Toast'
@@ -25,11 +25,7 @@ export default function Banks() {
 
     const { showSuccess, showError } = useToast()
 
-    useEffect(() => {
-        fetchBanks()
-    }, [page, search])
-
-    const fetchBanks = async () => {
+    const fetchBanks = useCallback(async () => {
         setLoading(true)
         try {
             const response = await api.get('/banks', {
@@ -43,7 +39,11 @@ export default function Banks() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [page, search, showError, t])
+
+    useEffect(() => {
+        fetchBanks()
+    }, [fetchBanks])
 
     const handleSearch = (e) => {
         e.preventDefault()

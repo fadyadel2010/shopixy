@@ -14,6 +14,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from '@/i18n';
 
 // ============================================================================
 // Types
@@ -56,6 +57,7 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
     trackingUrl,
     timeline = [],
 }) => {
+    const { t, language } = useTranslation();
     // Filter timeline to shipping-related events only
     const shipmentEvents = timeline.filter(event =>
         event.type === 'Shipped' ||
@@ -70,7 +72,7 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
         return (
             <div className="bg-muted/5 border border-muted/10 rounded-xl p-6 text-center">
                 <div className="text-4xl mb-3">📦</div>
-                <p className="text-muted">Shipment information not available yet</p>
+                <p className="text-muted">{t('order.tracking.shipmentUnavailable')}</p>
             </div>
         );
     }
@@ -86,7 +88,7 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
                         d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
                     />
                 </svg>
-                Shipment Tracking
+                {t('order.tracking.shipment')}
             </h2>
 
             {/* Tracking Info */}
@@ -94,13 +96,13 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
                 <div className="bg-muted/5 rounded-lg p-4 mb-4 space-y-2">
                     {carrierName && (
                         <div className="flex justify-between items-center">
-                            <span className="text-sm text-muted">Carrier</span>
+                            <span className="text-sm text-muted">{t('order.tracking.carrier')}</span>
                             <span className="font-medium text-text">{carrierName}</span>
                         </div>
                     )}
                     {trackingNumber && (
                         <div className="flex justify-between items-center">
-                            <span className="text-sm text-muted">Tracking Number</span>
+                            <span className="text-sm text-muted">{t('order.tracking.trackingNumber')}</span>
                             <span className="font-mono text-primary font-medium text-sm">
                                 {trackingNumber}
                             </span>
@@ -123,14 +125,14 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
                         mb-4
                     "
                 >
-                    Track with {carrierName || 'Carrier'} →
+                    {t('order.tracking.trackWith', { carrier: carrierName || t('order.tracking.carrier') })}
                 </a>
             )}
 
             {/* Shipment Timeline */}
             {shipmentEvents.length > 0 && (
                 <div>
-                    <h3 className="text-sm font-semibold text-muted mb-3">Shipment History</h3>
+                    <h3 className="text-sm font-semibold text-muted mb-3">{t('order.tracking.shipmentHistory')}</h3>
                     <div className="space-y-3">
                         {shipmentEvents.map((event, index) => (
                             <div
@@ -154,7 +156,7 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
                                             {event.description || event.type}
                                         </p>
                                         <time className="text-xs text-muted flex-shrink-0">
-                                            {new Date(event.at).toLocaleDateString('en-US', {
+                                            {new Date(event.at).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', {
                                                 month: 'short',
                                                 day: 'numeric',
                                                 hour: '2-digit',
@@ -164,7 +166,7 @@ export const ShipmentTracking: React.FC<ShipmentTrackingProps> = ({
                                     </div>
                                     {event.to && (
                                         <p className="text-xs text-muted mt-0.5">
-                                            Status: {event.to}
+                                            {t('order.status')}: {event.to}
                                         </p>
                                     )}
                                 </div>

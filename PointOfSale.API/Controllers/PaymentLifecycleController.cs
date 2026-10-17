@@ -1,6 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using System.Security.Claims;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.RateLimiting;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Payments;
 
@@ -203,6 +207,37 @@ public class PaymentLifecycleController : ControllerBase
     // SETTLEMENT OPERATIONS (Admin Only)
     // ═══════════════════════════════════════════════════════════════════════════
     
+    [HttpGet("~/api/payments/cod/manual-settlements/eligible-orders")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<IActionResult> GetManualSettlementEligibility([FromQuery] int page = 1, CancellationToken ct = default)
+    {
+        try { return Ok(await _lifecycleService.GetManualCodSettlementSelectionAsync(_tenantContext.RequiredTenantId, page, ct)); }
+        catch (ManualCodSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+    }
+
+    [HttpPost("~/api/payments/cod/manual-settlements")]
+    [Authorize(Roles = "Owner,Admin")]
+    [EnableRateLimiting("FinancialWrite")]
+    public async Task<IActionResult> RecordManualCodSettlement([FromBody] ManualCodSettlementApiRequest request, CancellationToken ct)
+    {
+        var rawActor = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(rawActor, out var actor) || actor == Guid.Empty) return Forbid();
+        try
+        {
+            return Ok(await _lifecycleService.RecordManualCodSettlementAsync(_tenantContext.RequiredTenantId, actor,
+                new ManualCodSettlementRequest(request.SettlementId, request.OrderIds), ct));
+        }
+        catch (ManualCodSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+    }
+
+    [HttpGet("~/api/payments/cod/manual-settlements/{settlementId:guid}")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<IActionResult> GetManualCodSettlement(Guid settlementId, CancellationToken ct)
+    {
+        var result = await _lifecycleService.GetManualCodSettlementAsync(_tenantContext.RequiredTenantId, settlementId, ct);
+        return result == null ? NotFound() : Ok(result);
+    }
+
     /// <summary>
     /// COD settlement ingress is contained (T-10).
     ///
@@ -309,6 +344,9 @@ public class PaymentLifecycleController : ControllerBase
 }
 
 #region Request/Response DTOs
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ManualCodSettlementApiRequest(Guid SettlementId, List<Guid> OrderIds);
 
 public class CodDeliveredRequest
 {

@@ -10,7 +10,7 @@ vi.mock('../services/domainManagementService', () => ({
 }))
 
 vi.mock('../../../../services/api', () => ({
-    getSafeApiErrorMessage: (err) => err?.response?.data?.message || 'Request failed',
+    getSafeApiErrorMessage: (err: { response?: { data?: { message?: string } } }) => err?.response?.data?.message || 'Request failed',
 }))
 
 import { useDomainDashboard } from './useDomainDashboard.js'

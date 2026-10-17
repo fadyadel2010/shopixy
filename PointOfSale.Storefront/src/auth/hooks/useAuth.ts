@@ -17,7 +17,7 @@ import {
     selectAvailableProviders,
     selectEmailVerified,
 } from '../store/authStore';
-import type { LoginRequest, RegisterRequest, AuthError, OnlineCustomer } from '../types';
+import type { LoginRequest, RegisterRequest, AuthError, AuthResponse } from '../types';
 
 export interface UseAuthReturn {
     // State
@@ -38,10 +38,10 @@ export interface UseAuthReturn {
 
     // Actions
     login: (request: LoginRequest) => Promise<void>;
-    register: (request: RegisterRequest) => Promise<OnlineCustomer>;
+    register: (request: RegisterRequest) => Promise<AuthResponse>;
     logout: () => Promise<void>;
-    googleLogin: (idToken: string) => Promise<void>;
-    facebookLogin: (accessToken: string) => Promise<void>;
+    googleLogin: (idToken: string, state?: string, signal?: AbortSignal) => Promise<boolean>;
+    facebookLogin: (accessToken: string, state?: string, signal?: AbortSignal) => Promise<boolean>;
     clearError: () => void;
 
     // Utils
@@ -87,10 +87,11 @@ export function useAuth(): UseAuthReturn {
 
     // Load providers on mount
     useEffect(() => {
-        if (!providers) {
-            storeLoadProviders();
-        }
-    }, [providers, storeLoadProviders]);
+        void storeLoadProviders();
+        const refresh = () => { void storeLoadProviders(); };
+        window.addEventListener('focus', refresh);
+        return () => window.removeEventListener('focus', refresh);
+    }, [storeLoadProviders]);
 
     // Wrap actions with useCallback for stable references
     const login = useCallback(async (request: LoginRequest) => {
@@ -105,12 +106,12 @@ export function useAuth(): UseAuthReturn {
         await storeLogout();
     }, [storeLogout]);
 
-    const googleLogin = useCallback(async (idToken: string) => {
-        await storeGoogleLogin(idToken);
+    const googleLogin = useCallback(async (idToken: string, state?: string, signal?: AbortSignal) => {
+        return await storeGoogleLogin(idToken, state, signal);
     }, [storeGoogleLogin]);
 
-    const facebookLogin = useCallback(async (accessToken: string) => {
-        await storeFacebookLogin(accessToken);
+    const facebookLogin = useCallback(async (accessToken: string, state?: string, signal?: AbortSignal) => {
+        return await storeFacebookLogin(accessToken, state, signal);
     }, [storeFacebookLogin]);
 
     const clearError = useCallback(() => {

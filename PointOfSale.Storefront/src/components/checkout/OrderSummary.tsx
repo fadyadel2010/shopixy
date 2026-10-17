@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { useTranslation } from '@/i18n';
+import { getLocalizedField, useTranslation } from '@/i18n';
 import { formatMoney, resolveProductImage } from '@/utils';
 import { OptimizedImage } from '@/components/media';
 import { CouponInput } from '@/components/cart';
@@ -46,7 +46,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
     className = '',
 }) => {
     const [isExpanded, setIsExpanded] = useState(false);
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
 
     // Cart state - READ-ONLY from cart store
     const items = useCartStore(selectCartItems);
@@ -61,7 +61,9 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
     const hasRequestedPricing = useCheckoutStore(selectHasRequestedPricing);
     const refreshPricingPreview = useCheckoutStore((state) => state.refreshPricingPreview);
 
-    const totalDisplay = pricing
+    const totalDisplay = !shippingMethod
+        ? t('checkout.summary.selectShipping')
+        : pricing
         ? formatMoney(pricing.total, currency)
         : !hasRequestedPricing
         ? t('checkout.summary.calculating')
@@ -243,11 +245,12 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                                 <span className="text-muted">
                                     {t('cart.shipping')}
                                     {shippingMethod && (
-                                        <span className="text-xs ms-1">({shippingMethod.name})</span>
+                                        <span className="text-xs ms-1">({getLocalizedField(shippingMethod, 'name', language)})</span>
                                     )}
                                 </span>
                                 <span className="text-text">
-                                    {pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : t('cart.freeShipping')}
+                                    {!shippingMethod ? t('checkout.summary.selectShipping') :
+                                        pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : t('cart.freeShipping')}
                                 </span>
                             </div>
 

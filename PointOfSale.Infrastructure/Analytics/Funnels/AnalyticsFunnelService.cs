@@ -192,8 +192,9 @@ public class AnalyticsFunnelService : IAnalyticsFunnelService
 
             foreach (var step in definition.Steps)
             {
-                var metric = EventTypeToMetric(step.EventType);
-                var count = await _metricReader.GetCounterValueAsync(
+                var count = step.EventType == AnalyticsEventType.PurchaseCompleted
+                    ? (long)await _metricReader.GetMetricValueAsync(tenantId, AnalyticsMetric.PurchaseCompleted, windowMinutes, cancellationToken)
+                    : await _metricReader.GetCounterValueAsync(
                     tenantId,
                     step.EventType.ToString().ToLowerInvariant(),
                     windowMinutes,
@@ -291,6 +292,7 @@ public class AnalyticsFunnelService : IAnalyticsFunnelService
             _logger.LogWarning(ex,
                 "[Funnels] Computation failed | TenantId: {TenantId} | Funnel: {Funnel}",
                 tenantId, definition.FunnelKey);
+            throw;
         }
 
         return result;

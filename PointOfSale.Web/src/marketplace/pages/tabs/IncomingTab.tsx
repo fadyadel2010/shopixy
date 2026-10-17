@@ -1,43 +1,30 @@
 import { useRef, useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useFormatting } from '../../../hooks/useFormatting'
-import { marketplaceApi } from '../../api/marketplaceApi'
-import { marketplaceKeys } from '../../queryKeys'
+import type { ServiceRequest } from '../../types'
+import { useIncomingRequests } from '../../hooks/useIncomingRequests'
+import { useIncomingRequestCommands } from '../../hooks/useIncomingRequestCommands'
 import { deriveServiceRequestLifecyclePresentation } from '../../status'
-import { deriveServiceRequestLifecycleMutationAuthority } from '../../status'
 import { deriveServiceRequestContractPresentation } from '../../contractPresentation'
 import { deriveServiceRequestCompletionEligibility } from '../../completionEligibility'
-import { executeServiceRequestCompletionWorkflow } from '../../completionWorkflow'
 import { deriveServiceRequestCompletionStatePresentation } from '../../completionStateAuthority'
 import { deriveServiceRequestRatingStatePresentation } from '../../ratingStateAuthority'
 import { useAuthStore } from '../../../store/authStore'
-import {
-    marketplaceAuthorityQueryOptions,
-    publishMarketplaceAuthorityInvalidation,
-    useMarketplaceAuthorityScope,
-} from '../../authority'
 
 export function IncomingTab() {
     const { t } = useTranslation()
     const { formatCurrency, formatDate, formatNumber, isRTL } = useFormatting()
     const navigate = useNavigate()
-    const queryClient = useQueryClient()
-    const authorityScope = useMarketplaceAuthorityScope()
     const { user } = useAuthStore()
     const currentUserId = user?.id ?? user?.userId
     const [pendingRequestIds, setPendingRequestIds] = useState(() => new Set<string>())
     const pendingRequestIdsRef = useRef(new Set<string>())
 
-    const { data: requestData = [], isLoading, isFetching, isError } = useQuery({
-        queryKey: marketplaceKeys.incomingRequests(authorityScope),
-        queryFn: marketplaceApi.getIncomingRequests,
-        ...marketplaceAuthorityQueryOptions,
-    })
+    const { data: requestData = [], isLoading, isFetching, isError } = useIncomingRequests()
     const requests = isError ? [] : requestData
     const lifecycleRows = requests
-        .map((request: any) => {
+        .map((request) => {
             const lifecycleCandidate = deriveServiceRequestLifecyclePresentation(request)
             const completionState = deriveServiceRequestCompletionStatePresentation(
                 request,
@@ -62,7 +49,7 @@ export function IncomingTab() {
             }
         })
         .filter((row): row is {
-            request: any
+            request: ServiceRequest
             lifecycle: NonNullable<ReturnType<typeof deriveServiceRequestLifecyclePresentation>>
             completionEligibility: ReturnType<typeof deriveServiceRequestCompletionEligibility>
             ratingState: ReturnType<typeof deriveServiceRequestRatingStatePresentation>
@@ -91,57 +78,7 @@ export function IncomingTab() {
         setPendingRequestIds(nextPendingRequestIds)
     }
 
-    const acceptMutation = useMutation({
-        mutationFn: async (requestId: string) => {
-            const response = await marketplaceApi.acceptRequest(requestId)
-            if (!deriveServiceRequestLifecycleMutationAuthority(response, 'accept')) {
-                throw new Error('Invalid request accept lifecycle response')
-            }
-            return response
-        },
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-        onSettled: async () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            await queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
-
-    const markCompletedMutation = useMutation({
-        mutationFn: (requestId: string) => executeServiceRequestCompletionWorkflow({
-            requestId,
-            authorityScope,
-            actorUserId: currentUserId,
-            kind: 'markCompleted',
-            mutate: () => marketplaceApi.markCompleted(requestId),
-            revalidate: () => marketplaceApi.getRequestDetails(requestId),
-        }),
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-        onSettled: async () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            await queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
-
-    const rejectMutation = useMutation({
-        mutationFn: async (requestId: string) => {
-            const response = await marketplaceApi.rejectRequest(requestId)
-            if (!deriveServiceRequestLifecycleMutationAuthority(response, 'reject')) {
-                throw new Error('Invalid request rejection lifecycle response')
-            }
-            return response
-        },
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-        onSettled: async () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            await queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
+    const { acceptMutation, markCompletedMutation, rejectMutation } = useIncomingRequestCommands(currentUserId)
 
     const handleAccept = async (requestId: string) => {
         if (pendingRequestIdsRef.current.has(requestId)) {
@@ -158,7 +95,7 @@ export function IncomingTab() {
 
         try {
             await acceptMutation.mutateAsync(requestId)
-        } catch (error) {
+        } catch {
             window.alert(t('servicesMarketplace.feedback.acceptFailed'))
         } finally {
             endPendingRequest(requestId)
@@ -180,7 +117,7 @@ export function IncomingTab() {
 
         try {
             await markCompletedMutation.mutateAsync(requestId)
-        } catch (error) {
+        } catch {
             window.alert(t('servicesMarketplace.feedback.markCompletedFailed'))
         } finally {
             endPendingRequest(requestId)
@@ -203,7 +140,7 @@ export function IncomingTab() {
 
         try {
             await rejectMutation.mutateAsync(requestId)
-        } catch (error) {
+        } catch {
             window.alert(t('servicesMarketplace.feedback.rejectFailed'))
         } finally {
             endPendingRequest(requestId)

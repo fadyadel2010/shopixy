@@ -27,6 +27,7 @@ describe('storefront payment flow hardening', () => {
         paymentStatus: 'Paid',
         totalAmount: 249.99,
         currency: 'EGP',
+        canRetryPayment: false,
     } as const;
 
     beforeEach(() => {

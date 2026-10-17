@@ -10,10 +10,6 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
-vi.mock('../../hooks/useFormatting', () => ({
-  useFormatting: () => ({ isRTL: false }),
-}))
-
 afterEach(() => {
   vi.restoreAllMocks()
 })
@@ -27,6 +23,7 @@ describe('ReviewModal rating workflow presentation', () => {
 
     render(
       <ReviewModal
+        isRTL={false}
         requestId="11111111-1111-4111-8111-111111111111"
         onSubmit={onSubmit}
         onClose={onClose}
@@ -47,6 +44,7 @@ describe('ReviewModal rating workflow presentation', () => {
 
     render(
       <ReviewModal
+        isRTL={false}
         requestId="11111111-1111-4111-8111-111111111111"
         onSubmit={onSubmit}
         onClose={vi.fn()}

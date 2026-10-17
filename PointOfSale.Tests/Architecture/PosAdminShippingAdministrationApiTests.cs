@@ -98,7 +98,12 @@ public sealed class PosAdminShippingAdministrationApiTests
         await service.RunConnectionTestAsync(
             tenantId,
             accountId,
-            new ConnectionTestCommand("plaintext-boundary-input", null, null, null, true, null),
+            new ConnectionTestCommand("plaintext-boundary-input", null, null, null, true,
+                new Dictionary<string, string>
+                {
+                    ["codCollectionCurrency"] = "EGP",
+                    ["businessLocationId"] = "business-location-1"
+                }, "test-webhook-authorization"),
             actor,
             "corr-test",
             CancellationToken.None);
@@ -129,11 +134,12 @@ public sealed class PosAdminShippingAdministrationApiTests
         Assert.NotNull(detail);
         Assert.Equal(auditAfterMutations, auditAfterReads);
         Assert.DoesNotContain(detail!.CredentialReferences, credential => credential.GetType().GetProperty("SecretReference") != null);
-        Assert.Equal("****1234", detail.CredentialReferences.Single().MaskedFingerprint);
+        Assert.Equal("********", detail.CredentialReferences.Single(reference => reference.State == "Active").MaskedFingerprint);
+        Assert.Contains(detail.CredentialReferences, reference => reference.MaskedFingerprint == "****1234" && reference.State == "Rotating");
     }
 
     [Fact]
-    public async Task Activation_ShouldFailClosedForUnknownReadinessThroughApiService()
+    public async Task BostaExplicitIntegrationActivation_DoesNotClaimProviderOrShipmentReadiness()
     {
         await using var db = CreateDbContext();
         var service = CreateApiService(db, new FakeCarrierAdapter());
@@ -150,11 +156,15 @@ public sealed class PosAdminShippingAdministrationApiTests
             "corr-activate",
             CancellationToken.None);
 
-        Assert.False(blocked.Succeeded);
-        Assert.Contains("UNKNOWN_READINESS", blocked.Blockers);
+        Assert.True(blocked.Succeeded);
+        Assert.Contains("BOSTA_PROVIDER_ACCOUNT_ELIGIBILITY_UNVERIFIED", blocked.Blockers);
+        var readback = await service.GetCarrierAccountAsync(tenantId, accountId, default);
+        Assert.Equal("Active", readback!.State);
+        Assert.True(readback.IntegrationReadiness!.Enabled);
+        Assert.False(readback.IntegrationReadiness.CanExecute);
         Assert.Contains(
             await db.CarrierAdministrationAudit.IgnoreQueryFilters().ToListAsync(),
-            audit => audit.Action == CarrierAdministrationAuditAction.ActivationRejected);
+            audit => audit.Action == CarrierAdministrationAuditAction.Activation);
     }
 
     [Fact]
@@ -249,7 +259,12 @@ public sealed class PosAdminShippingAdministrationApiTests
         var accountId = created.CarrierAccountId!.Value;
         await service.UpdateCredentialReferenceAsync(tenantId, accountId, new CredentialReferenceCommand("vault://tenant/bosta/active", "****1234", null), actor, "corr-b", CancellationToken.None);
         await service.SelectEnvironmentAsync(tenantId, accountId, new EnvironmentCommand("Sandbox"), actor, "corr-c", CancellationToken.None);
-        await service.RunConnectionTestAsync(tenantId, accountId, new ConnectionTestCommand("test", null, null, null, true, null), actor, "corr-d", CancellationToken.None);
+        await service.RunConnectionTestAsync(tenantId, accountId, new ConnectionTestCommand("test", null, null, null, true,
+            new Dictionary<string, string>
+            {
+                ["codCollectionCurrency"] = "EGP",
+                ["businessLocationId"] = "business-location-1"
+            }, "test-webhook-authorization"), actor, "corr-d", CancellationToken.None);
         await service.AssignWarehouseAsync(tenantId, accountId, new WarehouseAssignmentCommand(warehouseId, true, "origin-ready"), actor, "corr-e", CancellationToken.None);
         await service.SetServiceLevelAsync(tenantId, accountId, "standard", new ServiceLevelCommand(true), actor, "corr-f", CancellationToken.None);
         return accountId;
@@ -291,10 +306,12 @@ public sealed class PosAdminShippingAdministrationApiTests
         return new ApplicationDbContext(options);
     }
 
-    private sealed class FakeCarrierAdapter : IShippingCarrierAdapter
+    private sealed class FakeCarrierAdapter : IShippingCarrierAdapter, IBostaPickupLocationDiscovery
     {
         public string CarrierCode => CarrierCodes.Bosta;
         public string DisplayName => "Bosta";
+        public Task<BostaPickupLocationResult> GetPickupLocationsAsync(CarrierCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(new BostaPickupLocationResult(true, [new("business-location-1", true, "EG", "synthetic-city", "Synthetic city", "synthetic-district", "Synthetic district") {CountryId = "synthetic-country"}], null));
 
         public Task<ShippingQuoteResult> GetQuoteAsync(ShippingQuoteRequest request, CarrierCredentials credentials, CancellationToken cancellationToken = default) =>
             Task.FromResult(new ShippingQuoteResult { Success = false });

@@ -44,20 +44,22 @@ public sealed class ShipmentCodCollectedConsumer : IConsumer<ShipmentCodCollecte
             message.CodAmount,
             message.Currency);
 
-        var result = await _paymentLifecycleService.MarkOfflineCollectionDeliveredAsync(
+        var result = await _paymentLifecycleService.RecordCarrierCodCollectionAsync(
             message.TenantId.Value,
             message.OrderId,
-            ResolveDeliveryReference(message),
-            ResolveConfirmedBy(message),
+            message.ShipmentId,
+            message.CollectionEvidenceId ?? Guid.Empty,
             context.CancellationToken);
 
-        if (result.IsSuccess)
+        if (result.IsSuccess || result.RequiresManualReview)
         {
             _logger.LogInformation(
-                "[ShipmentCOD] COD collection recognized | OrderId: {OrderId} | NewStatus: {PaymentStatus} | Idempotent: {WasIdempotent}",
+                "[ShipmentCOD] Collection evidence processed | OrderId: {OrderId} | NewStatus: {PaymentStatus} | Idempotent: {WasIdempotent} | ReconciliationRequired: {RequiresManualReview} | Code: {FailureCode}",
                 message.OrderId,
                 result.NewStatus ?? PaymentStatus.Collected,
-                result.WasIdempotent);
+                result.WasIdempotent,
+                result.RequiresManualReview,
+                result.FailureCode);
             return;
         }
 
@@ -72,17 +74,6 @@ public sealed class ShipmentCodCollectedConsumer : IConsumer<ShipmentCodCollecte
             $"COD collection payment lifecycle transition failed for order {message.OrderId}: {result.ErrorMessage ?? result.FailureCode ?? "Unknown failure"}");
     }
 
-    private static string ResolveDeliveryReference(ShipmentCodCollectedEvent message) =>
-        !string.IsNullOrWhiteSpace(message.TrackingNumber)
-            ? message.TrackingNumber!
-            : message.ShipmentNumber;
-
-    private static string ResolveConfirmedBy(ShipmentCodCollectedEvent message) =>
-        !string.IsNullOrWhiteSpace(message.CarrierName)
-            ? message.CarrierName!
-            : string.IsNullOrWhiteSpace(message.CarrierCode)
-                ? nameof(ShipmentCodCollectedEvent)
-                : message.CarrierCode;
 }
 
 public sealed class ShipmentCodCollectedConsumerDefinition

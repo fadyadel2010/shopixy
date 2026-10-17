@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, ChevronDown, ChevronUp, Loader2, Plus, RefreshCcw, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, ChevronUp, Loader2, Plus, RefreshCcw, Sparkles, Trash2 } from 'lucide-react'
 import {
     admitFooterConfiguration,
     createFooterLink as createLink,
@@ -63,6 +63,9 @@ export function FooterConfigScreen({
     const [pendingTranslation, setPendingTranslation] = useState(null)
     const [activeLanguage, setActiveLanguage] = useState('en')
     const [translatingKey, setTranslatingKey] = useState('')
+    const draftRef = useRef(draft)
+    draftRef.current = draft
+    const saveInFlightRef = useRef(false)
 
     const baseline = useMemo(
         () => acceptedConfiguration ? getFooterDraftFingerprint(acceptedConfiguration, localized) : '',
@@ -157,17 +160,25 @@ export function FooterConfigScreen({
     }
 
     const handleSave = async (revision = acceptedConfiguration?.revision) => {
-        if (!draft || !revision || validationIssues.length > 0) return
+        if (saveInFlightRef.current || !draft || !revision || validationIssues.length > 0) return
+        saveInFlightRef.current = true
+        const submittedFingerprint = getFooterDraftFingerprint(draft, localized)
         setIsSaving(true)
         setFeedback(null)
         try {
             const request = mapFooterDraftToRequest(draft, revision, localized)
             const response = await saveFooterConfiguration(scope, request)
-            adoptFooterResponse(response)
+            const admitted = admitFooterConfiguration(response, scope)
+            const hasNewerEdits = getFooterDraftFingerprint(draftRef.current, localized) !== submittedFingerprint
+            setAcceptedConfiguration(admitted)
+            if (!hasNewerEdits) setDraft(admitted)
+            setConflict(null)
             setFeedback({
-                kind: 'success',
+                kind: hasNewerEdits ? 'info' : 'success',
                 title: 'Footer saved live',
-                message: 'The accepted backend response is now live and is the saved authoring baseline.',
+                message: hasNewerEdits
+                    ? 'The submitted Footer is live. Newer unsaved edits were retained.'
+                    : 'The accepted backend response is now live and is the saved authoring baseline.',
             })
             setIsSaveConfirmOpen(false)
         } catch (saveFailure) {
@@ -177,7 +188,7 @@ export function FooterConfigScreen({
                 try {
                     const latest = admitFooterConfiguration(await loadFooterConfiguration(scope), scope)
                     setConflict({ ...failure, latest })
-                } catch (refreshFailure) {
+                } catch {
                     setConflict({
                         ...failure,
                         message: `${failure.message} The latest revision could not be loaded, so retry is disabled.`,
@@ -188,6 +199,7 @@ export function FooterConfigScreen({
                 setFeedback(failure)
             }
         } finally {
+            saveInFlightRef.current = false
             setIsSaving(false)
         }
     }

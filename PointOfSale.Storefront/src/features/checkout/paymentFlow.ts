@@ -52,6 +52,13 @@ export interface CanonicalPaymentStatusResponse {
     currency: string;
 }
 
+/** Presentation only: COD pending is not an active gateway payment or receipt. */
+export function isAwaitingCodCollection(status: CanonicalPaymentStatusResponse | null): boolean {
+    return status?.status === 'PENDING' &&
+        status.paymentMethod?.trim().toUpperCase() === 'COD' &&
+        ['Pending', 'CashOnDelivery'].includes(status.paymentStatus);
+}
+
 /**
  * A route value is only a backend lookup candidate. Payment identity becomes
  * presentable only when the current backend response proves the exact target.

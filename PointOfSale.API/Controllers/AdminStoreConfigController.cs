@@ -203,6 +203,26 @@ public class AdminStoreConfigController : ControllerBase
         }
     }
 
+    [HttpPut("commerce-ai")]
+    public async Task<IActionResult> UpdateCommerceAi([FromBody] AdminCommerceAiExperienceRequest request, CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null) return validation.Error;
+        var candidate = request.ToConfig();
+        var error = candidate.Validate();
+        if (error != null) return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(error, traceId));
+        var precondition = RequireExpectedRowVersion(traceId, null);
+        if (precondition.Error != null) return precondition.Error;
+        try
+        {
+            var result = await _storeConfigService.UpdateCommerceAiAsync(validation.TenantId!.Value, candidate, traceId, cancellationToken, precondition.RowVersion);
+            ApplyConcurrencyHeaders(result.RowVersion);
+            return Ok(result);
+        }
+        catch (ConcurrencyConflictException) { return Conflict(AdminStoreConfigApiErrorResponse.ConcurrencyConflict(traceId)); }
+    }
+
     /// <summary>
     /// Updates only the storefront operational status for the tenant.
     /// This endpoint intentionally does not bind unrelated StoreConfig domains such as Commerce AI.

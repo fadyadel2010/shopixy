@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { ServiceRequest } from '../types'
-import { useFormatting } from '../../hooks/useFormatting'
+import type { PresentationFormatting } from '../presentationFormatting'
 import { deriveServiceRequestLifecyclePresentation } from '../status'
 import { deriveServiceRequestContractPresentation } from '../contractPresentation'
 import { deriveServiceRequestCompletionEligibility } from '../completionEligibility'
@@ -10,7 +10,7 @@ import { deriveServiceRequestRatingStatePresentation } from '../ratingStateAutho
 import { RatingStateBadge } from './RatingStateBadge'
 import { useAuthStore } from '../../store/authStore'
 
-interface RequestCardProps {
+interface RequestCardProps extends Pick<PresentationFormatting, 'formatCurrency' | 'formatDate'> {
     request: ServiceRequest
     showActions?: boolean
     onAccept?: (requestId: string) => void
@@ -26,9 +26,10 @@ export function RequestCard({
     onMarkCompleted,
     onConfirmCompletion,
     onCancel,
+    formatCurrency,
+    formatDate,
 }: RequestCardProps) {
     const { t } = useTranslation()
-    const { formatCurrency, formatDate } = useFormatting()
     const { user } = useAuthStore()
     const currentUserId = user?.id ?? user?.userId
     const lifecycleCandidate = deriveServiceRequestLifecyclePresentation(request)

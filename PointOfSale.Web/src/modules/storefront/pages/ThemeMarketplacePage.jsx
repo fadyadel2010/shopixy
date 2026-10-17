@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, ExternalLink, Loader2, Monitor, Paintbrush, Sparkles } from 'lucide-react'
@@ -132,6 +132,9 @@ export function ThemeMarketplacePage() {
     const [pendingThemeId, setPendingThemeId] = useState('')
     const [feedback, setFeedback] = useState(null)
     const [conflict, setConflict] = useState(null)
+    const [loadError, setLoadError] = useState(false)
+    const [loadAttempt, setLoadAttempt] = useState(0)
+    const mutationInFlightRef = useRef(false)
 
     const activeThemeId = storeConfig?.storefrontTheme || null
     const activeTheme = activeThemeId ? getMarketplaceThemeById(activeThemeId) : null
@@ -142,6 +145,8 @@ export function ThemeMarketplacePage() {
 
         const loadThemeConfig = async () => {
             setLoading(true)
+            setLoadError(false)
+            setStoreConfig(null)
             try {
                 const response = await storeConfigService.getStoreConfig()
                 const config = deriveCurrentStoreIdentityPresentation(response, user)
@@ -155,6 +160,7 @@ export function ThemeMarketplacePage() {
             } catch (error) {
                 console.error('Failed to load storefront theme marketplace:', error)
                 if (isMounted) {
+                    setLoadError(true)
                     showError(isRTL ? 'فشل تحميل الثيمات المتاحة' : 'Failed to load available themes')
                 }
             } finally {
@@ -168,7 +174,7 @@ export function ThemeMarketplacePage() {
         return () => {
             isMounted = false
         }
-    }, [isRTL, showError, user])
+    }, [isRTL, showError, user, loadAttempt])
 
     const openPreview = async (themeId) => {
         try {
@@ -182,10 +188,11 @@ export function ThemeMarketplacePage() {
     }
 
     const handleActivate = async (themeId, rowVersionOverride = null) => {
-        if (!storeConfig) {
+        if (mutationInFlightRef.current || !storeConfig) {
             return
         }
 
+        mutationInFlightRef.current = true
         setActivatingThemeId(themeId)
         try {
             const rowVersion = normalizeRowVersion(rowVersionOverride || storeConfig.rowVersion)
@@ -229,12 +236,19 @@ export function ThemeMarketplacePage() {
                 message: error?.response?.data?.message || (isRTL ? 'فشل تفعيل الثيم.' : 'Failed to activate theme.'),
             })
         } finally {
+            mutationInFlightRef.current = false
             setActivatingThemeId('')
         }
     }
 
     if (loading) {
         return <AuthoringLoadingState label={isRTL ? 'جارٍ تحميل الثيمات…' : 'Loading Themes…'} />
+    }
+
+    if (loadError) {
+        return <AuthoringFeedback kind="error" title={isRTL ? 'الثيمات غير متاحة' : 'Themes unavailable'}
+            message={isRTL ? 'تعذر تحميل الثيم النشط. لم يتم افتراض ثيم بديل.' : 'The active Theme could not be loaded. No substitute Theme was assumed.'}
+            action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry', onClick: () => setLoadAttempt(value => value + 1) }} />
     }
 
     return (

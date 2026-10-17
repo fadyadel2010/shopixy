@@ -162,7 +162,7 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
     }, [expiresIn]);
 
     const handleRequestOtp = useCallback(async () => {
-        requestAbortRef.current?.abort();
+        if (requestAbortRef.current && !requestAbortRef.current.signal.aborted) return;
         const controller = new AbortController();
         requestAbortRef.current = controller;
 
@@ -214,6 +214,11 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
     }, [phone]);
 
     const handleVerifyOtp = useCallback(async (codeOverride?: string) => {
+        if (autoVerifyRef.current) {
+            clearTimeout(autoVerifyRef.current);
+            autoVerifyRef.current = null;
+        }
+        if (verifyAbortRef.current && !verifyAbortRef.current.signal.aborted) return;
         const codeToVerify = codeOverride ?? otpCode;
 
         if (codeToVerify.length !== OTP_LENGTH) {
@@ -221,7 +226,6 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
             return;
         }
 
-        verifyAbortRef.current?.abort();
         const controller = new AbortController();
         verifyAbortRef.current = controller;
 
@@ -411,10 +415,11 @@ export const PhoneOtpVerification: React.FC<PhoneOtpVerificationProps> = ({
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-text mb-2">
+                        <label htmlFor="checkout-phone-otp" className="block text-sm font-medium text-text mb-2">
                             Enter 6-digit code
                         </label>
                         <input
+                            id="checkout-phone-otp"
                             ref={otpInputRef}
                             type="text"
                             inputMode="numeric"

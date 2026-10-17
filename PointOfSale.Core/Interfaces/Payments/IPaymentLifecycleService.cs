@@ -15,6 +15,21 @@ namespace PointOfSale.Core.Interfaces.Payments;
 /// </summary>
 public interface IPaymentLifecycleService
 {
+    Task<CarrierRemittanceSelection> SelectCarrierRemittanceAsync(Guid tenantId, Guid actorId, int page = 1, CancellationToken ct = default);
+
+    Task<CarrierRemittanceResult?> GetCarrierRemittanceAsync(Guid tenantId, Guid actorId, Guid operationId, CancellationToken ct = default);
+
+    /// <summary>Evidence-qualified, operator-attested physical carrier cash receipt. Owns posting and Collected → Settled atomically.</summary>
+    Task<CarrierRemittanceResult> RecordCarrierRemittanceAsync(Guid tenantId, Guid actorId, CarrierRemittanceRequest request, CancellationToken ct = default);
+
+    Task<ManualCodSettlementResult> RecordManualCodSettlementAsync(
+        Guid tenantId, Guid actorUserId, ManualCodSettlementRequest request, CancellationToken ct = default);
+
+    Task<ManualCodSettlementSelection> GetManualCodSettlementSelectionAsync(
+        Guid tenantId, int page = 1, CancellationToken ct = default);
+
+    Task<ManualCodSettlementResult?> GetManualCodSettlementAsync(Guid tenantId, Guid settlementId, CancellationToken ct = default);
+
     /// <summary>
     /// Canonical payment lifecycle entry point for all payment outcomes.
     ///
@@ -58,7 +73,7 @@ public interface IPaymentLifecycleService
         CancellationToken ct = default);
 
     /// <summary>
-    /// Mark an offline-collection order as delivered and collected.
+    /// Record operator collection of a delivered Manual Fulfillment COD order.
     /// 
     /// TRANSITIONS: Pending → Collected
     /// JOURNAL: DEBIT offline clearing, CREDIT E-commerce Sales
@@ -69,7 +84,22 @@ public interface IPaymentLifecycleService
         string? deliveryReference = null,
         string? confirmedBy = null,
         CancellationToken ct = default);
-    
+
+    /// <summary>
+    /// Legacy shipment-only locator is fail-closed. Carrier recognition requires the
+    /// immutable observed-money evidence overload; event money and actor assertions are not authority.
+    /// No operator HTTP endpoint exposes this admission path.
+    /// </summary>
+    Task<PaymentTransitionResult> RecordCarrierCodCollectionAsync(
+        Guid tenantId,
+        Guid orderId,
+        Guid shipmentId,
+        CancellationToken ct = default);
+
+    Task<PaymentTransitionResult> RecordCarrierCodCollectionAsync(
+        Guid tenantId, Guid orderId, Guid shipmentId, Guid evidenceId, CancellationToken ct = default)
+        => Task.FromResult(PaymentTransitionResult.Failed("Immutable carrier money evidence is required.", "COD_CARRIER_EVIDENCE_REQUIRED"));
+
     /// <summary>
     /// Record an offline collection settlement from a collector.
     /// 
@@ -288,6 +318,9 @@ public sealed class HandlePaymentResultRequest
     public Guid? TenantId { get; set; }
 
     public Guid OrderId { get; set; }
+    /// <summary>Internal target locator; immutable observed money and current SQL authority must independently qualify it.</summary>
+    public Guid? CarrierCollectionShipmentId { get; set; }
+    public Guid? CarrierCollectionEvidenceId { get; set; }
     public Guid? PaymentIntentId { get; set; }
     public PaymentLifecycleOutcome Outcome { get; set; }
     public PaymentLifecycleSource Source { get; set; } = PaymentLifecycleSource.GatewayWebhook;

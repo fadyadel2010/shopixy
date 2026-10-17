@@ -437,6 +437,7 @@ public class ShipmentExternalRegistrationRequestedEvent : ShipmentEventBase
 /// </summary>
 public class ShipmentCodCollectedEvent : ShipmentEventBase
 {
+    public Guid? CollectionEvidenceId { get; set; }
     /// <summary>
     /// Carrier name.
     /// </summary>

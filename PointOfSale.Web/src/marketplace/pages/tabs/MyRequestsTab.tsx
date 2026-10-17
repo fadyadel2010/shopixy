@@ -1,34 +1,24 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { marketplaceApi } from '../../api/marketplaceApi'
-import { marketplaceKeys } from '../../queryKeys'
+import { useMyRequests } from '../../hooks/useMyRequests'
+import { useBuyerRequestCommands } from '../../hooks/useBuyerRequestCommands'
 import { ReviewModal } from '../../components/ReviewModal'
 import { useFormatting } from '../../../hooks/useFormatting'
 import { deriveServiceRequestLifecyclePresentation } from '../../status'
 import { deriveServiceRequestContractPresentation } from '../../contractPresentation'
 import { deriveServiceRequestCompletionEligibility } from '../../completionEligibility'
-import { executeServiceRequestCompletionWorkflow } from '../../completionWorkflow'
 import { deriveServiceRequestCompletionStatePresentation } from '../../completionStateAuthority'
 import { deriveServiceRequestRatingEligibility } from '../../ratingEligibility'
 import { deriveServiceRequestRatingStatePresentation } from '../../ratingStateAuthority'
-import { executeServiceRequestRatingWorkflow } from '../../ratingWorkflow'
 import { RatingStateBadge } from '../../components/RatingStateBadge'
-import type { CreateReviewRequest } from '../../types'
+import type { CreateReviewRequest, ServiceRequest } from '../../types'
 import { useAuthStore } from '../../../store/authStore'
-import {
-    marketplaceAuthorityQueryOptions,
-    publishMarketplaceAuthorityInvalidation,
-    useMarketplaceAuthorityScope,
-} from '../../authority'
 
 export function MyRequestsTab() {
     const { t } = useTranslation()
     const { formatCurrency, formatDate, isRTL } = useFormatting()
     const navigate = useNavigate()
-    const queryClient = useQueryClient()
-    const authorityScope = useMarketplaceAuthorityScope()
     const { user } = useAuthStore()
     const currentUserId = user?.id ?? user?.userId
     const [pendingRequestIds, setPendingRequestIds] = useState(() => new Set<string>())
@@ -38,14 +28,10 @@ export function MyRequestsTab() {
         serviceCategory?: string
     } | null>(null)
 
-    const { data: requestData = [], isLoading, isFetching, isError } = useQuery({
-        queryKey: marketplaceKeys.myRequests(authorityScope),
-        queryFn: marketplaceApi.getMyRequests,
-        ...marketplaceAuthorityQueryOptions,
-    })
+    const { data: requestData = [], isLoading, isFetching, isError } = useMyRequests()
     const requests = isError ? [] : requestData
     const lifecycleRows = requests
-        .map((request: any) => {
+        .map((request) => {
             const lifecycleCandidate = deriveServiceRequestLifecyclePresentation(request)
             const completionState = deriveServiceRequestCompletionStatePresentation(
                 request,
@@ -75,7 +61,7 @@ export function MyRequestsTab() {
             }
         })
         .filter((row): row is {
-            request: any
+            request: ServiceRequest
             lifecycle: NonNullable<ReturnType<typeof deriveServiceRequestLifecyclePresentation>>
             completionEligibility: ReturnType<typeof deriveServiceRequestCompletionEligibility>
             ratingEligibility: ReturnType<typeof deriveServiceRequestRatingEligibility>
@@ -117,42 +103,7 @@ export function MyRequestsTab() {
         setPendingRequestIds(nextPendingRequestIds)
     }
 
-    const confirmCompletionMutation = useMutation({
-        mutationFn: (requestId: string) => executeServiceRequestCompletionWorkflow({
-            requestId,
-            authorityScope,
-            actorUserId: currentUserId,
-            kind: 'confirmCompletion',
-            mutate: () => marketplaceApi.confirmCompletion(requestId),
-            revalidate: () => marketplaceApi.getRequestDetails(requestId),
-        }),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-        onSettled: () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
-
-    const submitReviewMutation = useMutation({
-        mutationFn: (review: CreateReviewRequest) => executeServiceRequestRatingWorkflow({
-            review,
-            authorityScope,
-            actorUserId: currentUserId,
-            revalidate: () => marketplaceApi.getRequestDetails(review.serviceRequestId),
-            mutate: (validatedReview) => marketplaceApi.createReview(validatedReview),
-        }),
-        retry: false,
-        networkMode: 'online',
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-        onSettled: () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
+    const { confirmCompletionMutation, submitReviewMutation } = useBuyerRequestCommands(currentUserId)
 
     const handleConfirmCompletion = async (requestId: string) => {
         if (pendingRequestIdsRef.current.has(requestId)) {
@@ -169,7 +120,7 @@ export function MyRequestsTab() {
 
         try {
             await confirmCompletionMutation.mutateAsync(requestId)
-        } catch (error) {
+        } catch {
             window.alert(t('servicesMarketplace.feedback.confirmCompletionFailed'))
         } finally {
             endPendingRequest(requestId)
@@ -283,6 +234,7 @@ export function MyRequestsTab() {
 
             {reviewingRequest ? (
                 <ReviewModal
+                    isRTL={isRTL}
                     key={reviewingRequest.requestId}
                     requestId={reviewingRequest.requestId}
                     serviceCategory={reviewingRequest.serviceCategory}

@@ -1,3 +1,5 @@
+import { containsAsciiControl } from '../../security/textCharacterPolicy'
+
 const LINK_TYPES = new Set(['Internal', 'Cms', 'External'])
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 const MAX_URL_LENGTH = 1000
@@ -131,7 +133,7 @@ export function getFooterDraftFingerprint(draft, isLocalized) {
 }
 
 function isExternalUrl(value) {
-    if (!value || value.length > MAX_URL_LENGTH || /[\u0000-\u001f\u007f]/.test(value)) {
+    if (!value || value.length > MAX_URL_LENGTH || containsAsciiControl(value)) {
         return false
     }
     try {
@@ -148,7 +150,7 @@ function isInternalUrl(value) {
         value.startsWith('/') &&
         !value.startsWith('//') &&
         !value.includes('\\') &&
-        !/[\u0000-\u001f\u007f]/.test(value) &&
+        !containsAsciiControl(value) &&
         !value.toLowerCase().startsWith('/api/') &&
         !value.toLowerCase().startsWith('/admin') &&
         !value.toLowerCase().includes('preview=true') &&

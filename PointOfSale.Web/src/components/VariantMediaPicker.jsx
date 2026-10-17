@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from '../services/api'
 
@@ -23,10 +23,10 @@ export default function VariantMediaPicker({
     const [error, setError] = useState('')
     const [media, setMedia] = useState([])
     const { t } = useTranslation()
-    const tx = (key, fallback) => {
+    const tx = useCallback((key, fallback) => {
         const value = t(key)
         return value === key ? fallback : value
-    }
+    }, [t])
 
     useEffect(() => {
         if (!open || !productId) {
@@ -60,7 +60,7 @@ export default function VariantMediaPicker({
         return () => {
             isMounted = false
         }
-    }, [open, productId, t])
+    }, [open, productId, tx])
 
     const hasMedia = useMemo(() => media.length > 0, [media])
 

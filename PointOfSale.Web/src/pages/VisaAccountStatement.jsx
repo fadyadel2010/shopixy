@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import api from '../services/api'
@@ -12,7 +12,7 @@ const VisaAccountStatement = () => {
     const { t } = useTranslation()
     const { isRTL, dir, locale } = useRTL()
     const { formatCurrency } = useSettings()
-    const { showError, showSuccess } = useToast()
+    const { showError } = useToast()
     const tableTextAlignClass = isRTL ? 'text-right' : 'text-left'
     const footerAlignClass = isRTL ? 'text-left' : 'text-right'
 

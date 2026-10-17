@@ -51,19 +51,10 @@ public sealed class AdminMutationHardeningTests
     [Fact]
     public void StorefrontSmartOffers_MustUse_PublicReadRateLimit()
     {
-        var source = File.ReadAllText(ApiPath("Controllers", "StorefrontSmartOffersController.cs"));
-        
-        // Extract the GetSmartOffers method
-        var methodPattern = @"\[HttpGet\]\s*\[EnableRateLimiting\([^\]]+\)\][^\{]*public\s+async\s+Task<IActionResult>\s+GetSmartOffers\s*\([^\)]*\)";
-        var match = System.Text.RegularExpressions.Regex.Match(source, methodPattern, 
-            System.Text.RegularExpressions.RegexOptions.Singleline);
-        
-        Assert.True(match.Success, "GetSmartOffers method not found in StorefrontSmartOffersController.cs");
-        
-        var methodSignature = match.Value;
-        
-        // Verify [EnableRateLimiting("PublicReadRateLimit")] is applied to the method
-        Assert.Contains("[EnableRateLimiting(\"PublicReadRateLimit\")]", methodSignature, StringComparison.Ordinal);
+        var method = typeof(StorefrontSmartOffersController).GetMethod(nameof(StorefrontSmartOffersController.GetSmartOffers))!;
+        Assert.Equal("PublicReadRateLimit", method.GetCustomAttribute<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()?.PolicyName);
+        Assert.NotNull(method.GetCustomAttribute<Microsoft.AspNetCore.Mvc.HttpGetAttribute>());
+        Assert.True(method.GetCustomAttribute<Microsoft.AspNetCore.Mvc.ResponseCacheAttribute>()?.NoStore);
     }
 
     [Fact]

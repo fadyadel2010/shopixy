@@ -49,7 +49,7 @@ export function MarketplaceCmsPublicPage() {
             loading: t('marketplacePublic.cms.loading'),
             pageImageAlt: t('marketplacePublic.cms.pageImageAlt'),
         }),
-        [currentLang, t],
+        [t],
     )
     const [page, setPage] = useState(null)
     const [footer, setFooter] = useState(null)

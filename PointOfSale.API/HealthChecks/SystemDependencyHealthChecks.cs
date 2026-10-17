@@ -97,6 +97,7 @@ public sealed class RedisDependencyHealthCheck : IHealthCheck
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!_connectionFactory.IsEnabled)
         {
             return HealthCheckResult.Unhealthy(
@@ -106,8 +107,8 @@ public sealed class RedisDependencyHealthCheck : IHealthCheck
 
         try
         {
-            var database = _connectionFactory.GetDatabase();
-            if (database == null)
+            var latency = await _connectionFactory.ProbeLatencyAsync(cancellationToken);
+            if (latency == null)
             {
                 return HealthCheckResult.Unhealthy(
                     "Redis connection is unavailable.",
@@ -115,27 +116,33 @@ public sealed class RedisDependencyHealthCheck : IHealthCheck
                     {
                         ["enabled"] = true,
                         ["connected"] = _connectionFactory.IsConnected,
+                        ["FailureCategory"] = "unavailable",
                     });
             }
 
-            var latency = await database.PingAsync();
             var data = new Dictionary<string, object>
             {
                 ["enabled"] = true,
                 ["connected"] = _connectionFactory.IsConnected,
-                ["latencyMs"] = latency.TotalMilliseconds,
+                ["latencyMs"] = latency.Value.TotalMilliseconds,
+                ["Probe"] = "PING",
             };
 
-            return latency >= DegradedLatencyThreshold
+            return latency.Value >= DegradedLatencyThreshold
                 ? HealthCheckResult.Unhealthy("Redis is reachable but responding slowly.", data: data)
                 : HealthCheckResult.Healthy("Redis is reachable.", data);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Redis dependency health check failed");
             return HealthCheckResult.Unhealthy(
                 "Redis is unavailable.",
-                exception: ex);
+                exception: ex,
+                data: new Dictionary<string, object> { ["Probe"] = "PING", ["FailureCategory"] = ex is TimeoutException ? "timeout" : "command-failure" });
         }
     }
 }
@@ -352,25 +359,38 @@ public sealed class RabbitMqDependencyHealthCheck : IHealthCheck
 public sealed class R2DependencyHealthCheck : IHealthCheck
 {
     private static readonly TimeSpan DependencyTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(2);
 
     private readonly R2Options _options;
     private readonly IHostEnvironment _environment;
     private readonly ILogger<R2DependencyHealthCheck> _logger;
+    private readonly Func<IAmazonS3> _createClient;
 
     public R2DependencyHealthCheck(
         IOptions<R2Options> options,
         IHostEnvironment environment,
         ILogger<R2DependencyHealthCheck> logger)
+        : this(options, environment, logger, null)
+    {
+    }
+
+    internal R2DependencyHealthCheck(
+        IOptions<R2Options> options,
+        IHostEnvironment environment,
+        ILogger<R2DependencyHealthCheck> logger,
+        Func<IAmazonS3>? createClient)
     {
         _options = options.Value;
         _environment = environment;
         _logger = logger;
+        _createClient = createClient ?? CreateClient;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!_options.IsConfigured)
         {
             if (_environment.IsDevelopment())
@@ -381,42 +401,139 @@ public sealed class R2DependencyHealthCheck : IHealthCheck
             return HealthCheckResult.Unhealthy("Cloudflare R2 is not fully configured.");
         }
 
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var data = new Dictionary<string, object>
+        {
+            ["operation"] = "ListObjectsV2",
+            ["timeoutMs"] = DependencyTimeout.TotalMilliseconds,
+            ["maxErrorRetry"] = 0,
+            ["maxProbeAttempts"] = 2,
+            ["attemptTimeoutMs"] = AttemptTimeout.TotalMilliseconds
+        };
+        var attempts = new List<Dictionary<string, object>>();
+        data["attempts"] = attempts;
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(DependencyTimeout);
 
-            using var client = CreateClient();
-            var response = await client.ListObjectsV2Async(new ListObjectsV2Request
+            ListObjectsV2Response? response = null;
+            for (var attempt = 1; attempt <= 2; attempt++)
             {
-                BucketName = _options.Bucket,
-                MaxKeys = 1
-            }, timeoutCts.Token);
+                using var activity = new System.Diagnostics.Activity("R2.Readiness.ListObjectsV2").Start();
+                using var trace = new R2TransportTrace();
+                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
+                attemptCts.CancelAfter(AttemptTimeout);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var sample = new Dictionary<string, object> { ["attempt"] = attempt };
+                attempts.Add(sample);
+                try
+                {
+                    using var client = _createClient();
+                    sample["configurationAndClientResolutionMs"] = clock.Elapsed.TotalMilliseconds;
+                    response = await client.ListObjectsV2Async(new ListObjectsV2Request { BucketName = _options.Bucket, MaxKeys = 1 }, attemptCts.Token);
+                    sample["statusCode"] = (int)response.HttpStatusCode;
+                    AddRequestId(sample, response.ResponseMetadata?.RequestId);
+                    if (response.HttpStatusCode != HttpStatusCode.OK)
+                        throw new AmazonS3Exception("R2 health read returned a non-success status.") { StatusCode = response.HttpStatusCode, RequestId = response.ResponseMetadata?.RequestId };
+                    break;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    var category = FailureCategory(ex);
+                    sample["failureCategory"] = category;
+                    if (ex is AmazonS3Exception attemptFailure)
+                    {
+                        if ((int)attemptFailure.StatusCode > 0) sample["statusCode"] = (int)attemptFailure.StatusCode;
+                        AddRequestId(sample, attemptFailure.RequestId);
+                    }
+                    // Only this minimal read is retried. A per-attempt deadline prevents
+                    // one silent connection from consuming the entire existing 5s budget.
+                    // Authentication, permission, TLS/certificate and malformed responses
+                    // are not transient evidence and are never retried.
+                    if (attempt == 2 || timeoutCts.IsCancellationRequested || category is not ("dependency-timeout" or "network-failure" or "provider-timeout" or "provider-failure")) throw;
+                }
+                finally
+                {
+                    sample["durationMs"] = clock.Elapsed.TotalMilliseconds;
+                    trace.Complete(sample);
+                }
+                // Keep transport/operation evidence separate from retry scheduling.
+                var retryClock = System.Diagnostics.Stopwatch.StartNew();
+                try { await Task.Delay(TimeSpan.FromMilliseconds(100), timeoutCts.Token); }
+                finally { sample["retryDelayMs"] = retryClock.Elapsed.TotalMilliseconds; }
+            }
 
+            data["durationMs"] = started.Elapsed.TotalMilliseconds;
+            data["statusCode"] = (int)response!.HttpStatusCode;
+            data["recoveredAfterRetry"] = attempts.Count > 1;
+            AddRequestId(data, response.ResponseMetadata?.RequestId);
             return response.HttpStatusCode == HttpStatusCode.OK
                 ? HealthCheckResult.Healthy(
                     "Cloudflare R2 is reachable.",
-                    new Dictionary<string, object>
-                    {
-                        ["bucket"] = _options.Bucket,
-                        ["serviceUrl"] = _options.ResolvedServiceUrl ?? string.Empty,
-                    })
+                    data)
                 : HealthCheckResult.Unhealthy(
                     $"Cloudflare R2 returned HTTP {(int)response.HttpStatusCode}.",
-                    data: new Dictionary<string, object>
-                    {
-                        ["bucket"] = _options.Bucket,
-                        ["serviceUrl"] = _options.ResolvedServiceUrl ?? string.Empty,
-                        ["statusCode"] = (int)response.HttpStatusCode,
-                    });
+                    data: data);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // An aborted caller is not evidence that the dependency failed.
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Cloudflare R2 dependency health check failed");
+            data["durationMs"] = started.Elapsed.TotalMilliseconds;
+            data["failureCategory"] = FailureCategory(ex);
+            if (ex is AmazonS3Exception s3)
+            {
+                if ((int)s3.StatusCode > 0) data["statusCode"] = (int)s3.StatusCode;
+                AddRequestId(data, s3.RequestId);
+            }
+            // Do not log SDK exception text: it can contain endpoint/request details.
+            _logger.LogWarning("Cloudflare R2 probe failed | Category: {FailureCategory} | DurationMs: {DurationMs} | Status: {StatusCode} | RequestId: {RequestId}",
+                data["failureCategory"], data["durationMs"], data.GetValueOrDefault("statusCode"), data.GetValueOrDefault("requestId"));
             return HealthCheckResult.Unhealthy(
                 "Cloudflare R2 is unavailable.",
-                exception: ex);
+                exception: ex,
+                data: data);
         }
+    }
+
+    private static void AddRequestId(Dictionary<string, object> data, string? requestId)
+    {
+        if (!string.IsNullOrEmpty(requestId) && requestId.Length <= 200 &&
+            requestId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '/' or '+' or '='))
+            data["requestId"] = requestId;
+    }
+
+    private static string FailureCategory(Exception exception)
+    {
+        if (exception is OperationCanceledException or TimeoutException) return "dependency-timeout";
+        if (exception is AmazonS3Exception s3 && (int)s3.StatusCode > 0)
+            return (int)s3.StatusCode switch
+            {
+                401 or 403 => "authentication-or-permission",
+                408 or 504 => "provider-timeout",
+                429 => "provider-throttled",
+                >= 500 => "provider-failure",
+                _ => "provider-response"
+            };
+        for (Exception? current = exception; current != null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException or TimeoutException) return "dependency-timeout";
+            if (current is System.Security.Authentication.AuthenticationException) return "tls-failure";
+            if (current is HttpRequestException http)
+                return http.HttpRequestError switch
+                {
+                    HttpRequestError.NameResolutionError => "dns-failure",
+                    HttpRequestError.SecureConnectionError => "tls-failure",
+                    _ => "network-failure"
+                };
+            if (current is System.Net.Sockets.SocketException) return "network-failure";
+        }
+        return "dependency-failure";
     }
 
     private async Task<HealthCheckResult> CheckDevelopmentFileStorageAsync(
@@ -442,6 +559,10 @@ public sealed class R2DependencyHealthCheck : IHealthCheck
                     ["storageMode"] = "development-file",
                     ["r2Required"] = false,
                 });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

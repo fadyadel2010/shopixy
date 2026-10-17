@@ -119,7 +119,6 @@ describe('Development online payment simulation panel', () => {
                 submitting={false}
                 onSubmit={vi.fn()}
                 result={{
-                    paymentId: '11111111-2222-3333-4444-555555555555',
                     processed: true,
                     provider: 'PAYMOB',
                     providerReference: '11111111222233334444555555555555',

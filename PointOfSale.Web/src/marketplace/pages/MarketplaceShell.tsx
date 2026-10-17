@@ -1,16 +1,13 @@
-import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { marketplaceApi } from '../api/marketplaceApi'
-import { marketplaceKeys } from '../queryKeys'
+import { useMarketplaceProfileQuery } from '../hooks/useMarketplaceProfileQuery'
 import { DiscoverTab } from './tabs/DiscoverTab'
 import { MyServicesTab } from './tabs/MyServicesTab'
 import { MyRequestsTab } from './tabs/MyRequestsTab'
 import { IncomingTab } from './tabs/IncomingTab'
 import { ProfileTab } from './tabs/ProfileTab'
 import { useRTL } from '../../hooks/useRTL'
-import { marketplaceAuthorityQueryOptions, useMarketplaceAuthorityScope } from '../authority'
 
 type Tab = 'discover' | 'my-services' | 'my-requests' | 'incoming' | 'profile'
 
@@ -41,13 +38,8 @@ export function MarketplaceShell() {
     const { dir } = useRTL()
     const [searchParams, setSearchParams] = useSearchParams()
     const requestedTab = searchParams.get('tab')
-    const authorityScope = useMarketplaceAuthorityScope()
 
-    const { data: profile, isFetched: hasResolvedProfile, isError: profileAuthorityFailed } = useQuery({
-        queryKey: marketplaceKeys.myProfile(authorityScope),
-        queryFn: marketplaceApi.getMyProfile,
-        ...marketplaceAuthorityQueryOptions,
-    })
+    const { data: profile, isFetched: hasResolvedProfile, isError: profileAuthorityFailed } = useMarketplaceProfileQuery()
 
     const hasProfile = !profileAuthorityFailed
         && profile?.hasMarketplaceProfile === true

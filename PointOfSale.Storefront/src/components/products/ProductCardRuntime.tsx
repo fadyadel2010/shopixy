@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { ProductListItemDto } from '@/types';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import { OptimizedImage } from '@/components/media';
 import {
     ThemeAddToCartButton,
+    ThemeActionLink,
     ThemeImageFrame,
     ThemeLabel,
     ThemePrice,
@@ -17,6 +18,7 @@ import { resolveProductImage } from '@/utils';
 import { getProductCardHref } from './productCardLinks';
 import ProductBadges from './ProductBadges';
 import { WishlistButton } from './WishlistButton';
+import { useAnalytics } from '@/analytics/hooks/useAnalytics';
 
 const QUICK_ADD_FAILED_MESSAGE = 'Failed to add item to cart';
 
@@ -59,8 +61,10 @@ export function useProductCardRuntime({
     const { t, localize, language } = useLocalizedContent();
     const { formatPrice } = useCurrency();
     const addItem = useCartStore((state) => state.addItem);
+    const analytics = useAnalytics();
     const toast = useToast();
     const [isAddingToCart, setIsAddingToCart] = useState(false);
+    const addingRef = useRef(false);
 
     const displayName = localize(product, 'name');
     const imageSrc = useMemo(() => resolveProductImage(product), [product]);
@@ -107,15 +111,17 @@ export function useProductCardRuntime({
         event.preventDefault();
         event.stopPropagation();
 
-        if (!canQuickAdd || isAddingToCart) {
+        if (!canQuickAdd || addingRef.current) {
             return;
         }
 
+        addingRef.current = true;
         setIsAddingToCart(true);
         try {
             const added = await addItem(product.id, 1);
 
             if (added) {
+                analytics.addToCart(product.id, undefined, product.pricing.currentPrice, 1, product.name);
                 toast.success(t('cart.itemAdded'));
             } else {
                 toast.error(QUICK_ADD_FAILED_MESSAGE);
@@ -124,9 +130,10 @@ export function useProductCardRuntime({
             console.error('[ProductCardRuntime] Quick add failed:', error);
             toast.error(QUICK_ADD_FAILED_MESSAGE);
         } finally {
+            addingRef.current = false;
             setIsAddingToCart(false);
         }
-    }, [addItem, canQuickAdd, isAddingToCart, product.id, t, toast]);
+    }, [addItem, analytics, canQuickAdd, product.id, product.name, product.pricing.currentPrice, t, toast]);
 
     return {
         product,
@@ -252,6 +259,15 @@ export function ProductCardQuickAddButton({
     runtime: ProductCardRuntime;
     className: string;
 }) {
+    const { t } = useLocalizedContent();
+    // Selection-required is an authoritative backend outcome, not an unavailable product.
+    if (runtime.product.availability?.unavailableReason === 'VARIANT_SELECTION_REQUIRED') {
+        return (
+            <ThemeActionLink themeId={runtime.themeId} href={runtime.href} className={className}>
+                {t('product.selectOptions')}
+            </ThemeActionLink>
+        );
+    }
     return (
         <ThemeAddToCartButton
             themeId={runtime.themeId}

@@ -91,7 +91,7 @@ public class AdminStoreConfigRequest
         if (themeError != null)
             return themeError;
 
-        return null;
+        return CommerceAi?.Validate() ?? (CommerceAi == null ? "CommerceAi is required" : null);
     }
 }
 
@@ -397,6 +397,29 @@ public class AdminCommerceAiConfigDto
     public bool AutoGreetingEnabled { get; set; }
     public string AutoGreetingMessage { get; set; } = string.Empty;
     public string Personality { get; set; } = "friendly";
+
+    public string? Validate()
+    {
+        if (WidgetStyle is not ("minimal" or "floating" or "sales" or "compact")) return "Unsupported widget style";
+        if (WidgetPosition is not ("bottom-left" or "bottom-right" or "middle-right")) return "Unsupported widget position";
+        if (Personality is not ("friendly" or "professional" or "sales-focused")) return "Unsupported assistant personality";
+        if ((AutoGreetingMessage?.Length ?? 0) > 120) return "Greeting cannot exceed 120 characters";
+        return null;
+    }
+}
+
+// The narrow experience endpoint accepts an empty optional greeting even when
+// disabled. Preserve the legacy full-configuration normalization contract.
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public class AdminCommerceAiExperienceRequest
+{
+    public bool Enabled { get; set; }
+    public string WidgetStyle { get; set; } = "minimal";
+    public string WidgetPosition { get; set; } = "bottom-right";
+    public bool AutoGreetingEnabled { get; set; }
+    public string? AutoGreetingMessage { get; set; }
+    public string Personality { get; set; } = "friendly";
+    public AdminCommerceAiConfigDto ToConfig() => new() { Enabled = Enabled, WidgetStyle = WidgetStyle, WidgetPosition = WidgetPosition, AutoGreetingEnabled = AutoGreetingEnabled, AutoGreetingMessage = AutoGreetingMessage ?? "", Personality = Personality };
 }
 
 #endregion

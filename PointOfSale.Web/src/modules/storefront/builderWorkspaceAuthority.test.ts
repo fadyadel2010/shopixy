@@ -46,7 +46,7 @@ describe('storefront builder workspace authority', () => {
 
     it('does not make the initial workspace loader depend on the storeConfig state it writes', () => {
         const source = readSource(builderPagePath)
-        const loadPageDataDependencies = source.match(/const loadPageData = useCallback[\s\S]*?\n    }, \[([^\]]*)\]\)/)?.[1]
+        const loadPageDataDependencies = source.match(/const loadPageData = useCallback[\s\S]*?\n {4}}, \[([^\]]*)\]\)/)?.[1]
 
         expect(source).toContain('const getAcceptedWorkspaceRowVersion = useCallback((config) =>')
         expect(source).toContain('const admitWorkspaceConfig = useCallback((response, runtimeFallback = null) =>')

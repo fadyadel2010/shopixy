@@ -52,7 +52,7 @@ import { NavigationEditor } from './NavigationEditor'
 const pageId = '33333333-3333-4333-8333-333333333333'
 const replacementPageId = '44444444-4444-4444-8444-444444444444'
 
-function snapshot(rowVersion = '1', hasPendingChanges = false) {
+function snapshot(rowVersion = '1', hasPendingChanges = false): import('../services/navigationAuthoringContract').NavigationSnapshot {
     return {
         rowVersion,
         draft: {
@@ -98,6 +98,44 @@ function renderEditor(route = '/storefront/navigation?view=header') {
 }
 
 describe('NavigationEditor', () => {
+    it('does not let an old published response repopulate the next workspace after unmount', async () => {
+        const pending = deferred<ReturnType<typeof snapshot>>()
+        cmsService.getNavigation.mockResolvedValue(snapshot('1', true))
+        cmsService.updateNavigation.mockResolvedValue(snapshot('2', true))
+        cmsService.publishNavigation.mockReturnValueOnce(pending.promise)
+        const view = renderEditor()
+        await screen.findByText('Home')
+        fireEvent.click(screen.getByRole('button', { name: 'Publish Header and Footer Navigation' }))
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish Header and Footer Navigation' }))
+        await waitFor(() => expect(cmsService.publishNavigation).toHaveBeenCalledTimes(1))
+        view.unmount()
+        const nextWorkspace = snapshot('100')
+        nextWorkspace.draft.header[0].label = 'Next workspace'
+        act(() => useCmsStore.getState().setNavigation(nextWorkspace))
+        await act(async () => pending.resolve(snapshot('3')))
+        expect(useCmsStore.getState().navigation?.draft.header[0].label).toBe('Next workspace')
+        expect(useCmsStore.getState().navigation?.rowVersion).toBe('100')
+    })
+
+    it('preserves edits made during publication instead of replacing them with the published snapshot', async () => {
+        const pending = deferred<ReturnType<typeof snapshot>>()
+        cmsService.getNavigation.mockResolvedValue(snapshot('1', true))
+        cmsService.updateNavigation.mockResolvedValue(snapshot('2', true))
+        cmsService.publishNavigation.mockReturnValueOnce(pending.promise)
+        renderEditor()
+        await screen.findByText('Home')
+        fireEvent.click(screen.getByRole('button', { name: 'Publish Header and Footer Navigation' }))
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish Header and Footer Navigation' }))
+        await waitFor(() => expect(cmsService.publishNavigation).toHaveBeenCalledTimes(1))
+        act(() => useCmsStore.getState().updateNavigationHeader([
+            { ...snapshot().draft.header[0], label: 'Newer candidate' }, snapshot().draft.header[1],
+        ]))
+        await act(async () => pending.resolve(snapshot('3', false)))
+        expect(useCmsStore.getState().navigation?.draft.header[0].label).toBe('Newer candidate')
+        expect(useCmsStore.getState().navigation?.rowVersion).toBe('3')
+        expect(useCmsStore.getState().isNavigationDirty).toBe(true)
+    })
+
     beforeEach(() => {
         Object.values(cmsService).forEach((mock) => mock.mockReset())
         useCmsStore.getState().reset()
@@ -132,7 +170,7 @@ describe('NavigationEditor', () => {
         fireEvent.click(screen.getByRole('button', { name: 'storefront.cms.navigationEditor.discard' }))
         await waitFor(() => expect(cmsService.updateNavigation).toHaveBeenCalledWith(expect.objectContaining({ draft: data.live }), expect.anything()))
         await waitFor(() => expect(useCmsStore.getState().isNavigationDirty).toBe(false))
-        expect(useCmsStore.getState().navigation.draft.announcement).toEqual(published)
+        expect(useCmsStore.getState().navigation?.draft.announcement).toEqual(published)
     })
 
     it('edits backend-issued targets, enabled state, and an explicit Arabic label', async () => {
@@ -145,7 +183,7 @@ describe('NavigationEditor', () => {
         fireEvent.click(screen.getByLabelText('Enabled'))
         fireEvent.click(screen.getByRole('button', { name: 'Save navigation link edits' }))
 
-        expect(useCmsStore.getState().navigation.draft.footer[0]).toMatchObject({
+        expect(useCmsStore.getState().navigation?.draft.footer[0]).toMatchObject({
             targetId: replacementPageId,
             labelAr: 'اتصل بنا',
             enabled: false,
@@ -177,8 +215,8 @@ describe('NavigationEditor', () => {
         pendingSave.resolve(accepted)
 
         await waitFor(() => {
-            expect(useCmsStore.getState().navigation.rowVersion).toBe('2')
-            expect(useCmsStore.getState().navigation.draft.header[1].label).toBe('Newer Shop')
+            expect(useCmsStore.getState().navigation?.rowVersion).toBe('2')
+            expect(useCmsStore.getState().navigation?.draft.header[1].label).toBe('Newer Shop')
             expect(useCmsStore.getState().isNavigationDirty).toBe(true)
         })
 
@@ -274,7 +312,7 @@ describe('NavigationEditor', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Delete navigation link' }))
         fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete navigation link' }))
-        expect(useCmsStore.getState().navigation.draft.footer).toEqual([])
+        expect(useCmsStore.getState().navigation?.draft.footer).toEqual([])
         expect(useCmsStore.getState().isNavigationDirty).toBe(true)
     })
 })

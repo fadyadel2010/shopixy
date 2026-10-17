@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLatestRequestGuard, useLatestRequestGuard } from './useLatestRequestGuard';
-import { useEffect } from 'react';
+import { createLatestRequestGuard } from './useLatestRequestGuard';
 
 describe('createLatestRequestGuard', () => {
   it('lets the latest request win', () => {

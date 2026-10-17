@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../services/api'
 import { useTranslation } from 'react-i18next'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
@@ -15,26 +15,49 @@ export default function ProductStockModal({ productId, productName, canAdjust = 
         reason: ''
     })
     const [showAdjustForm, setShowAdjustForm] = useState(false)
+    const scope = useRef(null)
+    const latestRead = useRef(0)
+    const pendingAdjustment = useRef(false)
+
+    const fetchStockLevels = useCallback(async () => {
+        const target = scope.current
+        const requestId = ++latestRead.current
+        const isCurrent = () => target !== null && scope.current === target && latestRead.current === requestId
+        try {
+            setLoading(true)
+            setError('')
+            const response = await api.get(`/products/${productId}/stock`)
+            if (!isCurrent()) return
+            setStockLevels(response.data)
+        } catch (err) {
+            if (!isCurrent()) return
+            setError(t('inventoryManagement.failedToLoadStock'))
+            console.error('Failed to load product stock:', { status: err?.response?.status })
+        } finally {
+            if (isCurrent()) setLoading(false)
+        }
+    }, [productId, t])
+
+    useEffect(() => {
+        scope.current = {}
+        pendingAdjustment.current = false
+        setAdjusting(false)
+        setShowAdjustForm(false)
+        setAdjustmentData({ warehouseId: '', quantityChange: '', reason: '' })
+        setStockLevels([])
+        return () => { scope.current = null; latestRead.current += 1 }
+    }, [productId])
 
     useEffect(() => {
         fetchStockLevels()
-    }, [productId])
-
-    const fetchStockLevels = async () => {
-        try {
-            setLoading(true)
-            const response = await api.get(`/products/${productId}/stock`)
-            setStockLevels(response.data)
-        } catch (err) {
-            setError(t('inventoryManagement.failedToLoadStock'))
-            console.error(err)
-        } finally {
-            setLoading(false)
-        }
-    }
+        return () => { latestRead.current += 1 }
+    }, [fetchStockLevels])
 
     const handleAdjust = async (e) => {
         e.preventDefault()
+        if (pendingAdjustment.current) return
+        const target = scope.current
+        pendingAdjustment.current = true
         setAdjusting(true)
         setError('')
 
@@ -45,15 +68,18 @@ export default function ProductStockModal({ productId, productName, canAdjust = 
                 reason: adjustmentData.reason
             })
 
-            // Reset form and refresh data
+            // A committed adjustment invalidates shared stock even if its modal closed.
+            invalidatePosRuntimeCache({ reason: 'stock-adjusted' })
+            if (scope.current !== target) return
+            // Reset only this product's form and refresh its data.
             setAdjustmentData({ warehouseId: '', quantityChange: '', reason: '' })
             setShowAdjustForm(false)
-            invalidatePosRuntimeCache({ reason: 'stock-adjusted' })
             await fetchStockLevels()
         } catch (err) {
+            if (scope.current !== target) return
             setError(err.response?.data?.message || t('inventoryManagement.failedToAdjust'))
         } finally {
-            setAdjusting(false)
+            if (scope.current === target) { pendingAdjustment.current = false; setAdjusting(false) }
         }
     }
 

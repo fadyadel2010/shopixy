@@ -131,6 +131,26 @@ public sealed class SmartOfferSecurityTests
         Assert.Contains("Spring Offer", json, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("expired")]
+    [InlineData("scheduled")]
+    [InlineData("exhausted")]
+    public async Task SmartOffer_UnavailableGeneratedCoupon_IsNotPresentedOrRedeemable(string state)
+    {
+        var tenant = Guid.NewGuid(); var couponId = Guid.NewGuid();
+        await using var db = CreateDbContext(tenant);
+        var coupon = CreateCoupon(tenant, couponId, "SYNTHETIC");
+        if (state == "expired") coupon.EndDate = DateTime.UtcNow.AddSeconds(-1);
+        if (state == "scheduled") coupon.StartDate = DateTime.UtcNow.AddHours(1);
+        if (state == "exhausted") coupon.MaxUsage = 0;
+        var offer = CreateSmartOffer(tenant, couponId, "SYNTHETIC");
+        db.Coupons.Add(coupon); db.SmartOffers.Add(offer); await db.SaveChangesAsync();
+        var controller = CreateSmartOffersController(db, tenant, Guid.NewGuid());
+        var list = Assert.IsType<OkObjectResult>(await controller.GetSmartOffers());
+        Assert.Empty(Assert.IsAssignableFrom<System.Collections.IEnumerable>(list.Value));
+        Assert.IsType<NotFoundObjectResult>(await controller.RedeemSmartOffer(offer.Id));
+    }
+
     private static StorefrontCartController CreateCartController(
         ApplicationDbContext dbContext,
         Guid tenantId,
@@ -168,7 +188,8 @@ public sealed class SmartOfferSecurityTests
             tokenService,
             dbContext,
             new CommerceReliabilityTelemetry(),
-            NullLogger<StorefrontCartController>.Instance)
+            NullLogger<StorefrontCartController>.Instance,
+            Mock.Of<PointOfSale.API.Services.Promotions.ICartDiscountAuthority>())
         {
             ControllerContext = new ControllerContext
             {

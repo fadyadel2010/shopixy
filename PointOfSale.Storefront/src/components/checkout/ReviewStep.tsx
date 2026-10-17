@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useTranslation } from '@/i18n';
+import { getLocalizedField, useTranslation } from '@/i18n';
 import { PhoneOtpVerification } from './PhoneOtpVerification';
 import {
     useCheckoutStore,
@@ -56,7 +56,9 @@ interface SummarySectionProps {
     children: React.ReactNode;
 }
 
-const SummarySection: React.FC<SummarySectionProps> = ({ title, onEdit, editDisabled, children }) => (
+const SummarySection: React.FC<SummarySectionProps> = ({ title, onEdit, editDisabled, children }) => {
+    const { t } = useTranslation();
+    return (
     <div className="p-4 sm:p-5 bg-muted/5 rounded-xl">
         <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium text-text">{title}</h3>
@@ -70,13 +72,14 @@ const SummarySection: React.FC<SummarySectionProps> = ({ title, onEdit, editDisa
                         ${editDisabled ? 'opacity-50 cursor-not-allowed' : ''}
                     `}
                 >
-                    Edit
+                    {t('common.edit')}
                 </button>
             )}
         </div>
         {children}
     </div>
-);
+    );
+};
 
 /**
  * Submission Status Messages
@@ -93,22 +96,25 @@ const SUBMISSION_MESSAGES = [
  * Confidence Boost Component
  * Shows reassuring checkmarks before placing order
  */
-const ConfidenceBoost: React.FC = () => (
+const ConfidenceBoost: React.FC = () => {
+    const { t } = useTranslation();
+    return (
     <div className="p-4 bg-green-50/50 border border-green-100 rounded-xl space-y-2">
         <div className="flex items-center gap-2 text-sm text-green-700">
             <span className="text-green-600">✓</span>
-            <span>Prices confirmed at checkout</span>
+            <span>{t('checkout.confidence.pricing')}</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-green-700">
             <span className="text-green-600">✓</span>
-            <span>Shipping reserved for your order</span>
+            <span>{t('checkout.confidence.shipping')}</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-green-700">
             <span className="text-green-600">✓</span>
-            <span>You will not be charged twice</span>
+            <span>{t('checkout.confidence.payment')}</span>
         </div>
     </div>
-);
+    );
+};
 
 /**
  * Error Helper Component
@@ -289,7 +295,7 @@ const ErrorHelper: React.FC<ErrorHelperProps> = ({ errorCode, error, onDismiss }
  * - Frontend never recomputes monetary values
  */
 export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) => {
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
 
     // Store state
     const address = useCheckoutStore(selectShippingAddress);
@@ -375,7 +381,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
 
             {/* Shipping Address Summary */}
             <SummarySection
-                title="Shipping Address"
+                title={t('checkout.shippingInfo')}
                 onEdit={() => handleEdit('shipping')}
                 editDisabled={isSubmitting}
             >
@@ -389,7 +395,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                     </p>
                     {address.notes && (
                         <p className="text-muted italic text-xs mt-2">
-                            Note: {address.notes}
+                            {t('checkout.reviewLabels.note')}: {address.notes}
                         </p>
                     )}
                 </div>
@@ -397,7 +403,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
 
             {customFieldReviewItems.length > 0 && (
                 <SummarySection
-                    title="Additional details"
+                    title={t('checkout.reviewLabels.additional')}
                     onEdit={() => handleEdit('shipping')}
                     editDisabled={isSubmitting}
                 >
@@ -414,24 +420,24 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
 
             {/* Shipping Method Summary */}
             <SummarySection
-                title="Shipping Method"
+                title={t('checkout.shippingMethod')}
                 onEdit={() => handleEdit('shipping')}
                 editDisabled={isSubmitting}
             >
                 {shippingMethod ? (
                     <div className="flex items-center justify-between text-sm">
                         <div>
-                            <p className="font-medium text-text">{shippingMethod.name}</p>
+                            <p className="font-medium text-text">{getLocalizedField(shippingMethod, 'name', language)}</p>
                             {shippingMethod.estimatedDays && (
                                 <p className="text-muted text-xs">
-                                    Est. {shippingMethod.estimatedDays} day{shippingMethod.estimatedDays !== 1 ? 's' : ''}
+                                    {t(shippingMethod.estimatedDays === 1 ? 'checkout.shipping.estimatedDeliveryDay' : 'checkout.shipping.estimatedDeliveryDays', { count: shippingMethod.estimatedDays })}
                                 </p>
                             )}
                         </div>
                         <p className="font-medium text-text">
                             {pricing
-                                ? (pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : 'Free')
-                                : 'Calculating...'}
+                                ? (pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : t('cart.freeShipping'))
+                                : t('checkout.summary.calculating')}
                         </p>
                     </div>
                 ) : shippingSelectionStatus === 'stale' && staleShippingSelection ? (
@@ -442,7 +448,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                         </p>
                     </div>
                 ) : (
-                    <p className="text-sm text-muted">No shipping method selected</p>
+                    <p className="text-sm text-muted">{t('checkout.summary.selectShipping')}</p>
                 )}
             </SummarySection>
 
@@ -461,9 +467,9 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                                 </svg>
                             </div>
                             <div className="flex-1">
-                                <p className="font-medium text-text">{selectedPaymentMethod.displayName}</p>
+                                <p className="font-medium text-text">{getLocalizedField(selectedPaymentMethod, 'displayName', language)}</p>
                                 {selectedPaymentMethod.description && (
-                                    <p className="text-muted text-xs">{selectedPaymentMethod.description}</p>
+                                    <p className="text-muted text-xs">{getLocalizedField(selectedPaymentMethod, 'description', language)}</p>
                                 )}
                             </div>
                             {selectedPaymentMethod.supportsOffline && (
@@ -489,13 +495,13 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
             <div className="p-4 sm:p-5 bg-secondary/5 rounded-xl border border-secondary/10">
                 {pricingLoading && !pricing ? (
                     <div className="rounded-lg bg-muted/5 px-3 py-4 text-sm text-muted">
-                        Calculating server-side totals...
+                        {t('checkout.summary.calculatingTotals')}
                     </div>
                 ) : pricing ? (
                     <>
                         <div className="space-y-2 mb-4">
                             <div className="flex justify-between text-sm">
-                                <span className="text-muted">Subtotal ({itemCount} item{itemCount !== 1 ? 's' : ''})</span>
+                                <span className="text-muted">{t('cart.subtotal')} ({itemCount})</span>
                                 <span className="text-text">{formatMoney(pricing.subtotal, currency)}</span>
                             </div>
 
@@ -505,7 +511,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
                                         </svg>
-                                        Promotion Savings
+                                        {t('checkout.summary.promotionSavings')}
                                     </span>
                                     <span className="text-red-500 font-medium">
                                         -{formatMoney(pricing.promotionDiscount, currency)}
@@ -515,7 +521,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
 
                             {pricing.cartPromotionDiscount > 0 && (
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-orange-600">Cart Promotion</span>
+                                    <span className="text-orange-600">{t('checkout.summary.cartPromotion')}</span>
                                     <span className="text-orange-600 font-medium">
                                         -{formatMoney(pricing.cartPromotionDiscount, currency)}
                                     </span>
@@ -525,9 +531,9 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                             {pricing.couponDiscount > 0 && (
                                 <div className="flex justify-between text-sm">
                                     <span className="text-green-600">
-                                        Coupon
+                                        {t('checkout.summary.coupon')}
                                         {appliedCoupon && (
-                                            <span className="text-xs ml-1">({appliedCoupon.code})</span>
+                                            <span className="text-xs ms-1">({appliedCoupon.code})</span>
                                         )}
                                     </span>
                                     <span className="text-green-600">
@@ -537,27 +543,27 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                             )}
 
                             <div className="flex justify-between text-sm">
-                                <span className="text-muted">Shipping</span>
+                                <span className="text-muted">{t('cart.shipping')}</span>
                                 <span className="text-text">
-                                    {pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : 'Free'}
+                                    {pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : t('cart.freeShipping')}
                                 </span>
                             </div>
 
                             <div className="flex justify-between text-sm">
-                                <span className="text-muted">Tax</span>
+                                <span className="text-muted">{t('cart.tax')}</span>
                                 <span className="text-text">{formatMoney(pricing.tax, currency)}</span>
                             </div>
 
                             {pricing.paymentFee > 0 && (
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-muted">Payment Fee</span>
+                                    <span className="text-muted">{t('checkout.summary.paymentFee')}</span>
                                     <span className="text-text">{formatMoney(pricing.paymentFee, currency)}</span>
                                 </div>
                             )}
                         </div>
                         <hr className="border-muted/10 mb-4" />
                         <div className="flex justify-between">
-                            <span className="font-semibold text-text">Total</span>
+                            <span className="font-semibold text-text">{t('cart.total')}</span>
                             <span className="font-bold text-xl text-text">{formatMoney(pricing.total, currency)}</span>
                         </div>
                     </>
@@ -609,7 +615,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                         order-2 sm:order-1
                     "
                 >
-                    Back to Payment
+                    {t('checkout.backToPayment')}
                 </button>
 
                 <div className="flex-1 order-1 sm:order-2">
@@ -686,7 +692,7 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                     <svg className="inline w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
-                    Your information is secure and encrypted
+                    {t('checkout.reviewLabels.secure')}
                 </p>
             )}
         </div>

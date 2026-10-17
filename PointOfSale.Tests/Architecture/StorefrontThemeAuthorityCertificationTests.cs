@@ -66,21 +66,26 @@ public sealed class StorefrontThemeAuthorityCertificationTests
     [Fact]
     public void CertificationArtifacts_MustRecordP2GcTruth()
     {
+        var artifact = ReadRepoFile("docs/architecture/storefront-theme-authority-certification-findings.md");
+        // Preserve the historical record, but do not force rolling context summaries to
+        // re-register an unsupported production PASS. Require its evidence boundary instead.
         Assert.Contains(
             "PASS P2-GC Storefront Theme Authority",
-            ReadRepoFile("docs/architecture/storefront-theme-authority-certification-findings.md"),
+            artifact,
             StringComparison.Ordinal);
+        Assert.Contains("Disposition: LIMITED P2-GC — historical source certification, not current production certification.", artifact, StringComparison.Ordinal);
+        Assert.Contains("Unverified: changed-content publication/projection convergence", artifact, StringComparison.Ordinal);
 
         foreach (var path in new[]
                  {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
+                     ".ai/reports/SHOPIXY_POS_ADMIN_COMPREHENSIVE_QUALITY_REVIEW_20261015.md",
+                     ".ai/evidence/pos-admin-quality-20261015/browser-theme-live.json",
+                     ".ai/evidence/pos-admin-quality-20261015/browser-publish-replay.json",
+                     ".ai/reports/SHOPIXY_STOREFRONT_COMPREHENSIVE_QUALITY_REVIEW_20261015.md"
                  })
         {
-            Assert.Contains("PASS P2-GC", ReadRepoFile(path), StringComparison.Ordinal);
+            Assert.Contains(path, artifact, StringComparison.Ordinal);
+            Assert.False(string.IsNullOrWhiteSpace(ReadRepoFile(path)), $"Missing retained evidence: {path}");
         }
     }
 

@@ -588,7 +588,8 @@ function SettlementTab({ affiliateId, formatCurrency, onAction, cashboxBalance =
     const toggleEarnedSelection = (orderId) => {
         setSelectedEarned(prev => {
             const next = new Set(prev)
-            next.has(orderId) ? next.delete(orderId) : next.add(orderId)
+            if (next.has(orderId)) next.delete(orderId)
+            else next.add(orderId)
             return next
         })
     }
@@ -596,7 +597,8 @@ function SettlementTab({ affiliateId, formatCurrency, onAction, cashboxBalance =
     const toggleApprovedSelection = (orderId) => {
         setSelectedApproved(prev => {
             const next = new Set(prev)
-            next.has(orderId) ? next.delete(orderId) : next.add(orderId)
+            if (next.has(orderId)) next.delete(orderId)
+            else next.add(orderId)
             return next
         })
     }

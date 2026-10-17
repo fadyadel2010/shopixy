@@ -36,6 +36,10 @@ export function requireShipmentActionAuthority(authority, expectedOrderId) {
     for (const action of authority.availableActions) {
         const requiredFields = action?.requiredFields
         const expectedFields = REQUIRED_FIELDS_BY_ACTION.get(action?.code) || []
+        // Dispatch may be non-shipping (no fields) or bound to an original
+        // shipment (trackingNumber). Both are explicit backend contracts.
+        const shipmentDispatch = action?.code === 'out-for-delivery' &&
+            Array.isArray(requiredFields) && requiredFields.length === 1 && requiredFields[0] === 'trackingNumber'
         if (
             !isNonEmptyString(action?.code) ||
             !FULFILLMENT_ACTION_CODES.has(action.code) ||
@@ -44,8 +48,8 @@ export function requireShipmentActionAuthority(authority, expectedOrderId) {
             !isNonEmptyString(action.targetStatus) ||
             typeof action.requiresConfirmation !== 'boolean' ||
             !Array.isArray(requiredFields) ||
-            requiredFields.length !== expectedFields.length ||
-            expectedFields.some((field) => !requiredFields.includes(field)) ||
+            (!shipmentDispatch && requiredFields.length !== expectedFields.length) ||
+            (!shipmentDispatch && expectedFields.some((field) => !requiredFields.includes(field))) ||
             new Set(requiredFields).size !== requiredFields.length
         ) {
             throw new Error('Shipment action authority rejected malformed backend action evidence.')

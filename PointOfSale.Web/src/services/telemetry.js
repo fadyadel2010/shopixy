@@ -18,7 +18,7 @@ const hashValue = async (value) => {
         const hashBuffer = await crypto.subtle.digest('SHA-256', data)
         const hashArray = Array.from(new Uint8Array(hashBuffer))
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-    } catch (e) {
+    } catch {
         // If hashing fails, return null (don't send userId)
         return null
     }
@@ -85,7 +85,7 @@ const sendErrorToBackend = async (errorData) => {
             // Don't wait for response, fire and forget
             keepalive: true,
         })
-    } catch (error) {
+    } catch {
         // Silently fail - don't throw errors from error tracking
     }
 }

@@ -7,6 +7,9 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using System.Security.Claims;
+using Microsoft.Extensions.Options;
+using PointOfSale.API.Services.AI.Models;
+using PointOfSale.API.Services.AI.Router;
 
 namespace PointOfSale.API.Controllers;
 
@@ -53,19 +56,23 @@ public class AdminCommerceAiController : ControllerBase
     private readonly IEventPublisher _eventPublisher;
     private readonly Services.AI.ICommerceAiInsightsService _insightsService;
     private readonly ILogger<AdminCommerceAiController> _logger;
+    private readonly CommerceAIOptions _options;
+    private readonly IEnumerable<IModelAdapter> _adapters;
 
     public AdminCommerceAiController(
         ApplicationDbContext context,
         ITenantContext tenantContext,
         IEventPublisher eventPublisher,
         Services.AI.ICommerceAiInsightsService insightsService,
-        ILogger<AdminCommerceAiController> logger)
+        ILogger<AdminCommerceAiController> logger, IOptions<CommerceAIOptions>? options = null, IEnumerable<IModelAdapter>? adapters = null)
     {
         _context = context;
         _tenantContext = tenantContext;
         _eventPublisher = eventPublisher;
         _insightsService = insightsService;
         _logger = logger;
+        _options = options?.Value ?? new();
+        _adapters = adapters ?? Array.Empty<IModelAdapter>();
     }
 
     /// <summary>
@@ -94,12 +101,10 @@ public class AdminCommerceAiController : ControllerBase
                 UpdatedBy = storeConfig?.CommerceAiUpdatedBy,
                 UpdatedAt = storeConfig?.UpdatedAtUtc
             },
-            Models = new List<CommerceAiModelInfo>
-            {
-                new() { Name = "DeepSeek R1", Role = "Primary", Available = true },
-                new() { Name = "GPT-OSS", Role = "Fallback", Available = true },
-                new() { Name = "Gemma", Role = "Emergency", Available = true }
-            },
+            // Configured is not a connectivity/inference probe; never fabricate model readiness.
+            Models = _options.Models.Count > 0
+                ? _adapters.OrderBy(a => a.Priority).Select(a => new CommerceAiModelInfo { Name = a.ModelId, Role = a.Priority == 1 ? "Primary" : "Fallback", Available = _options.Enabled && a.IsEnabled }).ToList()
+                : new() { new() { Name = _options.Model, Role = "Primary", Available = _options.Enabled && !string.IsNullOrWhiteSpace(_options.ApiKey) } },
             SupportedModes = new List<string>
             {
                 "Pre-purchase assistance",

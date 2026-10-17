@@ -1,7 +1,7 @@
 const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const DISCOUNT_TYPES = new Set(['Percentage', 'FixedAmount', 0, 1])
-const STATUSES = new Set(['Active', 'Inactive', 'Expired'])
+const STATUSES = new Set(['Active', 'Inactive', 'Expired', 'Scheduled', 'Exhausted'])
 
 const normalizeString = (value) => (typeof value === 'string' ? value.trim() : '')
 const normalizeGuid = (value) => normalizeString(value)

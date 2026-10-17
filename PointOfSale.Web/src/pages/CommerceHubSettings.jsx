@@ -490,8 +490,6 @@ export default function CommerceHubSettings() {
         const selectedCat = categories.find(c => c.id === state.categoryId)
         
         // Determine parent selection
-        const selectedParentId = selectedCat?.parentId || state.categoryId
-        const children = getChildren(selectedParentId)
         const isLeafCategory = selectedCat && !categories.some(c => c.parentId === selectedCat.id)
 
         return (

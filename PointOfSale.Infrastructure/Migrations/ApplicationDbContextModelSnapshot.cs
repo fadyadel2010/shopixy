@@ -22,21 +22,6 @@ namespace PointOfSale.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("PointOfSale.Core.Entities.HomepageMediaAsset", b =>
-            {
-                b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
-                b.Property<Guid>("TenantId").HasColumnType("uuid");
-                b.Property<string>("ObjectKey").IsRequired().HasMaxLength(512).HasColumnType("character varying(512)");
-                b.Property<string>("ContentType").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
-                b.Property<long>("Size").HasColumnType("bigint");
-                b.Property<DateTime>("CreatedAtUtc").HasColumnType("timestamp with time zone");
-                b.HasKey("Id");
-                b.HasIndex("TenantId", "Id");
-                b.HasIndex("ObjectKey").IsUnique();
-                b.ToTable("HomepageMediaAssets");
-                b.HasOne("PointOfSale.Core.Entities.Tenant", null).WithMany().HasForeignKey("TenantId").OnDelete(DeleteBehavior.Restrict).IsRequired();
-            });
-
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.InboxState", b =>
                 {
                     b.Property<long>("Id")
@@ -3065,6 +3050,226 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.ToTable("CanonicalIdentityLinks", (string)null);
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierCodShipmentBinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CarrierCode")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid>("ConfigurationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("DeliveryReference")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ExternalReferenceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ShipmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TrackingNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConfigurationId");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("ShipmentId");
+
+                    b.HasIndex("TenantId", "ShipmentId")
+                        .IsUnique();
+
+                    b.ToTable("CarrierCodShipmentBindings", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierCollectionEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("AdmissionCode")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("AdmissionOutcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("AuditIdentity")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("CarrierCode")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid>("ConfigurationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("DeliveryReference")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ObservationFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal?>("ObservedAmount")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("ProviderEventAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ReceivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewedEvidenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ShipmentBindingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ShipmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceContract")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TrackingNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("TrustMethod")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConfigurationId");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("ReviewedEvidenceId");
+
+                    b.HasIndex("ShipmentBindingId");
+
+                    b.HasIndex("ShipmentId");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .IsUnique()
+                        .HasFilter("\"AdmissionOutcome\" = 'Qualified'");
+
+                    b.HasIndex("TenantId", "CarrierCode", "ObservationFingerprint")
+                        .IsUnique();
+
+                    b.ToTable("CarrierCollectionEvidence", (string)null);
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.CarrierConfiguration", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3233,6 +3438,232 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.HasIndex("TenantId", "IsEnabled", "SortOrder");
 
                     b.ToTable("CarrierConfigurations");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierRemittance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("ActualReceiptAttested")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("CarrierCode")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid>("ClearingAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConfigurationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConfirmationBasis")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("EvidenceReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<decimal>("Fees")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("GrossAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("OperatorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("PostedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PostedJournalId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReceiptChannel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("ReceiptReference")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ReceiptReferenceKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<decimal>("ReceivedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("ReceivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ReceivingAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReconciliationOutcome")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RequestFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClearingAccountId");
+
+                    b.HasIndex("ConfigurationId");
+
+                    b.HasIndex("OperatorId");
+
+                    b.HasIndex("PostedJournalId");
+
+                    b.HasIndex("ReceivingAccountId");
+
+                    b.HasIndex("TenantId", "ReceiptReferenceKey")
+                        .IsUnique();
+
+                    b.ToTable("CarrierRemittances", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CarrierRemittance_Receipt", "\"GrossAmount\" > 0 AND \"ReceivedAmount\" = \"GrossAmount\" AND \"Fees\" = 0 AND \"ActualReceiptAttested\" AND \"ReceiptChannel\" = 'PhysicalMerchantCash' AND \"ConfirmationBasis\" = 'OperatorAttestedPhysicalReceipt' AND \"ReconciliationOutcome\" = 'WholeOrderZeroFeeMatched' AND length(btrim(\"ReceiptReferenceKey\")) > 0 AND \"ReceivedAtUtc\" <= \"RecordedAtUtc\" AND (\"Outcome\" = 'Preparing' OR (\"Outcome\" = 'Posted' AND \"PostedJournalId\" IS NOT NULL AND \"PostedAtUtc\" IS NOT NULL))");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierRemittanceOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AllocationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CollectionEvidenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CollectionJournalId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<decimal>("GrossAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RemittanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ShipmentBindingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ShipmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AllocationId")
+                        .IsUnique();
+
+                    b.HasIndex("CollectionEvidenceId");
+
+                    b.HasIndex("CollectionJournalId");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("RemittanceId");
+
+                    b.HasIndex("ShipmentBindingId");
+
+                    b.HasIndex("ShipmentId");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .IsUnique();
+
+                    b.ToTable("CarrierRemittanceOrders", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CarrierRemittanceOrder_Amount", "\"GrossAmount\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Cashbox", b =>
@@ -10398,6 +10829,13 @@ namespace PointOfSale.Infrastructure.Migrations
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Geographic.AddressAdmissionEvidence", b =>
                 {
+                    b.Property<string>("CanonicalAddressEvidenceJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
@@ -12031,6 +12469,41 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasDatabaseName("IX_GlobalPhoneReputation_PhoneNumber");
 
                     b.ToTable("GlobalPhoneReputation", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.HomepageMediaAsset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<long>("Size")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ObjectKey")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "Id");
+
+                    b.ToTable("HomepageMediaAssets", (string)null);
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.HomepageSection", b =>
@@ -14906,8 +15379,7 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasIndex("TenantId", "SettlementType", "SettlementId")
                         .IsUnique()
-                        .HasDatabaseName("IX_PaymentSettlementBatches_Tenant_Type_SettlementId")
-                        .HasFilter("\"IsDeleted\" = false");
+                        .HasDatabaseName("IX_PaymentSettlementBatches_Tenant_Type_SettlementId");
 
                     b.ToTable("PaymentSettlementBatches");
                 });
@@ -14964,8 +15436,7 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasIndex("TenantId", "OrderId")
                         .IsUnique()
-                        .HasDatabaseName("IX_PaymentSettlementOrders_Tenant_Order")
-                        .HasFilter("\"IsDeleted\" = false");
+                        .HasDatabaseName("IX_PaymentSettlementOrders_Tenant_Order");
 
                     b.HasIndex("TenantId", "PaymentIntentId")
                         .HasDatabaseName("IX_PaymentSettlementOrders_Tenant_PaymentIntent")
@@ -18563,9 +19034,16 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<string>("CarrierMetadata")
                         .HasColumnType("text");
 
+                    b.Property<string>("CarrierRequestFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("CarrierRequestId")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<string>("CarrierRequestSnapshotJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("CarrierTrackingResponse")
                         .HasColumnType("text");
@@ -18819,6 +19297,9 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("ParcelEvidenceJson")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("PickedUpAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -18959,6 +19440,143 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.HasIndex("TenantId", "Status", "LastCarrierSyncAtUtc");
 
                     b.ToTable("Shipments");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.ShipmentCancellationOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ActorIdentity")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<DateTime?>("AttemptStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AwbNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("CarrierCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("CarrierRequestId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("ConfigurationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConfirmationBasis")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("ConfirmedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Environment")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("EvidenceHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("EvidenceReference")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ExternalReferenceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<int>("PreviousStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("RequestFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ShipmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TrackingNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("ShipmentId");
+
+                    b.HasIndex("TenantId", "ShipmentId")
+                        .IsUnique();
+
+                    b.ToTable("ShipmentCancellationOperations", (string)null);
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.ShippingAdministration.CarrierAccount", b =>
@@ -19432,6 +20050,7 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("UpdatedAt")
+                        .IsConcurrencyToken()
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid?>("UpdatedBy")
@@ -19447,6 +20066,8 @@ namespace PointOfSale.Infrastructure.Migrations
                             t.HasCheckConstraint("CK_ShippingMethods_ActiveRequiresFulfillmentWarehouse", "NOT \"IsActive\" OR \"FulfillmentWarehouseId\" IS NOT NULL");
                         });
                 });
+
+            ShippingWebhookOwnerClaims.AddClaimTarget(modelBuilder);
 
             modelBuilder.Entity("PointOfSale.Core.Entities.ShippingWebhookLog", b =>
                 {
@@ -21585,6 +22206,7 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("UseBaileys")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
@@ -21757,6 +22379,7 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<int>("Version")
+                        .IsConcurrencyToken()
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
@@ -23273,6 +23896,143 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("Bank");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierCodShipmentBinding", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.CarrierConfiguration", null)
+                        .WithMany()
+                        .HasForeignKey("ConfigurationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierCollectionEvidence", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.CarrierConfiguration", null)
+                        .WithMany()
+                        .HasForeignKey("ConfigurationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.CarrierCollectionEvidence", null)
+                        .WithMany()
+                        .HasForeignKey("ReviewedEvidenceId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.CarrierCodShipmentBinding", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentBindingId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierRemittance", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ClearingAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.CarrierConfiguration", null)
+                        .WithMany()
+                        .HasForeignKey("ConfigurationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.PaymentSettlementBatch", null)
+                        .WithOne()
+                        .HasForeignKey("PointOfSale.Core.Entities.CarrierRemittance", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("OperatorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.JournalEntry", null)
+                        .WithMany()
+                        .HasForeignKey("PostedJournalId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ReceivingAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierRemittanceOrder", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.PaymentSettlementOrder", null)
+                        .WithOne()
+                        .HasForeignKey("PointOfSale.Core.Entities.CarrierRemittanceOrder", "AllocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.CarrierCollectionEvidence", null)
+                        .WithMany()
+                        .HasForeignKey("CollectionEvidenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.JournalEntry", null)
+                        .WithMany()
+                        .HasForeignKey("CollectionJournalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.CarrierRemittance", "Remittance")
+                        .WithMany("Orders")
+                        .HasForeignKey("RemittanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.CarrierCodShipmentBinding", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentBindingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Remittance");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.Cashbox", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.User", "OpenedByUser")
@@ -24518,6 +25278,15 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("TargetPlace");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.HomepageMediaAsset", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.MarketingReviewEvidence", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.ServiceReview", "ServiceReview")
@@ -25309,6 +26078,21 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("ShippingMethod");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.ShipmentCancellationOperation", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.ShippingAdministration.CarrierWarehouseAssignment", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.ShippingAdministration.CarrierAccount", null)
@@ -25888,6 +26672,11 @@ namespace PointOfSale.Infrastructure.Migrations
             modelBuilder.Entity("PointOfSale.Core.Entities.Bank", b =>
                 {
                     b.Navigation("Transactions");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CarrierRemittance", b =>
+                {
+                    b.Navigation("Orders");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Cashbox", b =>

@@ -30,6 +30,7 @@ function PreviewThemeProvider({ tenantId, storeConfig, children }) {
     const [isReady, setIsReady] = useState(false)
 
     useLayoutEffect(() => {
+        const previousConfig = previousConfigRef.current
         if (!storeConfig) {
             setIsReady(false)
             return undefined
@@ -45,7 +46,7 @@ function PreviewThemeProvider({ tenantId, storeConfig, children }) {
         setIsReady(true)
 
         return () => {
-            setConfig(previousConfigRef.current)
+            setConfig(previousConfig)
             setIsReady(false)
         }
     }, [normalizedConfig, setConfig, storeConfig, tenantId])

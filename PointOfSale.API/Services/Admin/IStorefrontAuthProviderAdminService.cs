@@ -41,7 +41,7 @@ public interface IStorefrontAuthProviderAdminService
         AuthProvider provider,
         UpdateProviderSettingsRequest request,
         Guid updatedByUserId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, string? expectedRevision = null);
 
     /// <summary>
     /// Enables a provider.
@@ -51,7 +51,7 @@ public interface IStorefrontAuthProviderAdminService
         Guid tenantId,
         AuthProvider provider,
         Guid enabledByUserId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, string? expectedRevision = null);
 
     /// <summary>
     /// Disables a provider.
@@ -62,7 +62,7 @@ public interface IStorefrontAuthProviderAdminService
         AuthProvider provider,
         Guid disabledByUserId,
         string? reason = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, string? expectedRevision = null);
 
     /// <summary>
     /// Rotates the client secret for a provider.
@@ -73,7 +73,7 @@ public interface IStorefrontAuthProviderAdminService
         AuthProvider provider,
         string newClientSecret,
         Guid rotatedByUserId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, string? expectedRevision = null);
 }
 
 #region DTOs
@@ -99,11 +99,13 @@ public class AuthProviderSettingsDto
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? UpdatedAtUtc { get; set; }
     public Guid? UpdatedByUserId { get; set; }
+    public string Revision { get; set; } = "0";
 }
 
 /// <summary>
 /// Request to update provider settings.
 /// </summary>
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public class UpdateProviderSettingsRequest
 {
     /// <summary>

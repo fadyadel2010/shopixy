@@ -20,21 +20,25 @@ public class ChatRequest
     /// <summary>
     /// Session ID for conversation continuity.
     /// </summary>
+    [StringLength(128)]
     public string? SessionId { get; set; }
 
     /// <summary>
     /// Product IDs currently visible to the customer (for context).
     /// </summary>
+    [MaxLength(20)]
     public List<Guid>? ProductIdsInView { get; set; }
 
     /// <summary>
     /// Current page context (e.g., "product:123", "category:electronics", "checkout").
     /// </summary>
+    [StringLength(1024)]
     public string? CurrentPage { get; set; }
 
     /// <summary>
     /// Language preference (auto-detected from message if not provided).
     /// </summary>
+    [StringLength(10)]
     public string? Language { get; set; }
 }
 
@@ -70,7 +74,7 @@ public class ChatResponse
     /// <summary>
     /// Indicates if this is a fallback response due to AI failure.
     /// </summary>
-    [JsonIgnore]
+    [JsonPropertyName("isFallback")]
     public bool IsFallback { get; set; }
 }
 
@@ -353,4 +357,3 @@ public class CommerceAIOptions
     /// </summary>
     public bool EnableDebugLogging { get; set; } = false;
 }
-

@@ -67,7 +67,7 @@ export default function VariantMatrixTable({
                 if (isMounted) {
                     setProductMedia(sortMedia((response.data || []).filter(item => item.mediaType === 'image')))
                 }
-            } catch (err) {
+            } catch {
                 if (isMounted) {
                     setProductMedia([])
                 }

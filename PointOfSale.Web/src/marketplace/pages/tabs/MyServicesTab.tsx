@@ -1,64 +1,29 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Plus, BarChart3 } from 'lucide-react'
-import { marketplaceApi } from '../../api/marketplaceApi'
-import { marketplaceKeys } from '../../queryKeys'
+import { useMyServices } from '../../hooks/useMyServices'
+import { useMarketplaceServiceEditor } from '../../hooks/useMarketplaceServiceEditor'
 import { ServiceFormModal } from '../../components/ServiceFormModal'
 import { useFormatting } from '../../../hooks/useFormatting'
 import type { CreateServiceRequest } from '../../types'
-import {
-    marketplaceAuthorityQueryOptions,
-    publishMarketplaceAuthorityInvalidation,
-    useMarketplaceAuthorityScope,
-} from '../../authority'
 import { deriveProviderServicePresentation } from '../../providerServiceAuthority'
 
 export function MyServicesTab() {
     const { t } = useTranslation()
     const { formatCurrency, isRTL } = useFormatting()
     const navigate = useNavigate()
-    const queryClient = useQueryClient()
-    const authorityScope = useMarketplaceAuthorityScope()
     const [showCreateModal, setShowCreateModal] = useState(false)
-    const [editingService, setEditingService] = useState<any>(null)
+    const [editingService, setEditingService] = useState<ReturnType<typeof deriveProviderServicePresentation>>(null)
 
-    const { data: serviceData = [], isLoading, isFetching, isError } = useQuery({
-        queryKey: marketplaceKeys.myServices(authorityScope),
-        queryFn: marketplaceApi.getMyServices,
-        ...marketplaceAuthorityQueryOptions,
-    })
+    const { data: serviceData = [], isLoading, isFetching, isError } = useMyServices()
     const services = isError || isFetching
         ? []
         : serviceData
             .map(deriveProviderServicePresentation)
             .filter((service): service is NonNullable<ReturnType<typeof deriveProviderServicePresentation>> => service !== null)
 
-    const createServiceMutation = useMutation({
-        mutationFn: (data: CreateServiceRequest) => marketplaceApi.createService(data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-            setShowCreateModal(false)
-        },
-        onSettled: () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
-
-    const updateServiceMutation = useMutation({
-        mutationFn: ({ id, data }: { id: string; data: CreateServiceRequest }) =>
-            marketplaceApi.updateService(id, data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-            setEditingService(null)
-        },
-        onSettled: () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
+    const { createServiceMutation, updateServiceMutation } = useMarketplaceServiceEditor(() => setShowCreateModal(false), () => setEditingService(null))
 
     const handleSubmitCreate = async (data: CreateServiceRequest) => {
         await createServiceMutation.mutateAsync(data)
@@ -185,6 +150,7 @@ export function MyServicesTab() {
 
             {showCreateModal ? (
                 <ServiceFormModal
+                    isRTL={isRTL}
                     onSubmit={handleSubmitCreate}
                     onClose={() => setShowCreateModal(false)}
                 />
@@ -192,6 +158,7 @@ export function MyServicesTab() {
 
             {editingService ? (
                 <ServiceFormModal
+                    isRTL={isRTL}
                     serviceId={editingService.serviceId}
                     initialData={editingService.source}
                     onSubmit={handleSubmitEdit}

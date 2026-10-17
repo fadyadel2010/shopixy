@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from '../services/api'
 import { useSettings } from '../contexts/SettingsContext'
@@ -142,7 +142,7 @@ export function mergePaymentMethodCatalog(catalog, methods) {
             const code = provider.code?.toUpperCase?.() || provider.code
             return methodByCode.get(code) || normalizeCatalogProvider(provider)
         })
-        .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999))
+        .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999) || a.code.localeCompare(b.code))
 }
 
 export default function PaymentMethods() {
@@ -162,9 +162,16 @@ export default function PaymentMethods() {
     const [error, setError] = useState('')
     const [errorDetails, setErrorDetails] = useState([])
     const [success, setSuccess] = useState('')
+    const write = (verb, url, data, method) => api[verb](url, data, ...(method?.version ? [{ headers: { 'If-Match': String(method.version) } }] : []))
+    const [busy, setBusy] = useState(false)
+    const pending = useRef(false)
+    const mounted = useRef(true)
+    const readId = useRef(0)
 
     useEffect(() => {
+        mounted.current = true
         fetchMethods()
+        return () => { mounted.current = false; readId.current += 1 }
     }, [])
 
     const clearFeedback = () => {
@@ -180,19 +187,44 @@ export default function PaymentMethods() {
     }
 
     const fetchMethods = async () => {
+        const id = ++readId.current
         try {
             setLoading(true)
             const [catalogResponse, methodsResponse] = await Promise.all([
                 api.get('/admin/payment-methods/catalog'),
                 api.get('/admin/payment-methods')
             ])
+            if (!mounted.current || id !== readId.current) return false
             setMethods(mergePaymentMethodCatalog(catalogResponse.data || [], methodsResponse.data || []))
+            return true
         } catch (err) {
+            if (!mounted.current || id !== readId.current) return false
             console.error('Failed to fetch payment methods:', err)
             setMethods([])
             applyApiError(err, t('common.error'))
+            return false
         } finally {
-            setLoading(false)
+            if (mounted.current && id === readId.current) setLoading(false)
+        }
+    }
+
+    const runMutation = async (operation, message, accepted) => {
+        if (pending.current || !mounted.current) return
+        pending.current = true
+        setBusy(true)
+        clearFeedback()
+        readId.current += 1
+        try {
+            await operation()
+            if (!mounted.current) return
+            accepted?.()
+            if (await fetchMethods()) setSuccess(message)
+            else if (mounted.current) setError(t('phase5.savedReloadFailed', 'Saved, but fresh data could not be reloaded. Retry the read before making another change.'))
+        } catch (err) {
+            if (mounted.current) applyApiError(err, t('common.error'))
+        } finally {
+            pending.current = false
+            if (mounted.current) setBusy(false)
         }
     }
 
@@ -207,8 +239,7 @@ export default function PaymentMethods() {
             return
         }
 
-        try {
-            await api.put(`/admin/payment-methods/${method.code}`, {
+        await runMutation(() => api.put(`/admin/payment-methods/${method.code}`, {
                 displayName: method.displayName,
                 displayNameAr: method.displayNameAr,
                 description: method.description,
@@ -220,12 +251,7 @@ export default function PaymentMethods() {
                 minOrderAmount: method.minOrderAmount ?? null,
                 maxOrderAmount: method.maxOrderAmount ?? null,
                 configuration: null
-            })
-            setSuccess(t('common.updatedSuccessfully'))
-            await fetchMethods()
-        } catch (err) {
-            applyApiError(err, t('common.error'))
-        }
+            }), t('common.updatedSuccessfully'))
     }
 
     const closeEditModal = () => {
@@ -242,9 +268,6 @@ export default function PaymentMethods() {
 
     const handleSubmit = async (e) => {
         e.preventDefault()
-        clearFeedback()
-
-        try {
             const data = {
                 ...formData,
                 sortOrder: parseInt(formData.sortOrder, 10) || 0,
@@ -253,13 +276,7 @@ export default function PaymentMethods() {
                 maxOrderAmount: formData.maxOrderAmount ? parseFloat(formData.maxOrderAmount) : null
             }
 
-            await api.put(`/admin/payment-methods/${editingMethod.code}`, data)
-            setSuccess(t('common.updatedSuccessfully'))
-            closeEditModal()
-            await fetchMethods()
-        } catch (err) {
-            applyApiError(err, t('common.error'))
-        }
+            await runMutation(() => write('put', `/admin/payment-methods/${editingMethod.code}`, data, editingMethod), t('common.updatedSuccessfully'), closeEditModal)
     }
 
     const handleConfigSubmit = async (e) => {
@@ -285,7 +302,6 @@ export default function PaymentMethods() {
             return
         }
 
-        try {
             const payload = {
                 isSandbox: configData.isSandbox,
                 configuration,
@@ -293,15 +309,9 @@ export default function PaymentMethods() {
                 confirmReset: configData.confirmReset
             }
 
-            await api.put(`/admin/payment-methods/${editingMethod.code}/configure`, payload)
-            setSuccess(configData.reset
+            await runMutation(() => write('put', `/admin/payment-methods/${editingMethod.code}/configure`, payload, editingMethod), configData.reset
                 ? 'Payment configuration was reset safely and the method was disabled.'
-                : t('common.updatedSuccessfully'))
-            closeConfigModal()
-            await fetchMethods()
-        } catch (err) {
-            applyApiError(err, t('common.error'))
-        }
+                : t('common.updatedSuccessfully'), closeConfigModal)
     }
 
     const handleEdit = (method) => {
@@ -354,11 +364,8 @@ export default function PaymentMethods() {
             return
         }
 
-        try {
             if (method.isEnabled) {
-                await api.post(`/admin/payment-methods/${method.code}/disable`)
-                setSuccess(t('paymentMethods.disabled', { name: getLocalizedMethodName(method) }))
-                await fetchMethods()
+                await runMutation(() => write('post', `/admin/payment-methods/${method.code}/disable`, undefined, method), t('paymentMethods.disabled', { name: getLocalizedMethodName(method) }))
                 return
             }
 
@@ -371,13 +378,7 @@ export default function PaymentMethods() {
                 return
             }
 
-            await api.post(`/admin/payment-methods/${method.code}/enable`)
-            setSuccess(t('paymentMethods.enabled', { name: getLocalizedMethodName(method) }))
-            await fetchMethods()
-        } catch (err) {
-            applyApiError(err, t('common.error'))
-            await fetchMethods()
-        }
+            await runMutation(() => write('post', `/admin/payment-methods/${method.code}/enable`, undefined, method), t('paymentMethods.enabled', { name: getLocalizedMethodName(method) }))
     }
 
     const handleResetToggle = (checked) => {
@@ -506,11 +507,12 @@ export default function PaymentMethods() {
     }
 
     return (
-        <div className="p-6">
+        <fieldset disabled={busy} className="min-w-0 p-6">
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">{t('paymentMethods.title', 'Payment Methods')}</h1>
                     <p className="text-sm text-gray-600">{t('paymentMethods.description', 'Configure payment methods for your storefront')}</p>
+                    <p className="text-sm text-gray-600">{t('phase5.configurationNotConnection', 'Configured or enabled does not verify provider authentication, account eligibility, or a completed payment.')}</p>
                 </div>
             </div>
 
@@ -545,7 +547,7 @@ export default function PaymentMethods() {
                     </div>
                 ) : error && methods.length === 0 ? (
                     <div className="py-12 text-center text-gray-500">
-                        <p>{t('paymentMethods.noMethods', 'No payment methods available')}</p>
+                        <p>{t('common.failedToLoad', 'Failed to load')}</p>
                         {error && (
                             <button
                                 type="button"
@@ -690,7 +692,7 @@ export default function PaymentMethods() {
 
             {showModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-                    <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl">
+                    <div role="dialog" aria-modal="true" aria-label={t('paymentMethods.editMethod', 'Edit Payment Method')} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl">
                         <div className="border-b p-6">
                             <h2 className="text-xl font-bold">
                                 {t('paymentMethods.editMethod', 'Edit Payment Method')}
@@ -698,10 +700,12 @@ export default function PaymentMethods() {
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-4 p-6">
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="label">{t('paymentMethods.displayNameEn', 'Display Name (EN)')} *</label>
+                                    <label className="label" htmlFor="payment-method-name">{t('paymentMethods.displayNameEn', 'Display Name (EN)')} *</label>
                                     <input
+                                        id="payment-method-name"
+                                        maxLength={100}
                                         type="text"
                                         value={formData.displayName}
                                         onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
@@ -784,6 +788,7 @@ export default function PaymentMethods() {
                                     <input
                                         type="number"
                                         step="0.01"
+                                        min="0"
                                         value={formData.minOrderAmount}
                                         onChange={(e) => setFormData({ ...formData, minOrderAmount: e.target.value })}
                                         className="input"
@@ -795,6 +800,7 @@ export default function PaymentMethods() {
                                     <input
                                         type="number"
                                         step="0.01"
+                                        min={formData.minOrderAmount || '0'}
                                         value={formData.maxOrderAmount}
                                         onChange={(e) => setFormData({ ...formData, maxOrderAmount: e.target.value })}
                                         className="input"
@@ -930,6 +936,6 @@ export default function PaymentMethods() {
                     </div>
                 </div>
             )}
-        </div>
+        </fieldset>
     )
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Nest;
+using Elasticsearch.Net;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -44,8 +45,25 @@ public static class ElasticsearchServiceCollectionExtensions
             .GetSection(ElasticsearchSettings.SectionName)
             .Get<ElasticsearchSettings>() ?? new ElasticsearchSettings();
 
-        // Configure and register ElasticClient as singleton
-        var connectionSettings = new ConnectionSettings(new Uri(settings.Url))
+        // Disabled search must neither require an endpoint nor contact an old
+        // configured cluster. Keep DI consumers resolvable with a failing,
+        // in-memory transport; it cannot manufacture successful search results.
+        ConnectionSettings connectionSettings;
+        if (!settings.Enabled)
+        {
+            connectionSettings = new ConnectionSettings(
+                new SingleNodeConnectionPool(new Uri("http://127.0.0.1")),
+                new InMemoryConnection(Array.Empty<byte>(), statusCode: 503));
+        }
+        else
+        {
+            if (!Uri.TryCreate(settings.Url, UriKind.Absolute, out var endpoint) ||
+                (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+                throw new InvalidOperationException("Enabled Elasticsearch requires an absolute HTTP or HTTPS endpoint.");
+            connectionSettings = new ConnectionSettings(endpoint);
+        }
+
+        connectionSettings = connectionSettings
             .DefaultIndex(settings.ProductsIndexName)
             .DefaultMappingFor<MarketplaceServiceDocument>(m => m
                 .IndexName("marketplace_services")

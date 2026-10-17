@@ -12,7 +12,6 @@
  * - storefrontLive: boolean
  * - hasPaymentMethod: boolean
  * - hasShippingMethod: boolean
- * - missingRequirements: string[]
  * - variant: 'inline' | 'fullpage' (default: 'inline')
  */
 import { useNavigate } from 'react-router-dom'
@@ -59,7 +58,6 @@ export default function AffiliateReadinessWarning({
     storefrontLive,
     hasPaymentMethod,
     hasShippingMethod,
-    missingRequirements,
     variant = 'inline'
 }) {
     const { t } = useTranslation()

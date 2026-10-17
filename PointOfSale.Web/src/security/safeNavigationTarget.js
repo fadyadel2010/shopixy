@@ -1,10 +1,12 @@
+import { containsAsciiControl } from './textCharacterPolicy'
+
 const SAFE_NAVIGATION_FALLBACK = '/'
 
 export const resolveSafeNavigationTarget = (value, fallback = SAFE_NAVIGATION_FALLBACK) => {
     if (typeof value !== 'string') return fallback
 
     const candidate = value.trim()
-    if (!candidate || /[\u0000-\u001f\u007f\\]/.test(candidate) || candidate.startsWith('//')) {
+    if (!candidate || containsAsciiControl(candidate) || candidate.includes('\\') || candidate.startsWith('//')) {
         return fallback
     }
 

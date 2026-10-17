@@ -50,8 +50,7 @@ vi.mock('../services', () => ({
     },
 }))
 
-function admittedConfig(overrides = {}) {
-    return {
+const baseConfig = {
         tenantId,
         storeName: 'Loop Probe Store',
         storefrontStatus: 'live',
@@ -63,8 +62,11 @@ function admittedConfig(overrides = {}) {
             home: { sections: [] },
         },
         productTemplates: {},
-        ...overrides,
-    }
+}
+function admittedConfig(): typeof baseConfig;
+function admittedConfig<T extends Record<string, import('../../../services/apiJson').ApiJson>>(overrides: T): typeof baseConfig & T;
+function admittedConfig(overrides = {}) {
+    return { ...baseConfig, ...overrides }
 }
 
 afterEach(() => {
@@ -73,6 +75,23 @@ afterEach(() => {
 })
 
 describe('StorefrontBuilderPage runtime load stability', () => {
+    it('retains the candidate and does not announce latest-loaded when conflict reload fails', async () => {
+        vi.mocked(storeConfigService.getStoreConfig).mockResolvedValueOnce(admittedConfig()).mockRejectedValueOnce(new Error('Read unavailable'))
+        vi.mocked(storeConfigService.getRuntimeStoreConfig).mockResolvedValue(admittedConfig())
+        vi.mocked(storeConfigService.updatePageLayout).mockRejectedValueOnce({ response: { status: 409, data: { message: 'Another administrator saved.' } } })
+        render(<MemoryRouter initialEntries={['/storefront/homepage']}><StorefrontBuilderPage /></MemoryRouter>)
+        await screen.findByTestId('builder-canvas')
+        act(() => useBuilderStore.getState().addSection('text-block', undefined, { get: () => ({ type: 'text-block' }) }))
+        const candidate = useBuilderStore.getState().sections
+        fireEvent.click(screen.getByText('Save Draft'))
+        await screen.findByRole('dialog')
+        fireEvent.click(screen.getByText('storefront.homepageEditor.loadLatest'))
+        await waitFor(() => expect(storeConfigService.getStoreConfig).toHaveBeenCalledTimes(2))
+        expect(useBuilderStore.getState().sections).toEqual(candidate)
+        expect(useBuilderStore.getState().isDirty).toBe(true)
+        expect(screen.queryByText('storefront.homepageEditor.latestLoaded')).not.toBeInTheDocument()
+    })
+
     it('discards a saved media draft through the existing save authority and restores the published reference locally', async () => {
         const imageA = '/api/storefront/homepage-media/11111111-1111-4111-8111-111111111111'
         const imageB = '/api/storefront/homepage-media/22222222-2222-4222-8222-222222222222'

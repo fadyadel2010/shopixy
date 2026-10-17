@@ -11,7 +11,7 @@
  * - Never assume auth state without API confirmation
  */
 
-import { AxiosError } from 'axios';
+import { isHttpClientError } from '@/services/api/httpClient';
 import { create } from 'zustand';
 import type {
     AuthStatus,
@@ -23,8 +23,9 @@ import type {
 } from '../types';
 import * as authApi from '../api/authApi';
 import { isForceLogoutError } from '../types';
-import { clearSession, setCustomerId } from '@/bootstrap';
+import { clearSession, setCustomerId } from '../../bootstrap/index';
 import { isThemePreviewMode } from '@/storefront/preview/themePreviewMode';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 import {
     emitAuthDegradedRecovery,
     emitAuthStateDegraded,
@@ -42,6 +43,7 @@ interface AuthState {
     customer: OnlineCustomer | null;
     isLoading: boolean;
     error: AuthError | null;
+    providersError: string | null;
 
     // Social providers (includes Client IDs for OAuth initialization)
     availableProviders: {
@@ -53,12 +55,12 @@ interface AuthState {
 
     // Actions
     login: (request: LoginRequest) => Promise<void>;
-    register: (request: RegisterRequest) => Promise<OnlineCustomer>;
+    register: (request: RegisterRequest) => Promise<AuthResponse>;
     logout: () => Promise<void>;
     checkAuth: (options?: { silent?: boolean; reason?: string }) => Promise<void>;
     refreshAuth: (options?: { source?: string }) => Promise<AuthRefreshResult>;
-    googleLogin: (idToken: string) => Promise<void>;
-    facebookLogin: (accessToken: string) => Promise<void>;
+    googleLogin: (idToken: string, state?: string, signal?: AbortSignal) => Promise<boolean>;
+    facebookLogin: (accessToken: string, state?: string, signal?: AbortSignal) => Promise<boolean>;
     loadProviders: () => Promise<void>;
     clearError: () => void;
 
@@ -79,6 +81,7 @@ let refreshPromise: Promise<AuthRefreshResult> | null = null;
 let authRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let authRecoveryAttempt = 0;
 let authRevision = 0;
+let providerReadRevision = 0;
 
 const AUTH_RECOVERY_BASE_DELAY_MS = 5000;
 const AUTH_RECOVERY_MAX_DELAY_MS = 30000;
@@ -127,7 +130,7 @@ async function clearCheckoutStateForAuthTransition(trigger: string): Promise<voi
 }
 
 function isUnauthorizedError(error: unknown): boolean {
-    return error instanceof AxiosError && error.response?.status === 401;
+    return isHttpClientError(error) && error.response?.status === 401;
 }
 
 function clearScheduledAuthRetry(): void {
@@ -190,6 +193,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     isLoading: false,
     error: null,
     availableProviders: null,
+    providersError: null,
 
     /**
      * Login with email and password
@@ -230,7 +234,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         try {
             const response = await authApi.register(request);
             if (operationRevision !== authRevision) {
-                return response.customer;
+                return response;
             }
             resetAuthRecoveryState();
             clearAuthenticatedContext();
@@ -240,7 +244,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 error: null,
                 isLoading: false,
             });
-            return response.customer;
+            return response;
         } catch (error) {
             if (operationRevision !== authRevision) {
                 throw error;
@@ -296,6 +300,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 error: null,
                 updatingItemId: null,
                 isInitialized: false,
+                requiresRefresh: true,
             });
 
             // Reset checkout state
@@ -490,20 +495,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     /**
      * Google login
      */
-    googleLogin: async (idToken: string) => {
+    googleLogin: async (idToken: string, state?: string, signal?: AbortSignal) => {
         const operationRevision = ++authRevision;
         set({ isLoading: true, error: null });
 
         try {
-            const response = await authApi.googleLogin(idToken);
+            const response = await authApi.googleLogin(idToken, state, signal);
             if (operationRevision !== authRevision) {
-                return;
+                return false;
             }
+            if (signal?.aborted) { set({ isLoading: false }); return false; }
             get().setAuthenticated(response);
+            return true;
         } catch (error) {
             if (operationRevision !== authRevision) {
-                return;
+                return false;
             }
+            if (signal?.aborted) { set({ isLoading: false }); return false; }
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();
             set({
@@ -519,20 +527,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     /**
      * Facebook login
      */
-    facebookLogin: async (accessToken: string) => {
+    facebookLogin: async (accessToken: string, state?: string, signal?: AbortSignal) => {
         const operationRevision = ++authRevision;
         set({ isLoading: true, error: null });
 
         try {
-            const response = await authApi.facebookLogin(accessToken);
+            const response = await authApi.facebookLogin(accessToken, state, signal);
             if (operationRevision !== authRevision) {
-                return;
+                return false;
             }
+            if (signal?.aborted) { set({ isLoading: false }); return false; }
             get().setAuthenticated(response);
+            return true;
         } catch (error) {
             if (operationRevision !== authRevision) {
-                return;
+                return false;
             }
+            if (signal?.aborted) { set({ isLoading: false }); return false; }
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();
             set({
@@ -549,6 +560,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Load available social providers
      */
     loadProviders: async () => {
+        const revision = ++providerReadRevision;
+        const scope = tryGetTenantScopedStorageKey('social-providers');
         if (isThemePreviewMode()) {
             set({ availableProviders: { google: false, facebook: false } });
             return;
@@ -556,11 +569,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         try {
             const providers = await authApi.getProviders();
-            set({ availableProviders: providers });
-        } catch (error) {
-            console.warn('[Auth] Failed to load providers:', error);
+            if (revision !== providerReadRevision || scope !== tryGetTenantScopedStorageKey('social-providers')) return;
+            set({ availableProviders: providers, providersError: null });
+        } catch {
+            if (revision !== providerReadRevision || scope !== tryGetTenantScopedStorageKey('social-providers')) return;
             // Non-blocking error - providers will show as unavailable
-            set({ availableProviders: { google: false, facebook: false, googleClientId: undefined, facebookAppId: undefined } });
+            set({ availableProviders: { google: false, facebook: false, googleClientId: undefined, facebookAppId: undefined }, providersError: 'PROVIDERS_UNAVAILABLE' });
         }
     },
 
@@ -628,6 +642,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     cart: mergedCart,
                     isLoading: false,
                     isInitialized: true,
+                    requiresRefresh: false,
                     error: null,
                 });
 
@@ -660,6 +675,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                             error: 'Failed to load your cart after login. Please refresh the page.',
                             isLoading: false,
                             isInitialized: true,
+                            requiresRefresh: true,
                         });
                     }
                 }

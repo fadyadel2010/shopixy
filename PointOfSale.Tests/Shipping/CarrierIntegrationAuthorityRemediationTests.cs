@@ -15,6 +15,44 @@ namespace PointOfSale.Tests.Shipping;
 public sealed class CarrierIntegrationAuthorityRemediationTests
 {
     [Fact]
+    public async Task Bosta_AuthenticationAndCheckoutDoNotRequirePickup_BookingStillDoes()
+    {
+        await using var fixture = CreateFixture();
+        await fixture.Authority.ValidateAndStoreIntegrationAsync(fixture.TenantId, CarrierCodes.Bosta,
+            CreateUpdate(apiKey: "synthetic-auth-only") with { Configuration = "{}" });
+        Assert.True((await fixture.Authority.ValidateResolvedCredentialsAsync(fixture.TenantId, CarrierCodes.Bosta)).Success);
+        var auth = await fixture.Authority.GetIntegrationReadinessAsync(fixture.TenantId, CarrierCodes.Bosta, purpose: CarrierIntegrationPurpose.AdminValidation);
+        Assert.DoesNotContain("BOSTA_BUSINESS_LOCATION_REQUIRED", auth.Blockers);
+        var checkout = await fixture.Authority.GetIntegrationReadinessAsync(fixture.TenantId, CarrierCodes.Bosta, purpose: CarrierIntegrationPurpose.StorefrontAdmission);
+        Assert.False(checkout.CanExecute); Assert.DoesNotContain("BOSTA_PICKUP_VERIFICATION_REQUIRED", checkout.Blockers);
+        var booking = await fixture.Authority.GetIntegrationReadinessAsync(fixture.TenantId, CarrierCodes.Bosta, purpose: CarrierIntegrationPurpose.ShipmentCreation);
+        Assert.Contains("BOSTA_PICKUP_VERIFICATION_REQUIRED", booking.Blockers);
+        Assert.DoesNotContain("BOSTA_BUSINESS_LOCATION_REQUIRED", checkout.Blockers);
+    }
+
+    [Fact]
+    public async Task VerifiedDefaultRemovesOnlyPickupBlocker_WithoutHttpInsideReadinessOrAccountActivation()
+    {
+        using var cache = new BostaPickupVerificationCache(); await using var fixture = CreateFixture(cache);
+        await fixture.Authority.ValidateAndStoreIntegrationAsync(fixture.TenantId, CarrierCodes.Bosta,
+            CreateUpdate(apiKey: "synthetic-default") with { Configuration = "{}", IsEnabled = false });
+        Assert.True((await fixture.Authority.ValidateResolvedCredentialsAsync(fixture.TenantId, CarrierCodes.Bosta)).Success);
+        var account = new CarrierAccount { Id = Guid.NewGuid(), TenantId = fixture.TenantId, CarrierCode = "bosta",
+            ActiveCredentialReferenceId = Guid.NewGuid(), Environment = CarrierAccountEnvironment.Production, State = CarrierAccountState.Disabled };
+        fixture.Db.CarrierAccounts.Add(account); await fixture.Db.SaveChangesAsync();
+        var resolution = await fixture.Authority.ResolveConnectionCredentialsAsync(fixture.TenantId, "bosta");
+        cache.Observe(fixture.TenantId, resolution.Configuration!.Id, account.Id, account.ActiveCredentialReferenceId, resolution.Credentials!,
+            new(true, [new("SYNTHETIC-DEFAULT", true, "EG", "CITY", "Test city", "DISTRICT", "Test district") { CountryId = "COUNTRY" }], null));
+        var ready = await fixture.Authority.GetIntegrationReadinessAsync(fixture.TenantId, "bosta", purpose: CarrierIntegrationPurpose.ShipmentCreation);
+        Assert.DoesNotContain("BOSTA_PICKUP_VERIFICATION_REQUIRED", ready.Blockers);
+        Assert.Contains("CARRIER_CONFIGURATION_DISABLED", ready.Blockers); Assert.DoesNotContain("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", ready.Blockers);
+        Assert.Contains("BOSTA_PROVIDER_ACCOUNT_ELIGIBILITY_UNVERIFIED", ready.Blockers);
+        Assert.False(ready.CanExecute); Assert.Equal(CarrierAccountState.Disabled, account.State);
+        account.ActiveCredentialReferenceId = Guid.NewGuid(); await fixture.Db.SaveChangesAsync();
+        Assert.Contains("BOSTA_PICKUP_VERIFICATION_REQUIRED", (await fixture.Authority.GetIntegrationReadinessAsync(fixture.TenantId, "bosta", purpose: CarrierIntegrationPurpose.ShipmentCreation)).Blockers);
+    }
+
+    [Fact]
     public async Task CredentialRotation_InvalidatesVersionBoundValidation_UntilCurrentCredentialsValidate()
     {
         await using var fixture = CreateFixture();
@@ -92,12 +130,13 @@ public sealed class CarrierIntegrationAuthorityRemediationTests
             CreateUpdate(apiKey: "credential-b"));
         fixture.Adapter.ValidationException = new TimeoutException("provider timed out");
 
-        await Assert.ThrowsAsync<TimeoutException>(() =>
-            fixture.Authority.ValidateResolvedCredentialsAsync(fixture.TenantId, CarrierCodes.Bosta));
+        var failed = await fixture.Authority.ValidateResolvedCredentialsAsync(fixture.TenantId, CarrierCodes.Bosta);
+        Assert.False(failed.Success);
+        Assert.Equal("CONNECTION_TIMEOUT", failed.ErrorCode);
 
         var persisted = await fixture.Db.CarrierConfigurations.IgnoreQueryFilters().SingleAsync();
-        Assert.Null(persisted.LastValidationSucceeded);
-        Assert.Null(persisted.LastValidatedConfigurationFingerprint);
+        Assert.False(persisted.LastValidationSucceeded);
+        Assert.Equal(persisted.CredentialConfigurationFingerprint, persisted.LastValidatedConfigurationFingerprint);
         Assert.False((await ReadinessAsync(fixture)).CanExecute);
     }
 
@@ -253,11 +292,104 @@ public sealed class CarrierIntegrationAuthorityRemediationTests
         Assert.False(fixture.Capabilities.GetCapability(CarrierCodes.Dhl)!.SupportsWebhooks);
     }
 
+    [Fact]
+    public void DhlCapability_RetainsCurrentPlatformMappingPolicyAndBlocksWebhooks()
+    {
+        using var fixture = CreateFixture();
+
+        var dhl = fixture.Capabilities.GetCapability(CarrierCodes.Dhl)!;
+        Assert.True(dhl.RequiresGeographyMapping); // Platform policy, not a MyDHL wire requirement.
+        Assert.False(dhl.SupportsWebhooks);
+        Assert.True(dhl.CredentialFields.Single(f => f.Target == "ApiKey").IsSecret);
+    }
+
+    [Fact]
+    public void BostaCapability_ExposesOnlySupportedSetupAuthorityFields()
+    {
+        using var fixture = CreateFixture();
+        var bosta = fixture.Capabilities.GetCapability(CarrierCodes.Bosta)!;
+
+        Assert.Equal(
+            new[] { "ApiKey", "WebhookSecret", "ExtraConfig.codCollectionCurrency", "ExtraConfig.businessLocationId" },
+            bosta.CredentialFields.Select(field => field.Target));
+        Assert.True(bosta.CredentialFields.Single(field => field.Target == "ApiKey").Required);
+        Assert.False(bosta.CredentialFields.Single(field => field.Target == "WebhookSecret").Required);
+        Assert.False(bosta.CredentialFields.Single(field => field.Target == "ExtraConfig.codCollectionCurrency").Required);
+        Assert.False(bosta.CredentialFields.Single(field => field.Target == "ExtraConfig.businessLocationId").Required);
+        Assert.False(bosta.RequiresOriginReadiness);
+    }
+
+    [Fact]
+    public async Task NewBostaConfiguration_UsesImplementedCapabilitiesAndRequiresExplicitActivationNotNationalMapping()
+    {
+        await using var fixture = CreateFixture();
+        await fixture.Authority.ValidateAndStoreIntegrationAsync(
+            fixture.TenantId,
+            CarrierCodes.Bosta,
+            CreateUpdate(apiKey: "credential-a", webhookSecret: "webhook-a"));
+        Assert.True((await fixture.Authority.ValidateResolvedCredentialsAsync(fixture.TenantId, CarrierCodes.Bosta)).Success);
+
+        var config = await fixture.Db.CarrierConfigurations.IgnoreQueryFilters().SingleAsync();
+        Assert.True(config.SupportsCod);
+        Assert.True(config.SupportsTracking);
+        Assert.True(config.SupportsWebhooks);
+        Assert.True(config.SupportsCancellation);
+        Assert.False(config.SupportsLabels);
+        Assert.False(config.SupportsQuotes);
+
+        var readiness = await fixture.Authority.GetIntegrationReadinessAsync(
+            fixture.TenantId,
+            CarrierCodes.Bosta,
+            purpose: CarrierIntegrationPurpose.StorefrontAdmission);
+        Assert.False(readiness.CanExecute);
+        Assert.DoesNotContain("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", readiness.Blockers);
+        Assert.Contains("BOSTA_INTEGRATION_ACTIVATION_REQUIRED", readiness.Blockers);
+        Assert.DoesNotContain("CARRIER_CONNECTION_NOT_VERIFIED", readiness.Blockers);
+    }
+
+    [Fact]
+    public async Task AramexReadiness_BlocksStorefrontWithoutPublishedMapping()
+    {
+        await using var fixture = CreateFixture();
+        await fixture.Authority.ValidateAndStoreIntegrationAsync(
+            fixture.TenantId,
+            CarrierCodes.Aramex,
+            CreateAramexUpdate());
+        Assert.True((await fixture.Authority.ValidateResolvedCredentialsAsync(
+            fixture.TenantId,
+            CarrierCodes.Aramex)).Success);
+
+        var readiness = await fixture.Authority.GetIntegrationReadinessAsync(
+            fixture.TenantId,
+            CarrierCodes.Aramex,
+            purpose: CarrierIntegrationPurpose.StorefrontAdmission);
+
+        Assert.False(readiness.CanExecute);
+        Assert.Contains("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", readiness.Blockers);
+        Assert.DoesNotContain("CARRIER_CONNECTION_NOT_VERIFIED", readiness.Blockers);
+    }
+
+    [Fact]
+    public async Task Dhl_LocalCredentialSuccessCannotCertifyRemoteAccountOrEnableCreation()
+    {
+        await using var fixture = CreateFixture();
+        await fixture.Authority.ValidateAndStoreIntegrationAsync(fixture.TenantId, CarrierCodes.Dhl,
+            CreateUpdate(apiKey: "dhl-key") with { ApiSecret = "dhl-secret", AccountId = "123456789", SupportsWebhooks = false });
+        Assert.True((await fixture.Authority.ValidateResolvedCredentialsAsync(fixture.TenantId, CarrierCodes.Dhl)).Success);
+        var readiness = await fixture.Authority.GetIntegrationReadinessAsync(fixture.TenantId, CarrierCodes.Dhl,
+            purpose: CarrierIntegrationPurpose.ExternalRegistration);
+        Assert.False(readiness.CanExecute);
+        Assert.Contains("DHL_REMOTE_ACCOUNT_CERTIFICATION_REQUIRED", readiness.Blockers);
+        var otherTenant = await fixture.Authority.GetIntegrationReadinessAsync(Guid.NewGuid(), CarrierCodes.Dhl,
+            purpose: CarrierIntegrationPurpose.ExternalRegistration);
+        Assert.Contains("CARRIER_CONFIGURATION_MISSING", otherTenant.Blockers);
+    }
+
     private static async Task<CarrierIntegrationReadiness> ReadinessAsync(Fixture fixture) =>
         await fixture.Authority.GetIntegrationReadinessAsync(
             fixture.TenantId,
             CarrierCodes.Bosta,
-            purpose: CarrierIntegrationPurpose.StorefrontAdmission);
+            purpose: CarrierIntegrationPurpose.WebhookTrust);
 
     private static CarrierIntegrationUpdate CreateUpdate(
         string? apiKey = null,
@@ -275,7 +407,7 @@ public sealed class CarrierIntegrationAuthorityRemediationTests
             SupportsTracking: null,
             SupportsWebhooks: true,
             SupportsLabels: null,
-            Configuration: null,
+            Configuration: "{\"codCollectionCurrency\":\"EGP\",\"businessLocationId\":\"business-location-1\"}",
             PickupAddress: null,
             PickupCity: null,
             PickupCountry: null,
@@ -290,7 +422,36 @@ public sealed class CarrierIntegrationAuthorityRemediationTests
             Notes: null,
             WebhookSecret: webhookSecret);
 
-    private static Fixture CreateFixture()
+    private static CarrierIntegrationUpdate CreateAramexUpdate() =>
+        new(
+            DisplayName: "Aramex",
+            IsEnabled: true,
+            IsDefault: null,
+            ApiKey: "sender@example.com",
+            ApiSecret: "password",
+            AccountId: "12345",
+            ApiUrl: null,
+            UseSandbox: true,
+            SupportsCod: true,
+            SupportsTracking: true,
+            SupportsWebhooks: false,
+            SupportsLabels: true,
+            Configuration: "{\"AccountPin\":\"1234\",\"AccountEntity\":\"CAI\",\"AccountCountryCode\":\"EG\"}",
+            PickupAddress: null,
+            PickupCity: null,
+            PickupCountry: null,
+            PickupPhone: null,
+            PickupContactName: null,
+            DefaultServiceLevel: "standard",
+            UseCarrierRates: true,
+            FixedShippingCost: null,
+            MarkupPercentage: null,
+            FreeShippingThreshold: null,
+            SortOrder: null,
+            Notes: null,
+            WebhookSecret: null);
+
+    private static Fixture CreateFixture(BostaPickupVerificationCache? cache = null)
     {
         var tenantId = Guid.NewGuid();
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -309,7 +470,7 @@ public sealed class CarrierIntegrationAuthorityRemediationTests
             registry.Object,
             capabilities,
             encryption,
-            logger);
+            logger, cache);
         return new Fixture(tenantId, db, adapter, capabilities, authority, logger);
     }
 

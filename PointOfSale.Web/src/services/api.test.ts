@@ -55,7 +55,7 @@ describe('admin api client timeout hardening', () => {
         const requestHandlers = (api.interceptors.request as unknown as {
             handlers: Array<{ fulfilled: (config: Record<string, unknown>) => Record<string, unknown> }>
         }).handlers
-        const applyRequestInterceptor = requestHandlers.at(-1)?.fulfilled
+        const applyRequestInterceptor = requestHandlers[requestHandlers.length - 1]?.fulfilled
 
         expect(applyRequestInterceptor).toBeTypeOf('function')
 

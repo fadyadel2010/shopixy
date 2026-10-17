@@ -11,17 +11,18 @@ namespace PointOfSale.API.Services.AI.Router.Adapters;
 public class DeepSeekAdapter : BaseModelAdapter
 {
     private readonly ModelConfig _config;
+    private readonly double _temperature;
     
     public override string ModelId => _config.ModelId;
     public override string DisplayName => "DeepSeek R1";
-    public override int Priority => 1;
+    public override int Priority => _config.Priority;
     public override bool IsEnabled => _config.Enabled && !string.IsNullOrEmpty(_config.ApiKey);
     public override int TimeoutMs => _config.TimeoutSeconds * 1000;
     
     protected override string Endpoint => _config.Endpoint;
     protected override string ApiKey => _config.ApiKey;
     protected override int MaxTokens => _config.MaxTokens;
-    protected override double Temperature => 0.3;
+    protected override double Temperature => _temperature;
     
     public DeepSeekAdapter(
         HttpClient httpClient,
@@ -29,6 +30,7 @@ public class DeepSeekAdapter : BaseModelAdapter
         ILogger<DeepSeekAdapter> logger) 
         : base(httpClient, logger)
     {
+        _temperature = options.Value.Temperature;
         _config = options.Value.Models.GetValueOrDefault("DeepSeek") ?? new ModelConfig
         {
             Enabled = true,
@@ -47,17 +49,18 @@ public class DeepSeekAdapter : BaseModelAdapter
 public class GptOssAdapter : BaseModelAdapter
 {
     private readonly ModelConfig _config;
+    private readonly double _temperature;
     
     public override string ModelId => _config.ModelId;
     public override string DisplayName => "GPT-OSS-120B";
-    public override int Priority => 2;
+    public override int Priority => _config.Priority;
     public override bool IsEnabled => _config.Enabled && !string.IsNullOrEmpty(_config.ApiKey);
     public override int TimeoutMs => _config.TimeoutSeconds * 1000;
     
     protected override string Endpoint => _config.Endpoint;
     protected override string ApiKey => _config.ApiKey;
     protected override int MaxTokens => _config.MaxTokens;
-    protected override double Temperature => 0.3;
+    protected override double Temperature => _temperature;
     
     public GptOssAdapter(
         HttpClient httpClient,
@@ -65,8 +68,10 @@ public class GptOssAdapter : BaseModelAdapter
         ILogger<GptOssAdapter> logger) 
         : base(httpClient, logger)
     {
+        _temperature = options.Value.Temperature;
         _config = options.Value.Models.GetValueOrDefault("GptOss") ?? new ModelConfig
         {
+            Priority = 2,
             Enabled = true,
             ModelId = "huggingfaceh4/zephyr-orpo-141b-a35b-v0.1",
             Endpoint = "https://openrouter.ai/api/v1/chat/completions",
@@ -83,17 +88,18 @@ public class GptOssAdapter : BaseModelAdapter
 public class GemmaAdapter : BaseModelAdapter
 {
     private readonly ModelConfig _config;
+    private readonly double _temperature;
     
     public override string ModelId => _config.ModelId;
     public override string DisplayName => "Gemma 3 4B";
-    public override int Priority => 3;
+    public override int Priority => _config.Priority;
     public override bool IsEnabled => _config.Enabled && !string.IsNullOrEmpty(_config.ApiKey);
     public override int TimeoutMs => _config.TimeoutSeconds * 1000;
     
     protected override string Endpoint => _config.Endpoint;
     protected override string ApiKey => _config.ApiKey;
     protected override int MaxTokens => _config.MaxTokens;
-    protected override double Temperature => 0.3;
+    protected override double Temperature => _temperature;
     
     public GemmaAdapter(
         HttpClient httpClient,
@@ -101,8 +107,10 @@ public class GemmaAdapter : BaseModelAdapter
         ILogger<GemmaAdapter> logger) 
         : base(httpClient, logger)
     {
+        _temperature = options.Value.Temperature;
         _config = options.Value.Models.GetValueOrDefault("Gemma") ?? new ModelConfig
         {
+            Priority = 3,
             Enabled = true,
             ModelId = "google/gemma-3-4b-it",
             Endpoint = "https://openrouter.ai/api/v1/chat/completions",

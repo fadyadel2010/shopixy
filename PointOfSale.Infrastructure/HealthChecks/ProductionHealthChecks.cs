@@ -16,6 +16,7 @@ using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.Identity;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.MongoDB.Configuration;
 using PointOfSale.Infrastructure.Observability;
 using PointOfSale.Infrastructure.Payment;
 using PointOfSale.Infrastructure.Redis.Services;
@@ -45,6 +46,7 @@ public class ProjectionDriftHealthCheck : IHealthCheck
     private readonly ApplicationDbContext _dbContext;
     private readonly IMongoDatabase _mongoDatabase;
     private readonly ILogger<ProjectionDriftHealthCheck> _logger;
+    private readonly string _productsCollectionName;
     
     // Maximum acceptable difference before degraded status
     private const int DegradedThreshold = 10;
@@ -54,64 +56,35 @@ public class ProjectionDriftHealthCheck : IHealthCheck
     public ProjectionDriftHealthCheck(
         ApplicationDbContext dbContext,
         IMongoDatabase mongoDatabase,
-        ILogger<ProjectionDriftHealthCheck> logger)
+        ILogger<ProjectionDriftHealthCheck> logger,
+        IOptions<MongoDbSettings>? mongoSettings = null)
     {
         _dbContext = dbContext;
         _mongoDatabase = mongoDatabase;
         _logger = logger;
+        _productsCollectionName = (mongoSettings?.Value ?? new MongoDbSettings()).ProductsCollectionName;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(DependencyTimeout);
 
-            // This is a global readiness check, so it must not inherit the
-            // request-scoped tenant query filter. Deleted SQL rows are excluded
-            // because the storefront projection removes them from this collection.
-            var currentSqlProducts = _dbContext.Products
-                .IgnoreQueryFilters()
-                .AsNoTracking();
-            var sqlProducts = await currentSqlProducts
-                .Where(product => !product.IsDeleted)
-                .Select(product => new
-                {
-                    product.Id,
-                    product.TenantId
-                })
-                .ToListAsync(timeoutCts.Token);
-            var currentTenantIds = await currentSqlProducts
-                .Select(product => product.TenantId)
-                .Distinct()
-                .ToListAsync(timeoutCts.Token);
-
-            var pgProductCount = 0;
-            foreach (var tenantProducts in sqlProducts.GroupBy(product => product.TenantId))
-            {
-                var candidates = tenantProducts
-                    .Select(product => new ProductDocument
-                    {
-                        TenantId = product.TenantId,
-                        ProductId = product.Id
-                    })
-                    .ToList();
-                var projections = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
-                    _dbContext,
-                    candidates,
-                    tenantProducts.Key,
-                    timeoutCts.Token);
-                pgProductCount += projections.Count(product =>
-                    product is { IsActive: true, IsOnlineVisible: true });
-            }
+            // Observe SQL-owned identities globally; never inherit a request tenant
+            // or reconstruct full catalog payloads on the five-second health path.
+            var snapshot = await ProductProjectionHealthSnapshotReader.ReadAsync(_dbContext, timeoutCts.Token);
+            var currentTenantIds = snapshot.SqlTenantIds;
+            var pgProductCount = snapshot.VisibleProducts.Count;
             
             // This Mongo database can be shared with historical/development tenants that
             // are intentionally absent from the current SQL database. Compare only the
             // current SQL tenant scope, while reporting foreign documents separately.
-            var mongoProducts = _mongoDatabase.GetCollection<ProductDocument>("products");
+            var mongoProducts = _mongoDatabase.GetCollection<ProductDocument>(_productsCollectionName);
             var mongoTotalProductCount = await mongoProducts.CountDocumentsAsync(
                 FilterDefinition<ProductDocument>.Empty, 
                 cancellationToken: timeoutCts.Token);
@@ -125,12 +98,23 @@ public class ProjectionDriftHealthCheck : IHealthCheck
                 currentTenantFilter,
                 Builders<ProductDocument>.Filter.Eq(product => product.IsActive, true),
                 Builders<ProductDocument>.Filter.Eq(product => product.IsOnlineVisible, true));
-            var mongoProductCount = await mongoProducts.CountDocumentsAsync(
-                mongoVisibleFilter,
-                cancellationToken: timeoutCts.Token);
+            using var cursor = await mongoProducts.FindAsync(mongoVisibleFilter,
+                new FindOptions<ProductDocument, ProductDocument>
+                {
+                    Projection = Builders<ProductDocument>.Projection.Expression(p => new ProductDocument { TenantId = p.TenantId, ProductId = p.ProductId }),
+                    BatchSize = 1000
+                }, timeoutCts.Token);
+            var visibleDocuments = await cursor.ToListAsync(timeoutCts.Token);
+            var mongoProductCount = (long)visibleDocuments.Count;
             var foreignTenantDocumentCount = Math.Max(0, mongoTotalProductCount - mongoCurrentTenantTotalCount);
 
-            var drift = Math.Abs(pgProductCount - mongoProductCount);
+            var observedIdentities = visibleDocuments.Select(p => new ProductProjectionIdentity(p.TenantId, p.ProductId)).ToHashSet();
+            var missingProducts = snapshot.VisibleProducts.Except(observedIdentities).Count();
+            var unexpectedProducts = observedIdentities.Except(snapshot.VisibleProducts).Count();
+            var duplicateIdentities = visibleDocuments.Count - observedIdentities.Count;
+            // Equal global counts can hide missing/extra products in the same tenant
+            // or cancel opposite drift across tenants. Compare the actual pair key.
+            var drift = (long)missingProducts + unexpectedProducts + duplicateIdentities;
             var driftDirection = mongoProductCount > pgProductCount
                 ? "MongoDBAhead"
                 : pgProductCount > mongoProductCount
@@ -140,14 +124,21 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             var data = new Dictionary<string, object>
             {
                 ["PostgreSQLCount"] = pgProductCount,
-                ["PostgreSQLSourceCount"] = sqlProducts.Count,
+                ["PostgreSQLSourceCount"] = snapshot.SourceProductCount,
                 ["MongoDBCount"] = mongoProductCount,
                 ["MongoDBCurrentTenantTotalCount"] = mongoCurrentTenantTotalCount,
                 ["MongoDBTotalCount"] = mongoTotalProductCount,
                 ["ForeignTenantDocumentCount"] = foreignTenantDocumentCount,
                 ["Drift"] = drift,
-                ["Direction"] = driftDirection
+                ["Direction"] = driftDirection,
+                ["MissingProductCount"] = missingProducts,
+                ["UnexpectedProductCount"] = unexpectedProducts,
+                ["DuplicateIdentityCount"] = duplicateIdentities,
+                ["SqlTenantCount"] = currentTenantIds.Count
             };
+
+            if (duplicateIdentities > 0)
+                return HealthCheckResult.Unhealthy("Duplicate tenant/product projection identities detected.", data: data);
 
             if (drift >= UnhealthyThreshold)
             {
@@ -194,13 +185,17 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             if (foreignTenantDocumentCount > 0)
             {
                 return HealthCheckResult.Degraded(
-                    $"Current SQL tenant projection scope is aligned within threshold; {foreignTenantDocumentCount} foreign-tenant MongoDB documents are isolated and preserved.",
+                    $"Current SQL tenant projection identities are aligned within threshold; {foreignTenantDocumentCount} foreign-tenant MongoDB documents lack current SQL tenant authority and are preserved.",
                     data: data);
             }
 
             return HealthCheckResult.Healthy(
                 $"Projections synced within tolerance (drift: {drift})",
                 data);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -213,7 +208,8 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             _logger.LogError(ex, "Projection drift health check failed");
             return HealthCheckResult.Unhealthy(
                 "Failed to check projection drift",
-                exception: ex);
+                exception: ex,
+                data: new Dictionary<string, object> { ["FailureCategory"] = ex is OperationCanceledException or TimeoutException ? "dependency-timeout" : "dependency-failure" });
         }
     }
 }
@@ -1302,6 +1298,7 @@ public class RedisLatencyHealthCheck : IHealthCheck
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!_connectionFactory.IsEnabled)
         {
             return HealthCheckResult.Degraded(
@@ -1311,34 +1308,28 @@ public class RedisLatencyHealthCheck : IHealthCheck
 
         try
         {
-            var database = _connectionFactory.GetDatabase();
-            if (database == null)
+            var latency = await _connectionFactory.ProbeLatencyAsync(cancellationToken);
+            if (latency == null)
             {
-                return HealthCheckResult.Degraded(
+                return HealthCheckResult.Unhealthy(
                     "Redis unavailable",
                     data: new Dictionary<string, object>
                     {
                         ["Enabled"] = true,
-                        ["IsConnected"] = _connectionFactory.IsConnected
+                        ["IsConnected"] = _connectionFactory.IsConnected,
+                        ["FailureCategory"] = "unavailable"
                     });
             }
 
-            var testKey = $"health_check:{Guid.NewGuid():N}";
-            
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            
-            // Write-read-delete cycle
-            await database.StringSetAsync(testKey, "health_check", TimeSpan.FromSeconds(10));
-            var value = await database.StringGetAsync(testKey);
-            await database.KeyDeleteAsync(testKey);
-            
-            stopwatch.Stop();
-            var latencyMs = stopwatch.ElapsedMilliseconds;
+            // A latency sample is one round trip, not the sum of three sequential
+            // cache mutations. Failed/timed-out PING is never a successful sample.
+            var latencyMs = latency.Value.TotalMilliseconds;
 
             var data = new Dictionary<string, object>
             {
                 ["LatencyMs"] = latencyMs,
-                ["IsConnected"] = _connectionFactory.IsConnected
+                ["IsConnected"] = _connectionFactory.IsConnected,
+                ["Probe"] = "PING"
             };
 
             if (latencyMs >= UnhealthyThresholdMs)
@@ -1367,12 +1358,17 @@ public class RedisLatencyHealthCheck : IHealthCheck
                 $"Redis healthy (latency: {latencyMs}ms)",
                 data);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Redis latency health check failed");
-            return HealthCheckResult.Degraded(
+            return HealthCheckResult.Unhealthy(
                 "Redis unavailable",
-                exception: ex);
+                exception: ex,
+                data: new Dictionary<string, object> { ["Probe"] = "PING", ["FailureCategory"] = ex is TimeoutException ? "timeout" : "command-failure" });
         }
     }
 }

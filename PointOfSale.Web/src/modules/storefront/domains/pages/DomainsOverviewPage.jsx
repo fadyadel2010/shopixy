@@ -21,11 +21,11 @@ import {
     useAuthoringGuard,
 } from '../../authoringPlatform'
 
-import { useDomainDashboard, LOAD_STATES } from '../hooks'
+import { useDomainDashboard } from '../hooks'
 
 export function DomainsOverviewPage() {
     const { t } = useTranslation()
-    const { data, state, error, isSuccess, isLoading, isEmpty, isError, isUnauthorized, refetch } =
+    const { data, error, isLoading, isEmpty, isError, isUnauthorized, refetch } =
         useDomainDashboard()
 
     const { requestNavigation } = useAuthoringGuard({
@@ -99,12 +99,12 @@ export function DomainsOverviewPage() {
         <div className="space-y-4">
             <AuthoringFeedback
                 kind="info"
-                title={t('storefront.domains.summaryHeader', 'You have {{count}} domains connected', {
+                title={t('storefront.domains.savedSummary', 'You have {{count}} saved domains', {
                     count: summary.totalDomains,
                 })}
                 message={t(
-                    'storefront.domains.summarySubtext',
-                    'Manage your custom domains, DNS verification, SSL certificates, and redirects.',
+                    'storefront.domains.connectionEvidenceNotice',
+                    'Saving a domain does not prove DNS, TLS, or edge routing. Review verification and SSL evidence for each domain.',
                 )}
             />
 
@@ -124,7 +124,7 @@ export function DomainsOverviewPage() {
                                 {primaryDomain.hostName}
                             </p>
                             <div className="mt-2 flex items-center gap-2">
-                                <AuthoringStatusBadge state="live">
+                                <AuthoringStatusBadge state="published">
                                     {t('storefront.domains.primary', 'Primary')}
                                 </AuthoringStatusBadge>
                             </div>
@@ -166,7 +166,7 @@ export function DomainsOverviewPage() {
                         <Shield size={20} className="text-amber-600 dark:text-amber-400" />
                     </div>
                     <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                        {t('storefront.domains.sslHealth', 'SSL Health')}
+                        {t('storefront.domains.expiringCertificates', 'Certificates expiring')}
                     </h3>
                     <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-gray-100">
                         {summary.sslExpiringSoon}
@@ -197,15 +197,15 @@ export function DomainsOverviewPage() {
                         />
                         <AuthoringButton
                             action={{
-                                label: t('storefront.domains.renewSsl', 'Renew SSL'),
-                                onClick: () => {},
+                                label: t('storefront.domains.reviewSsl', 'Review SSL'),
+                                onClick: () => handleNavigate(primaryDomain?.id ? `/storefront/domains/${primaryDomain.id}/ssl` : '/storefront/domains/list'),
                             }}
-                            defaultLabel={t('storefront.domains.renewSsl', 'Renew SSL')}
+                            defaultLabel={t('storefront.domains.reviewSsl', 'Review SSL')}
                         />
                         <AuthoringButton
                             action={{
                                 label: t('storefront.domains.manageRedirects', 'Manage Redirects'),
-                                onClick: () => {},
+                                onClick: () => handleNavigate('/storefront/domains/list'),
                             }}
                             defaultLabel={t('storefront.domains.manageRedirects', 'Manage Redirects')}
                         />

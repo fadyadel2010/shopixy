@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, Truck, DollarSign, Clock, AlertCircle } from 'lucide-react'
-import { getCarrierInfo, PRICING_STRATEGIES } from '../hooks/useShippingSetupApi'
+import { getCarrierInfo } from '../hooks/useShippingSetupApi'
 
 export default function ShippingOptionFormModal({
     isOpen,

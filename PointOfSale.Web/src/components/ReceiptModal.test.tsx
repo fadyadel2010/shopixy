@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import ReceiptModal from './ReceiptModal'
 
 // Mock dependencies
@@ -50,7 +49,7 @@ const mockReceiptData = {
 
 describe('ReceiptModal print resilience', () => {
     let originalPrint: typeof window.print
-    let printMock: ReturnType<typeof vi.fn>
+    let printMock: ReturnType<typeof vi.fn<() => void | Promise<void>>>
 
     beforeEach(() => {
         originalPrint = window.print
@@ -107,7 +106,7 @@ describe('ReceiptModal print resilience', () => {
         const onClose = vi.fn()
 
         // Simulate window.print not being a function
-        window.print = undefined as any
+        Object.defineProperty(window, 'print', { configurable: true, writable: true, value: undefined })
 
         render(<ReceiptModal receiptData={mockReceiptData} onClose={onClose} />)
 

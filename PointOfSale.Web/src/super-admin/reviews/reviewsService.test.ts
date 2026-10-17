@@ -35,7 +35,7 @@ describe('reviewsService', () => {
             totalPages: 1,
         }
 
-        mockedGet.mockResolvedValue({ data: expectedPage })
+        mockedGet.mockResolvedValue({ success: true, data: expectedPage })
 
         const result = await getSuperAdminReviews({
             page: 2,
@@ -52,7 +52,7 @@ describe('reviewsService', () => {
     it('loads review details by id', async () => {
         const expectedDetails = createReviewDetails()
 
-        mockedGet.mockResolvedValue({ data: expectedDetails })
+        mockedGet.mockResolvedValue({ success: true, data: expectedDetails })
 
         const result = await getSuperAdminReviewDetails(expectedDetails.id)
 
@@ -63,7 +63,7 @@ describe('reviewsService', () => {
     it('approves a review with a trimmed moderation reason', async () => {
         const expectedDetails = createReviewDetails()
 
-        mockedPost.mockResolvedValue({ data: expectedDetails })
+        mockedPost.mockResolvedValue({ success: true, data: expectedDetails })
 
         const result = await approveSuperAdminReview(expectedDetails.id, '  Looks legitimate  ')
 
@@ -76,7 +76,7 @@ describe('reviewsService', () => {
     it('rejects a review without sending an empty reason payload value', async () => {
         const expectedDetails = createReviewDetails()
 
-        mockedPost.mockResolvedValue({ data: expectedDetails })
+        mockedPost.mockResolvedValue({ success: true, data: expectedDetails })
 
         const result = await rejectSuperAdminReview(expectedDetails.id, '   ')
 

@@ -325,7 +325,7 @@ describe('Frontend UX Architecture Invariants', () => {
       });
 
       // Assert that direct axios calls include timeout configuration
-      filesWithDirectAxios.forEach(({ file, matches }) => {
+      filesWithDirectAxios.forEach(({ file }) => {
         const content = readFile(file);
         
         // Extract all direct axios call sites from the content

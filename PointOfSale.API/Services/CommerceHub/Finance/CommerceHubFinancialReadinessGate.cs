@@ -691,6 +691,26 @@ public sealed class CommerceHubFinancialReadinessGate : ICommerceHubFinancialRea
 
         if (unresolvedRefund == null)
         {
+            // Completed does not prove external finality. Check the original
+            // refund authority now, rather than waiting for the hourly report.
+            // Manual payouts of online purchases use operator-attested execution
+            // evidence; never promote a bare manual-confirmed flag to provider proof.
+            var successfulStatuses = new[] { "confirmed", "succeeded", "success", "completed", "complete", "refunded" };
+            var completedCandidates = await _dbContext.CommerceHubRefunds.IgnoreQueryFilters().AsNoTracking()
+                .Include(refund => refund.Payment)
+                .Where(refund => refund.TenantId == tenantId && !refund.IsDeleted && refund.Status == CommerceHubRefundStatus.Completed &&
+                    refund.Payment != null && (refund.Payment.Provider == PaymentProvider.Stripe || refund.Payment.Provider == PaymentProvider.Paymob) &&
+                    (refund.Reference == null || refund.Reference.Trim() == "" || refund.GatewayStatus == null ||
+                        !successfulStatuses.Contains(refund.GatewayStatus.ToLower())))
+                .OrderBy(refund => refund.Id).ToListAsync(cancellationToken);
+            foreach (var completed in completedCandidates)
+            {
+                if (await RefundCompletionEvidenceAuthority.HasManualPayoutEvidenceAsync(_dbContext, completed, completed.Payment!, cancellationToken)) continue;
+                _logger.LogError("Blocking CommerceHub money movement: completed refund has no qualified completion authority | Operation: {Operation} | TenantId: {TenantId} | RefundId: {RefundId}",
+                    operationName, tenantId, completed.Id);
+                throw new CommerceHubCheckoutException("EXTERNAL_REFUND_RECONCILIATION_REQUIRED",
+                    "Completed refunds require provider confirmation or qualified operator-attested manual payout evidence before further money movement.", StatusCodes.Status409Conflict);
+            }
             return;
         }
 

@@ -38,8 +38,9 @@ public sealed class ShippingMethodOwnershipAuthorityCertificationTests
 
         Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", service, StringComparison.Ordinal);
         Assert.Contains("ShipmentShippingMethodMismatchException", service, StringComparison.Ordinal);
-        Assert.Contains("sm.Id == shippingMethodId", service, StringComparison.Ordinal);
-        Assert.Contains("sm.TenantId == tenantId", service, StringComparison.Ordinal);
+        Assert.Contains("LoadOrderForShipmentMutationAsync(tenantId, orderId", service, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", service, StringComparison.Ordinal);
+        Assert.Contains("ShippingMethodId = shippingMethodId", service, StringComparison.Ordinal);
         Assert.Contains("catch (ShipmentShippingMethodMismatchException ex)", controller, StringComparison.Ordinal);
         Assert.Contains("return Conflict", controller, StringComparison.Ordinal);
     }

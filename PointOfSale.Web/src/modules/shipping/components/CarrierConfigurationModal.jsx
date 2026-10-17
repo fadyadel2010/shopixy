@@ -19,7 +19,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-    X, Eye, EyeOff, Check, AlertCircle, RefreshCw,
+    X, Eye, EyeOff, Check, AlertCircle,
     Shield, TestTube, Save, ToggleLeft, ToggleRight, Loader2
 } from 'lucide-react'
 import api from '../../../services/api'

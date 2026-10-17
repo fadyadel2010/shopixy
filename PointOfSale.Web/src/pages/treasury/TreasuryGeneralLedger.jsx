@@ -6,68 +6,94 @@
  * Shows transaction history for a specific account.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useToast } from '../../components/Toast'
 import ReportTruthBadge from '../../components/ReportTruthBadge'
 import * as finApi from '../../services/financialReportsApi'
+import { isRequestCanceled } from '../../services/api'
 import { useRTL } from '../../hooks/useRTL'
 import { formatDate, formatDateInputValue, formatDateTime, parseDateInput } from '../../utils/dateFormat'
 
 export default function TreasuryGeneralLedger() {
     const { t } = useTranslation()
     const navigate = useNavigate()
-    const [searchParams] = useSearchParams()
-    const { showError, showSuccess } = useToast()
+    const [searchParams, setSearchParams] = useSearchParams()
+    const { showSuccess } = useToast()
     const { formatCurrency } = useSettings()
     const { dir, locale } = useRTL()
 
-    const [loading, setLoading] = useState(true)
+    const [loading, setLoading] = useState(false)
+    const [accountsLoading, setAccountsLoading] = useState(true)
+    const [accountsError, setAccountsError] = useState(false)
+    const [ledgerError, setLedgerError] = useState(false)
+    const [retry, setRetry] = useState(0)
     const [accounts, setAccounts] = useState([])
-    const [selectedAccountId, setSelectedAccountId] = useState(searchParams.get('accountId') || '')
+    const selectedAccountId = searchParams.get('accountId') || ''
     const [report, setReport] = useState(null)
-    const [dateRange, setDateRange] = useState(() => finApi.getDefaultDateRange())
+    const [defaultDateRange] = useState(() => finApi.getDefaultDateRange())
+    const fromParam = searchParams.get('from')
+    const toParam = searchParams.get('to')
+    const dateRange = useMemo(() => ({
+        from: parseDateInput(fromParam) || defaultDateRange.from,
+        to: parseDateInput(toParam) || defaultDateRange.to,
+    }), [fromParam, toParam, defaultDateRange])
 
-    // Load accounts list on mount
+    // Account discovery must not depend on activity in the selected period.
     useEffect(() => {
-        loadAccounts()
-    }, [])
+        const controller = new AbortController()
+        setAccountsLoading(true)
+        setAccountsError(false)
+        finApi.getAccountSummaries({ signal: controller.signal })
+            .then(data => {
+                if (!controller.signal.aborted) setAccounts(data || [])
+            })
+            .catch(error => {
+                if (controller.signal.aborted || isRequestCanceled(error)) return
+                console.error('Failed to load ledger accounts:', error)
+                setAccounts([])
+                setAccountsError(true)
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setAccountsLoading(false)
+            })
+        return () => controller.abort()
+    }, [retry])
 
-    // Load ledger when account or date changes
+    // Cancel obsolete reads; never display a previous account's report on failure.
     useEffect(() => {
-        if (selectedAccountId) {
-            loadLedger()
-        }
-    }, [selectedAccountId, dateRange])
+        const controller = new AbortController()
+        setReport(null)
+        setLedgerError(false)
+        setLoading(Boolean(selectedAccountId))
+        if (!selectedAccountId) return () => controller.abort()
+        finApi.getGeneralLedger(selectedAccountId, dateRange.from, dateRange.to, { signal: controller.signal })
+            .then(data => {
+                if (!controller.signal.aborted) setReport(data)
+            })
+            .catch(error => {
+                if (controller.signal.aborted || isRequestCanceled(error)) return
+                console.error('Failed to load general ledger:', error)
+                setLedgerError(true)
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setLoading(false)
+            })
+        return () => controller.abort()
+    }, [selectedAccountId, dateRange, retry])
 
-    const loadAccounts = async () => {
-        try {
-            // Get trial balance to extract account list
-            const tb = await finApi.getTrialBalance(dateRange.from, dateRange.to)
-            setAccounts(tb.lines || [])
-
-            // If we have an account ID from URL, select it
-            if (searchParams.get('accountId') && !selectedAccountId) {
-                setSelectedAccountId(searchParams.get('accountId'))
-            }
-        } catch (error) {
-            console.error('Failed to load accounts:', error)
+    const updateFilters = (changes) => {
+        const next = new URLSearchParams(searchParams)
+        const values = {
+            accountId: selectedAccountId,
+            from: formatDateInputValue(dateRange.from),
+            to: formatDateInputValue(dateRange.to),
+            ...changes,
         }
-    }
-
-    const loadLedger = async () => {
-        try {
-            setLoading(true)
-            const data = await finApi.getGeneralLedger(selectedAccountId, dateRange.from, dateRange.to)
-            setReport(data)
-        } catch (error) {
-            console.error('Failed to load general ledger:', error)
-            showError(t('treasury.loadError', 'Failed to load report'))
-        } finally {
-            setLoading(false)
-        }
+        Object.entries(values).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key))
+        setSearchParams(next, { replace: true })
     }
 
     const exportToExcel = () => {
@@ -157,7 +183,7 @@ export default function TreasuryGeneralLedger() {
             {/* Complete history across all ledger accounts. */}
             <div className="p-4 rounded-lg bg-slate-50 border border-slate-200" role="note">
                 <p className="text-sm text-slate-700">
-                    {t('treasury.generalLedgerPerimeter', 'All ledger accounts and complete history are shown here, including clearing, supplier-card assets, account 1020, control accounts, reserves, and other non-cash accounts. Report inclusion grants no transfer or settlement authority.')}
+                    {t('treasury.generalLedgerPerimeter', 'Choose from all ledger accounts, including clearing and non-cash accounts. Entries are shown for the selected account and date range; earlier activity is included in the opening balance. Report inclusion grants no transfer or settlement authority.')}
                 </p>
             </div>
 
@@ -183,7 +209,8 @@ export default function TreasuryGeneralLedger() {
                     <select
                         id="treasury-general-ledger-account"
                         value={selectedAccountId}
-                        onChange={(e) => setSelectedAccountId(e.target.value)}
+                        onChange={(e) => updateFilters({ accountId: e.target.value })}
+                        disabled={accountsLoading || accountsError}
                         className="input min-w-0 basis-full sm:min-w-[250px] sm:basis-auto"
                     >
                         <option value="">{t('treasury.selectAccount', 'Select an account...')}</option>
@@ -200,7 +227,7 @@ export default function TreasuryGeneralLedger() {
                         value={formatDateInputValue(dateRange.from)}
                         onChange={(e) => {
                             const date = parseDateInput(e.target.value)
-                            if (date) setDateRange(prev => ({ ...prev, from: date }))
+                            if (date) updateFilters({ from: formatDateInputValue(date) })
                         }}
                         className="input min-w-0 flex-1 md:flex-none"
                     />
@@ -211,7 +238,7 @@ export default function TreasuryGeneralLedger() {
                         value={formatDateInputValue(dateRange.to)}
                         onChange={(e) => {
                             const date = parseDateInput(e.target.value)
-                            if (date) setDateRange(prev => ({ ...prev, to: date }))
+                            if (date) updateFilters({ to: formatDateInputValue(date) })
                         }}
                         className="input min-w-0 flex-1 md:flex-none"
                     />
@@ -225,7 +252,18 @@ export default function TreasuryGeneralLedger() {
                 </div>
             </div>
 
-            {!selectedAccountId ? (
+            {(accountsError || ledgerError) && (
+                <div className="card bg-red-50 text-red-800" role="alert">
+                    <p>{t('treasury.loadError', 'Failed to load report')}</p>
+                    <button type="button" onClick={() => setRetry(value => value + 1)} className="btn-secondary mt-3">
+                        {t('treasury.retry', 'Retry')}
+                    </button>
+                </div>
+            )}
+
+            {accountsLoading && !selectedAccountId ? (
+                <p role="status">{t('common.loading')}</p>
+            ) : !selectedAccountId && !accountsError ? (
                 <div className="card flex flex-col items-center justify-center py-16">
                     <span className="text-6xl mb-4" aria-hidden="true">📖</span>
                     <h3 className="text-xl font-semibold text-gray-700 mb-2">
@@ -242,7 +280,7 @@ export default function TreasuryGeneralLedger() {
                         <p className="mt-4 text-gray-600" role="status">{t('common.loading')}</p>
                     </div>
                 </div>
-            ) : (
+            ) : report && !ledgerError ? (
                 <>
                     {/* Account Header */}
                     <div className="card bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200">
@@ -252,7 +290,7 @@ export default function TreasuryGeneralLedger() {
                                 <h3 className="text-xl font-bold text-blue-900">{report?.accountName}</h3>
                             </div>
                             <div className="text-end">
-                                <p className="text-sm text-gray-500">{t('treasury.currentBalance', 'Current Balance')}</p>
+                                <p className="text-sm text-gray-500">{t('treasury.closingBalance', 'Closing Balance')}</p>
                                 <p className="text-2xl font-bold text-blue-900">
                                     {formatCurrency(report?.closingBalance || 0)}
                                 </p>
@@ -385,7 +423,7 @@ export default function TreasuryGeneralLedger() {
                         )}
                     </div>
                 </>
-            )}
+            ) : null}
 
             {/* Footer */}
             <div className="text-center py-4 text-sm text-gray-500">

@@ -76,11 +76,12 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
         Assert.Contains("Shipping method response contained invalid currency evidence.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Shipping method response contained invalid ETA evidence.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const admittedResponse = admitStorefrontShippingMethods(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedResponse = admitStorefrontShippingMethodsPreview(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedSelection = admitStorefrontShippingMethodSelection(response.data);", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: state.shippingMethodId", checkoutStore, StringComparison.Ordinal);
         Assert.DoesNotContain("shippingMethods: state.shippingMethods", checkoutStore, StringComparison.Ordinal);
 
-        Assert.Contains("onSelect={() => setShippingMethod(method.id)}", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("onSelect={() => { void setShippingMethod(method.id).catch(() => undefined); }}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("price={method.price}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("shippingMethod.name", reviewStep, StringComparison.Ordinal);
         Assert.Contains("pricing.shipping > 0 ? formatMoney(pricing.shipping, currency) : 'Free'", reviewStep, StringComparison.Ordinal);
@@ -90,17 +91,8 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
     public void ShippingMethodReadAuthorityDocumentation_MustBeFrozen()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/admin-shipping-method-read-authority-certification-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = CertificationSource.ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = CertificationSource.ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         Assert.Contains("PASS SF-SHIP.READ Shipping Method Read Authority Certification", findings, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-SHIP.READ Shipping Method Read Authority Certification", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-SHIP.READ Shipping Method Read Authority Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-SHIP.READ", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-SHIP.READ Shipping Method Read Authority Hardening", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-SHIP.READ Shipping Method Read Authority Freeze", codexRules, StringComparison.Ordinal);
+        HistoricalShippingCertificationBoundary.AssertPriorClosureConditional();
     }
 }

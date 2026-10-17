@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useFormatting } from '../../hooks/useFormatting';
+import type { PresentationFormatting } from '../presentationFormatting';
 
-interface SearchBarProps {
+interface SearchBarProps extends Pick<PresentationFormatting, 'dir' | 'isRTL'> {
   onSearch: (query: string) => void;
 }
 
@@ -10,9 +10,8 @@ interface SearchBarProps {
  * SearchBar - Simple search input.
  * NO client-side filtering.
  */
-export function SearchBar({ onSearch }: SearchBarProps) {
+export function SearchBar({ onSearch, dir, isRTL }: SearchBarProps) {
   const { t } = useTranslation();
-  const { dir, isRTL } = useFormatting();
   const [query, setQuery] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {

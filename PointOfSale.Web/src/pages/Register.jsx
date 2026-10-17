@@ -4,15 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../store/authStore'
 import { requirePosVendorSessionUserAuthority } from '../auth/posVendorSessionAuthority'
 import api from '../services/api'
-
-export const normalizeStoreSlug = (value) => value.trim().toLowerCase()
-
-export const isStoreSlugFormatValid = (value) => (
-    value.length >= 3
-    && value.length <= 63
-    && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value)
-    && !value.includes('--')
-)
+import { normalizeStoreSlug, isStoreSlugFormatValid } from './storeSlug'
 
 /**
  * Tenant Registration Page

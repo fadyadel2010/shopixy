@@ -136,7 +136,7 @@ export default function ValidationDeleteModal({
         return () => {
             isCurrent = false
         }
-    }, [isOpen, entityId, entityType, expectedVersion, language])
+    }, [isOpen, entityId, entityType, expectedVersion, language, t])
 
     useEffect(() => {
         if (!isOpen || loading) return undefined

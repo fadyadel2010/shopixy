@@ -10,10 +10,10 @@ import { useTranslation } from '@/i18n';
 import { useAuth } from '../hooks/useAuth';
 import { AuthErrorRenderer } from './AuthErrorRenderer';
 import { SocialLoginButtons } from './SocialLoginButtons';
-import type { OnlineCustomer } from '../types';
+import type { AuthResponse } from '../types';
 
 interface RegisterFormProps {
-    onSuccess?: (customer?: OnlineCustomer) => void;
+    onSuccess?: (result?: AuthResponse) => void;
     onLoginClick?: () => void;
     className?: string;
 }
@@ -135,13 +135,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         if (!validateForm()) return;
 
         try {
-            const customer = await register({
+            const result = await register({
                 displayName: formData.displayName.trim(),
                 email: formData.email.trim().toLowerCase(),
                 password: formData.password,
                 phone: formData.phone.trim() || undefined,
             });
-            onSuccess?.(customer);
+            onSuccess?.(result);
         } catch {
             // Error is handled by useAuth
         }

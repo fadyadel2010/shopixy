@@ -2,7 +2,6 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import api, { getSafeApiErrorMessage } from '../services/api'
 import { useTranslation } from 'react-i18next'
-import { useSettings } from '../contexts/SettingsContext'
 import ProductMediaManager from '../components/ProductMediaManager'
 import ProductVariantsTab from '../components/ProductVariantsTab'
 import ProductPixelOverrideTab from '../components/ProductPixelOverrideTab'
@@ -13,6 +12,7 @@ import { useToast } from '../components/Toast'
 import { normalizeProductAuthoringVariants } from '../utils/productAuthoringVariants'
 import { normalizePublishStatus } from '../utils/productStatus'
 import { normalizeSkuPart, productSkuBase } from './productSku'
+import { containsNonAscii } from '../security/textCharacterPolicy'
 
 function isSkuConflict(error) {
     const data = error?.response?.data
@@ -603,7 +603,6 @@ const ProductForm = forwardRef(function ProductForm({
 }, ref) {
     const { t } = useTranslation()
     const { confirm } = useConfirmDialog()
-    const { formatCurrency } = useSettings()
     const { showError, showSuccess } = useToast()
     const [loading, setLoading] = useState(false)
     const variantsTabRef = useRef(null)
@@ -1432,7 +1431,7 @@ const ProductForm = forwardRef(function ProductForm({
     }
 
     const handleGenerateSimpleSku = () => {
-        const nameSku = /[^\x00-\x7F]/.test(formData.name)
+        const nameSku = containsNonAscii(formData.name)
             ? '' : normalizeSkuPart(formData.name).toUpperCase()
         setSimpleProductData(prev => ({
             ...prev,

@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
-import { DollarSign, TrendingUp, CheckCircle2, ArrowRight } from 'lucide-react'
+import { DollarSign } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 
 const fadeUp = {

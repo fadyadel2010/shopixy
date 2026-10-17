@@ -319,6 +319,13 @@ public sealed class PreventEntityExposureFilter : IAsyncResultFilter
 
     private static bool IsEntityType(Type type)
     {
+        // Domain enums are scalar DTO values, not entity payloads, even when
+        // declared alongside entities (for example GeographicAuditActorKind).
+        if (type.IsEnum)
+        {
+            return false;
+        }
+
         if (type.Namespace?.StartsWith("PointOfSale.Core.Entities", StringComparison.Ordinal) == true)
         {
             return true;

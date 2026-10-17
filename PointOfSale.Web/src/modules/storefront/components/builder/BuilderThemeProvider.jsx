@@ -4,8 +4,6 @@ import { clearResolvedTenant, getTenantId, isTenantResolved, setResolvedTenant }
 import { useStoreConfigStore } from '@/store/storeConfigStore'
 import { normalizeStoreConfig } from './normalizeStoreConfig'
 
-export { normalizeStoreConfig }
-
 export function BuilderThemeProvider({ tenantId, storeConfig, children }) {
     const setConfig = useStoreConfigStore((state) => state.setConfig)
     const normalizedConfig = useMemo(() => normalizeStoreConfig(storeConfig), [storeConfig])
@@ -14,6 +12,8 @@ export function BuilderThemeProvider({ tenantId, storeConfig, children }) {
     const [isReady, setIsReady] = useState(false)
 
     useLayoutEffect(() => {
+        const previousConfig = previousConfigRef.current
+        const previousTenant = previousTenantRef.current
         if (!storeConfig) {
             setIsReady(false)
             return
@@ -36,9 +36,9 @@ export function BuilderThemeProvider({ tenantId, storeConfig, children }) {
         setIsReady(true)
 
         return () => {
-            setConfig(previousConfigRef.current)
-            if (previousTenantRef.current) {
-                setResolvedTenant(previousTenantRef.current, { overwrite: true })
+            setConfig(previousConfig)
+            if (previousTenant) {
+                setResolvedTenant(previousTenant, { overwrite: true })
             } else {
                 clearResolvedTenant()
             }

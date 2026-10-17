@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from '@/i18n';
 import type { OrderShippingAddress } from '@/types/order';
 
 // ============================================================================
@@ -27,6 +28,7 @@ export const ShippingAddressCard: React.FC<ShippingAddressCardProps> = ({
     address,
     className = '',
 }) => {
+    const { t } = useTranslation();
     return (
         <div
             className={`
@@ -56,7 +58,7 @@ export const ShippingAddressCard: React.FC<ShippingAddressCardProps> = ({
                             d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
                         />
                     </svg>
-                    Shipping Address
+                    {t('checkout.shipping.addressTitle')}
                 </h2>
             </div>
 
@@ -81,7 +83,7 @@ export const ShippingAddressCard: React.FC<ShippingAddressCardProps> = ({
                             </svg>
                         </div>
                         <div>
-                            <p className="text-sm text-muted">Recipient</p>
+                            <p className="text-sm text-muted">{t('order.tracking.recipient')}</p>
                             <p className="font-semibold text-text">{address.fullName}</p>
                         </div>
                     </div>
@@ -104,7 +106,7 @@ export const ShippingAddressCard: React.FC<ShippingAddressCardProps> = ({
                             </svg>
                         </div>
                         <div>
-                            <p className="text-sm text-muted">Phone</p>
+                            <p className="text-sm text-muted">{t('order.tracking.phone')}</p>
                             <p className="font-medium text-text">
                                 <a
                                     href={`tel:${address.phone}`}
@@ -134,7 +136,7 @@ export const ShippingAddressCard: React.FC<ShippingAddressCardProps> = ({
                             </svg>
                         </div>
                         <div>
-                            <p className="text-sm text-muted">Address</p>
+                            <p className="text-sm text-muted">{t('order.tracking.address')}</p>
                             <p className="font-medium text-text">{address.addressLine}</p>
                             <p className="text-muted text-sm">
                                 {address.area}, {address.city}
@@ -161,7 +163,7 @@ export const ShippingAddressCard: React.FC<ShippingAddressCardProps> = ({
                                 </svg>
                             </div>
                             <div>
-                                <p className="text-sm text-muted">Delivery Notes</p>
+                                <p className="text-sm text-muted">{t('order.tracking.notes')}</p>
                                 <p className="text-text italic">{address.notes}</p>
                             </div>
                         </div>

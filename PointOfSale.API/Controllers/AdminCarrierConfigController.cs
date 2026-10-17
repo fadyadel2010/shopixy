@@ -351,10 +351,16 @@ public class AdminCarrierConfigController : ControllerBase
         var tenantId = GetTenantId();
         var capability = _carrierCapabilityRegistry.GetCapability(carrierCode);
         
-        var deleted = await _carrierIntegrationAuthority.DeleteIntegrationAsync(
-            tenantId,
-            capability?.CarrierCode ?? carrierCode,
-            cancellationToken);
+        bool deleted;
+        try
+        {
+            deleted = await _carrierIntegrationAuthority.DeleteIntegrationAsync(
+                tenantId, capability?.CarrierCode ?? carrierCode, cancellationToken);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "CARRIER_CONFIGURATION_RETAINED")
+        {
+            return Conflict(new { code = "CARRIER_CONFIGURATION_RETAINED", message = "A carrier configuration associated with retained shipments cannot be deleted. Disable it instead." });
+        }
 
         if (!deleted)
         {
@@ -447,10 +453,10 @@ public class AdminCarrierConfigController : ControllerBase
             IsConfigured = !string.IsNullOrEmpty(config.ApiKey),
             HasApiKey = !string.IsNullOrEmpty(config.ApiKey),
             UseSandbox = config.UseSandbox,
-            SupportsCod = config.SupportsCod,
-            SupportsTracking = config.SupportsTracking,
-            SupportsWebhooks = config.SupportsWebhooks,
-            SupportsLabels = config.SupportsLabels,
+            SupportsCod = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsCod,
+            SupportsTracking = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsTracking,
+            SupportsWebhooks = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsWebhooks,
+            SupportsLabels = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsLabels,
             PickupAddress = config.PickupAddress,
             PickupCity = config.PickupCity,
             PickupCountry = config.PickupCountry,
@@ -498,10 +504,10 @@ public class AdminCarrierConfigController : ControllerBase
             IsConfigured = config.HasApiKey,
             HasApiKey = config.HasApiKey,
             UseSandbox = config.UseSandbox,
-            SupportsCod = config.SupportsCod,
-            SupportsTracking = config.SupportsTracking,
-            SupportsWebhooks = config.SupportsWebhooks,
-            SupportsLabels = config.SupportsLabels,
+            SupportsCod = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsCod,
+            SupportsTracking = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsTracking,
+            SupportsWebhooks = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsWebhooks,
+            SupportsLabels = capability?.CarrierCode != CarrierCodes.Mylerz && config.SupportsLabels,
             PickupAddress = config.PickupAddress,
             PickupCity = config.PickupCity,
             PickupCountry = config.PickupCountry,

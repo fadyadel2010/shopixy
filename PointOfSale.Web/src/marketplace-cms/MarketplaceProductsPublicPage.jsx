@@ -55,7 +55,7 @@ export function MarketplaceProductsPublicPage() {
             loading: t('marketplacePublic.products.loading'),
             imageFallback: t('marketplacePublic.common.imageFallback'),
         }),
-        [currentLang, t],
+        [t],
     )
     const [draftSearch, setDraftSearch] = useState(searchParams.get('q') || '')
     const [productsResponse, setProductsResponse] = useState(null)
@@ -126,7 +126,7 @@ export function MarketplaceProductsPublicPage() {
         applySeo(currentLang, activeSearch, activeCategory, activePage, copy)
     }, [activeCategory, activePage, activeSearch, copy, currentLang, loading])
 
-    const items = productsResponse?.items || []
+    const items = useMemo(() => productsResponse?.items || [], [productsResponse?.items])
     const totalCount = productsResponse?.totalCount || 0
     const totalPages = productsResponse?.totalPages || 0
 

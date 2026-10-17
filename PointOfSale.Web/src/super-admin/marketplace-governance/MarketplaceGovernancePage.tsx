@@ -10,7 +10,6 @@ import {
     suppressMarketplaceListing,
     suspendMarketplaceVendor,
     type GovernanceListingStatus,
-    type MarketplaceGovernanceListing,
     type MarketplaceGovernanceListingFilters,
 } from './marketplaceGovernanceService'
 

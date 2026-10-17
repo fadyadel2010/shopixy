@@ -31,7 +31,7 @@ function getCurrentLanguage(): string {
     }
 
     // Fall back to navigator language
-    const navLang = navigator.language || (navigator as any).userLanguage;
+    const navLang = navigator.language || (navigator as Navigator & { userLanguage?: string }).userLanguage;
     if (navLang) {
         return navLang.split('-')[0];
     }
@@ -56,8 +56,16 @@ function sanitizeAnalyticsUrl(value: string | undefined): string | undefined {
 
     try {
         const url = new URL(value, window.location.origin);
-        url.search = '';
+        // Keep only campaign evidence. Never forward auth/recovery tokens or arbitrary query data.
+        const campaign = new URLSearchParams();
+        for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']) {
+            const value = url.searchParams.get(key)?.trim().slice(0, 200);
+            if (value) campaign.set(key, value);
+        }
+        url.search = campaign.toString();
         url.hash = '';
+        url.username = '';
+        url.password = '';
         return url.toString();
     } catch {
         return value.split('?')[0]?.split('#')[0] || undefined;

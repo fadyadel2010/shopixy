@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { useWhatsAppApi } from '../hooks/useWhatsAppApi'
@@ -17,7 +17,7 @@ export default function WhatsAppTemplatesPage() {
     const [newTemplateType, setNewTemplateType] = useState('OrderConfirmation') // Default for new templates
     const [loadError, setLoadError] = useState(null)
 
-    const fetchTemplates = async () => {
+    const fetchTemplates = useCallback(async () => {
         setLoadError(null)
         try {
             const data = await getTemplates()
@@ -26,11 +26,11 @@ export default function WhatsAppTemplatesPage() {
             setLoadError(err.message)
             showError(err.message)
         }
-    }
+    }, [getTemplates, showError])
 
     useEffect(() => {
         fetchTemplates()
-    }, [])
+    }, [fetchTemplates])
 
     const handleCreate = (type) => {
         setNewTemplateType(type)

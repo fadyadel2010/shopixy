@@ -4,9 +4,10 @@ import { HeaderAnnouncementSettings } from './HeaderAnnouncementSettings'
 import { admitNavigationSnapshot, mapNavigationDraftToRequest } from '../services/navigationAuthoringContract'
 import en from '../../../../i18n/locales/en.json'
 import ar from '../../../../i18n/locales/ar.json'
+import { readTranslation } from '../../../../tests/readTranslation'
 
 const locale = vi.hoisted(() => ({ language: 'en' }))
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ i18n: locale, t: (key: string) => key.split('.').reduce((value: any, part) => value?.[part], locale.language === 'ar' ? ar : en) || key }) }))
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ i18n: locale, t: (key: string) => readTranslation(locale.language === 'ar' ? ar : en, key) }) }))
 afterEach(() => { cleanup(); locale.language = 'en' })
 
 it.each(['en', 'ar'])('Header owns announcement controls and localized preview in %s', (language) => {

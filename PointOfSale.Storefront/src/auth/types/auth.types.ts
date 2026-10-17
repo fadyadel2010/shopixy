@@ -30,6 +30,7 @@ export interface OnlineCustomer {
 export interface AuthResponse {
     customer: OnlineCustomer;
     expiresAt: string;
+    verificationEmailSent?: boolean | null;
 }
 
 /**

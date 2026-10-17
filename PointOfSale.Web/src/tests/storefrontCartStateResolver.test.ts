@@ -4,7 +4,7 @@ import { resolveCartFetchFailure } from '../../../PointOfSale.Storefront/src/sto
 const emptyCart = {
     cartId: '',
     tenantId: 'tenant-1',
-    ownerType: 'session',
+    ownerType: 'session' as const,
     ownerId: 'session-1',
     items: [],
     itemCount: 0,
@@ -26,6 +26,7 @@ const previousCart = {
         {
             productId: 'product-1',
             productName: 'Coffee Beans',
+            sku: 'SYN-COFFEE',
             quantity: 2,
             unitPrice: 120,
             lineTotal: 240,
@@ -44,7 +45,7 @@ describe('resolveCartFetchFailure', () => {
 
         expect(resolution.nextCart).toBe(previousCart);
         expect(resolution.preserveLastValidCart).toBe(true);
-        expect(resolution.message).toContain('last saved cart');
+        expect(resolution.message).toContain('unconfirmed');
     });
 
     it('clears the cart only when the backend says it no longer exists', () => {

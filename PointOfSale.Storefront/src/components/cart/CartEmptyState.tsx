@@ -6,6 +6,7 @@
 
 import React from 'react';
 import { Button } from '@/components/common';
+import { useTranslation } from '@/i18n';
 
 interface CartEmptyStateProps {
     /** Continue shopping URL */
@@ -18,8 +19,9 @@ interface CartEmptyStateProps {
 export const CartEmptyState: React.FC<CartEmptyStateProps> = ({
     continueShoppingUrl = '/products',
 }) => {
+    const { t, language } = useTranslation();
     return (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="flex flex-col items-center justify-center py-16 text-center" dir={language === 'ar' ? 'rtl' : 'ltr'}>
             {/* Icon */}
             <div className="w-24 h-24 mb-6 flex items-center justify-center bg-muted/10 rounded-full">
                 <svg
@@ -39,20 +41,19 @@ export const CartEmptyState: React.FC<CartEmptyStateProps> = ({
 
             {/* Title */}
             <h2 className="text-2xl font-bold text-text mb-2">
-                Your cart is empty
+                {t('cart.empty')}
             </h2>
 
             {/* Message */}
             <p className="text-muted mb-8 max-w-sm">
-                Looks like you haven't added any products to your cart yet.
-                Start shopping to find something you'll love!
+                {t('cart.emptyDescription')}
             </p>
 
             {/* CTA */}
             <a href={continueShoppingUrl}>
                 <Button size="lg" variant="primary">
-                    Start Shopping
-                    <svg className="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {t('cart.continueShopping')}
+                    <svg className={`w-5 h-5 ${language === 'ar' ? 'mr-2 rotate-180' : 'ml-2'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                     </svg>
                 </Button>

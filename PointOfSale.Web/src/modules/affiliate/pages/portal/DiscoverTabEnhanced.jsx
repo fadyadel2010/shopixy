@@ -27,7 +27,8 @@ import { Search, Package, Box, Grid3X3, RefreshCw, AlertCircle } from 'lucide-re
 import { useLanguage } from '../../i18n/LanguageContext'
 import ProductCard, { ProductCardSkeleton } from './ProductCard'
 import ProductDrawer from './ProductDrawer'
-import SortDropdown, { DEFAULT_SORT, isValidSort } from './SortDropdown'
+import SortDropdown from './SortDropdown'
+import { DEFAULT_SORT, isValidSort } from '../../lib/portalSortOptions'
 
 const fadeUp = {
     hidden: { opacity: 0, y: 20 },
@@ -107,10 +108,9 @@ export default function DiscoverTabEnhanced() {
     const [searchInput, setSearchInput] = useState(urlSearch)
     const [page, setPage] = useState(1)
     const [inStockOnly, setInStockOnly] = useState(false)
-    const [minCommissionRate, setMinCommissionRate] = useState(null)
+    const [minCommissionRate] = useState(null)
     const [selectedProductId, setSelectedProductId] = useState(null)
     const pageSize = 20
-    const abortRef = useRef(null)
     const searchTimerRef = useRef(null)
     const mountedRef = useRef(true) // AF-32H: Guard against setState after unmount
 

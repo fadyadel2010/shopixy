@@ -20,7 +20,7 @@ import {
     useAuthoringGuard,
 } from '../../authoringPlatform'
 
-import { useDomainActivity, LOAD_STATES } from '../hooks'
+import { useDomainActivity } from '../hooks'
 
 const EVENT_ICONS = {
     ssl_activated: Shield,
@@ -36,7 +36,7 @@ const EVENT_ICONS = {
 export function ActivityPage() {
     const { t } = useTranslation()
 
-    const { data, state, error, isLoading, isError, isUnauthorized, isEmpty, refresh, refetch } =
+    const { data, error, isLoading, isError, isUnauthorized, isEmpty, refetch } =
         useDomainActivity()
 
     const { requestNavigation } = useAuthoringGuard({ isDirty: false, isBusy: isLoading })

@@ -13,11 +13,11 @@
  * Affiliate link: backend-issued promotionUrl.
  */
 import { useState, useEffect, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
 import {
     X, ExternalLink, Copy, Check, MessageCircle, Share2,
-    DollarSign, Package, TrendingUp, AlertCircle, ChevronLeft, ChevronRight
+    TrendingUp, AlertCircle, ChevronLeft, ChevronRight
 } from 'lucide-react'
 import StockBadge from './badges/StockBadge'
 import { useLanguage } from '../../i18n/LanguageContext'
@@ -71,13 +71,13 @@ export default function ProductDrawer({ productId, onClose }) {
         return () => window.removeEventListener('keydown', handler)
     }, [onClose])
 
-    if (!productId) return null
-
     // PASS F3: URL copy/display uses the backend-issued promotionUrl only.
     const affiliateLink = useMemo(() => {
         if (typeof promoLink?.promotionUrl !== 'string') return ''
         return promoLink.promotionUrl.trim()
     }, [promoLink?.promotionUrl])
+
+    if (!productId) return null
 
     const copyLink = () => {
         if (!affiliateLink) return

@@ -941,7 +941,7 @@ describe('product affiliate entry presentation', () => {
     })
 
     it('treats core product edits as unsaved changes and uses the existing discard confirmation', async () => {
-        const ref = createRef<{ hasPendingChanges: () => boolean; confirmDiscardPendingChanges: () => Promise<boolean> }>()
+        const ref = createRef<import('./ProductForm').ProductFormHandle>()
         render(<ProductForm ref={ref} productId="product-1" mode="modal" onSave={vi.fn()} />)
 
         const nameInput = await screen.findByLabelText('products.productName *')

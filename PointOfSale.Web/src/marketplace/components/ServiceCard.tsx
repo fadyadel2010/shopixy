@@ -1,10 +1,10 @@
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { ServiceResult } from '../types'
-import { useFormatting } from '../../hooks/useFormatting'
+import type { PresentationFormatting } from '../presentationFormatting'
 import { deriveListingCardPresentation } from '../listingCardAuthority'
 
-interface ServiceCardProps {
+interface ServiceCardProps extends Pick<PresentationFormatting, 'formatCurrency' | 'formatNumber' | 'isRTL'> {
     service: ServiceResult
 }
 
@@ -24,9 +24,8 @@ const trustBadgeTranslationMap: Record<string, string> = {
     Standard: 'servicesMarketplace.badges.standard',
 }
 
-export function ServiceCard({ service }: ServiceCardProps) {
+export function ServiceCard({ service, formatCurrency, formatNumber, isRTL }: ServiceCardProps) {
     const { t } = useTranslation()
-    const { formatCurrency, formatNumber, isRTL } = useFormatting()
     const card = deriveListingCardPresentation(service)
 
     if (!card) return null

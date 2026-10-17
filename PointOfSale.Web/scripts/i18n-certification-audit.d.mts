@@ -1,0 +1,2 @@
+export function readLocaleResources(): { en: typeof import('../src/i18n/locales/en.json'); ar: typeof import('../src/i18n/locales/ar.json') };
+export function buildI18nCertificationAudit(): { structural: { missingInEn: string[]; missingInAr: string[]; placeholderMismatches: unknown[]; suspiciousEntries: unknown[] }; auditedPages: { file: string; missingInEn: string[]; missingInAr: string[]; [key: string]: unknown }[]; [key: string]: unknown };

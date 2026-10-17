@@ -15,15 +15,16 @@ vi.mock('../services/api', () => ({
     },
 }))
 
-vi.mock('react-i18next', () => ({
-    useTranslation: () => ({
+// Match react-i18next's stable t identity between language changes. A fresh
+// function per render incorrectly retriggers translation-dependent effects.
+const translation = vi.hoisted(() => ({
         t: (key: string) => key,
         i18n: {
             language: 'en',
             dir: () => 'ltr',
         },
-    }),
 }))
+vi.mock('react-i18next', () => ({ useTranslation: () => translation }))
 
 describe('ValidationDeleteModal product lifecycle contract', () => {
     beforeEach(() => {
@@ -39,7 +40,7 @@ describe('ValidationDeleteModal product lifecycle contract', () => {
         const props = {
             isOpen: true,
             onClose: vi.fn(),
-            entityType: 'product',
+            entityType: 'product' as const,
             entityId: 'product-1',
             entityName: 'Coffee',
             expectedVersion: '17',
@@ -73,6 +74,7 @@ describe('ValidationDeleteModal product lifecycle contract', () => {
             }),
         )
         await waitFor(() => expect(props.onDeleteSuccess).toHaveBeenCalledTimes(1))
+        expect(apiGetMock).toHaveBeenCalledTimes(1)
         expect(props.onClose).toHaveBeenCalledTimes(1)
     })
 

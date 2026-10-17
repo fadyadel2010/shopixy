@@ -20,7 +20,7 @@ import {
     useAuthoringGuard,
 } from '../../authoringPlatform'
 
-import { useDomainRedirects, LOAD_STATES } from '../hooks'
+import { useDomainRedirects } from '../hooks'
 
 const COLUMNS = [
     { key: 'source', labelKey: 'storefront.domains.redirectSource', fallbackLabel: 'Source' },
@@ -33,7 +33,7 @@ export function RedirectsPage() {
     const { t } = useTranslation()
     const { id } = useParams()
 
-    const { data, state, error, isLoading, isError, isUnauthorized, isEmpty, isSuccess, refetch } =
+    const { data, error, isLoading, isError, isUnauthorized, isNotFound, isEmpty, isSuccess, refetch } =
         useDomainRedirects(id)
 
     const { requestNavigation } = useAuthoringGuard({ isDirty: false, isBusy: isLoading })
@@ -42,8 +42,14 @@ export function RedirectsPage() {
         requestNavigation(`/storefront/domains/${id}`)
     }
 
-    const hostname = id || 'example.com'
     const redirects = data || []
+
+    if (isNotFound) {
+        return <div className="space-y-4">
+            <AuthoringButton action={{ label: t('common.back', 'Back'), onClick: () => requestNavigation('/storefront/domains') }} />
+            <AuthoringEmptyState title={t('storefront.domains.domainNotFound', 'Domain not found')} description={t('storefront.domains.domainNotFoundDesc', 'The requested domain could not be found.')} />
+        </div>
+    }
 
     return (
         <div className="space-y-4">
@@ -61,9 +67,9 @@ export function RedirectsPage() {
                         {t('storefront.domains.redirects', 'Redirects')}
                     </h1>
                     <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        {t('storefront.domains.hostname', 'Hostname')}:{' '}
+                        {t('storefront.domains.domainId', 'Domain ID')}:{' '}
                         <span className="font-mono text-gray-900 dark:text-gray-100 break-all">
-                            {hostname}
+                            {id || '—'}
                         </span>
                     </p>
                 </div>

@@ -6,13 +6,16 @@
  * Uses dynamic theme colors and improved design.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { httpClient } from '@/services/api/httpClient';
 
 interface VerifyEmailBannerProps {
     email: string;
     className?: string;
+    emailSent?: boolean;
+    canResend?: boolean;
 }
 
 /**
@@ -21,6 +24,8 @@ interface VerifyEmailBannerProps {
 export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
     email,
     className = '',
+    emailSent,
+    canResend = true,
 }) => {
     const { t } = useTranslation();
 
@@ -28,6 +33,11 @@ export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
     const [resendSuccess, setResendSuccess] = useState(false);
     const [resendError, setResendError] = useState<string | null>(null);
     const [cooldown, setCooldown] = useState(0);
+    useEffect(() => {
+        if (cooldown <= 0) return;
+        const timer = setTimeout(() => setCooldown(value => value - 1), 1000);
+        return () => clearTimeout(timer);
+    }, [cooldown]);
 
     // Handle resend verification email
     const handleResend = useCallback(async () => {
@@ -38,25 +48,17 @@ export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
         setResendSuccess(false);
 
         try {
-            await httpClient.post(
+            const response = await httpClient.post<{ success: boolean }>(
                 '/api/storefront/auth/resend-verification',
                 {},
                 { withCredentials: true }
             );
+            if (!response.data.success) throw new Error('Dispatch not accepted');
 
             setResendSuccess(true);
             // Start 60 second cooldown
             setCooldown(60);
 
-            const interval = setInterval(() => {
-                setCooldown((prev) => {
-                    if (prev <= 1) {
-                        clearInterval(interval);
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
         } catch (error) {
             // Don't show specific error to prevent enumeration
             setResendError(t('auth.verifyEmail.resendError', {
@@ -84,8 +86,8 @@ export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
             {/* Decorative gradient line at top */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-secondary to-primary opacity-80" />
 
-            <div className="container mx-auto px-4 py-4">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="w-full px-4 py-4">
+                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-3">
                     {/* Icon */}
                     <div className="flex-shrink-0">
                         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -104,11 +106,11 @@ export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
                             })}
                         </h4>
 
-                        <p className="text-sm text-muted mt-0.5">
-                            {t('auth.verifyEmail.description', {
+                        <p className="text-sm text-muted mt-0.5 break-words">
+                            {emailSent === true ? t('auth.verifyEmail.description', {
                                 email: maskedEmail,
                                 defaultValue: `We sent a verification link to ${maskedEmail}. Please check your inbox.`
-                            })}
+                            }) : t(emailSent === false ? 'auth.verifyEmail.dispatchFailed' : 'auth.verifyEmail.pending')}
                         </p>
 
                         {/* Success message */}
@@ -135,7 +137,12 @@ export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
                     </div>
 
                     {/* Resend button */}
-                    <div className="flex-shrink-0">
+                    <div className="col-span-2 min-w-0">
+                        {!canResend ? (
+                            <Link to="/login?return=%2Faccount" className="inline-flex max-w-full rounded-lg px-4 py-2 text-sm font-medium text-primary underline">
+                                {t('auth.verifyEmail.signInToResend')}
+                            </Link>
+                        ) : (
                         <button
                             onClick={handleResend}
                             disabled={cooldown > 0 || isResending}
@@ -181,6 +188,7 @@ export const VerifyEmailBanner: React.FC<VerifyEmailBannerProps> = ({
                                 </>
                             )}
                         </button>
+                        )}
                     </div>
                 </div>
             </div>

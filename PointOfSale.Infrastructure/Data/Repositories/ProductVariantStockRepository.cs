@@ -6,6 +6,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
+using PointOfSale.Core.Policies;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Infrastructure.Utilities;
 
@@ -915,6 +916,19 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
 
         await ExecuteWithinMutationTransactionAsync(async () =>
         {
+            var order = await _dbContext.Orders.IgnoreQueryFilters().AsNoTracking().Include(o => o.Items)
+                .SingleOrDefaultAsync(o => o.Id == orderId && o.TenantId == tenantId && !o.IsDeleted, cancellationToken)
+                ?? throw new InvalidOperationException("INVENTORY_BINDING_ORDER_OWNERSHIP_REQUIRED");
+            var canonicalItems = order.Items.Where(i => !i.IsDeleted).ToDictionary(i => i.Id);
+            if (orderItems.Select(i => i.Id).Distinct().Count() != orderItems.Count || orderItems.Any(i =>
+                    !canonicalItems.TryGetValue(i.Id, out var stored) || i.OrderId != order.Id ||
+                    i.ProductId != stored.ProductId || i.VariantId != stored.VariantId ||
+                    i.WarehouseId != stored.WarehouseId || i.Quantity != stored.Quantity))
+                throw new InvalidOperationException("INVENTORY_BINDING_LINEAGE_MISMATCH");
+            var physicalItems = OrderInventoryReservationSnapshot.PhysicalItems(order);
+            if (physicalItems.Any(i => !orderItems.Any(supplied => supplied.Id == i.Id)))
+                throw new InvalidOperationException("INVENTORY_BINDING_LINEAGE_MISMATCH");
+
             var reservations = await LoadOrderReservationsForMutationAsync(
                 tenantId,
                 orderId,
@@ -924,6 +938,13 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
             {
                 return;
             }
+
+            var requiredIds = physicalItems.Select(i => i.Id).ToHashSet();
+            if (reservations.Where(r => r.OrderItemId != Guid.Empty).Any(r =>
+                    !requiredIds.Contains(r.OrderItemId) || !canonicalItems.TryGetValue(r.OrderItemId, out var item) ||
+                    r.ProductId != item.ProductId || r.VariantId != item.VariantId ||
+                    item.WarehouseId.HasValue && r.WarehouseId != item.WarehouseId.Value))
+                throw new InvalidOperationException("INVENTORY_BINDING_LINEAGE_MISMATCH");
 
             var nowUtc = DateTime.UtcNow;
 
@@ -945,7 +966,7 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
                 cancellationToken,
                 allowUnboundProductId: true);
 
-            foreach (var orderItem in orderItems
+            foreach (var orderItem in physicalItems
                          .Where(item => item.VariantId.HasValue && item.Quantity > 0)
                          .OrderBy(item => item.Id))
             {
@@ -961,7 +982,10 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
                 }
 
                 foreach (var placeholder in placeholders
-                             .Where(reservation => reservation.VariantId == variantId && reservation.RemainingReservedQuantity > 0m)
+                             .Where(reservation => reservation.VariantId == variantId &&
+                                 reservation.ProductId == orderItem.ProductId &&
+                                 (!orderItem.WarehouseId.HasValue || reservation.WarehouseId == orderItem.WarehouseId.Value) &&
+                                 reservation.RemainingReservedQuantity > 0m)
                              .ToList())
                 {
                     if (remainingToAssign <= 0m)

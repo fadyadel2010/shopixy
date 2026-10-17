@@ -1,0 +1,16 @@
+import type { AxiosInstance, AxiosRequestConfig } from 'axios';
+declare const api: AxiosInstance;
+export default api;
+export const API_REQUEST_TIMEOUT_MS: number;
+export const API_REQUEST_TIMEOUT_MESSAGE: string;
+export const API_RETRY_MAX_ATTEMPTS: number;
+export const API_RETRY_BASE_DELAY_MS: number;
+export const API_RETRY_MAX_DELAY_MS: number;
+export function isDefinitiveAuthFailure(error: unknown): boolean;
+export function isRequestCanceled(error: unknown): boolean;
+export function isRequestTimeout(error: unknown): boolean;
+export function isRetryableApiError(error: unknown): boolean;
+export function getRetryDelayMs(attempt: number, error?: unknown): number;
+export function canReplayAfterAuthRefresh(config: AxiosRequestConfig): boolean;
+export function getSafeApiErrorMessage(error: unknown, fallback?: string): string;
+export function requestPosSessionRefresh(): Promise<unknown>;

@@ -1,9 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.MultiTenancy;
 
 namespace PointOfSale.Infrastructure.Shipping.BackgroundJobs;
 
@@ -42,7 +43,7 @@ public class TrackingSyncJob : ITrackingSyncJob
     // Terminal statuses that don't need sync
     private static readonly ShipmentStatus[] TerminalStatuses =
     {
-        ShipmentStatus.Delivered,
+        ShipmentStatus.Failed,
         ShipmentStatus.Cancelled,
         ShipmentStatus.Returned
     };
@@ -60,26 +61,29 @@ public class TrackingSyncJob : ITrackingSyncJob
     
     public async Task SyncAllAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _logger.LogInformation("Starting tracking sync for all tenants");
-        
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var tenantCount = 0;
-
-        await foreach (var tenantId in dbContext.Shipments
-            .Where(s => !TerminalStatuses.Contains(s.Status))
-            .Where(s => !string.IsNullOrEmpty(s.TrackingNumber))
-            .Select(s => s.TenantId)
-            .Distinct()
-            .AsAsyncEnumerable()
-            .WithCancellation(cancellationToken))
+        IReadOnlyList<Guid> tenantIds;
+        await using (var directoryScope = _scopeFactory.CreateAsyncScope())
         {
-            tenantCount++;
+            // Bootstrap can read directory IDs only; never discover tenants by
+            // bypassing the mandatory filters on Shipments in a tenantless scope.
+            var directory = directoryScope.ServiceProvider.GetRequiredService<ITrackingTenantDirectory>();
+            tenantIds = await directory.ListEligibleTenantIdsAsync(cancellationToken);
+        }
+
+        foreach (var tenantId in tenantIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
                 await SyncTenantAsync(tenantId, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -87,7 +91,7 @@ public class TrackingSyncJob : ITrackingSyncJob
             }
         }
 
-        _logger.LogInformation("Found {Count} tenants with active shipments", tenantCount);
+        _logger.LogInformation("Examined {Count} eligible tenants for tracking sync", tenantIds.Count);
         
         _logger.LogInformation("Tracking sync completed for all tenants");
     }
@@ -96,7 +100,7 @@ public class TrackingSyncJob : ITrackingSyncJob
     {
         _logger.LogDebug("Syncing tracking for tenant {TenantId}", tenantId);
         
-        using var scope = _scopeFactory.CreateScope();
+        await using var scope = await CreateTenantScopeAsync(tenantId, cancellationToken);
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         
         // Get shipments that need sync
@@ -128,6 +132,7 @@ public class TrackingSyncJob : ITrackingSyncJob
         
         foreach (var chunk in shipmentIds.Chunk(MaxConcurrentShipmentSyncs))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var batchResults = await Task.WhenAll(
                 chunk.Select(shipmentId => SyncShipmentAsync(tenantId, shipmentId, cancellationToken)));
 
@@ -176,13 +181,17 @@ public class TrackingSyncJob : ITrackingSyncJob
     {
         try
         {
-            using var scope = _scopeFactory.CreateScope();
+            await using var scope = await CreateTenantScopeAsync(tenantId, cancellationToken);
             var carrierService = scope.ServiceProvider.GetRequiredService<ICarrierShipmentService>();
 
             var result = await carrierService.SyncTrackingAsync(
                 tenantId,
                 shipmentId,
                 cancellationToken);
+
+            // The existing carrier service returns a failure for some cancelled
+            // operations. Scheduler shutdown must still propagate cancellation.
+            cancellationToken.ThrowIfCancellationRequested();
 
             return new ShipmentSyncExecution(
                 shipmentId,
@@ -192,6 +201,10 @@ public class TrackingSyncJob : ITrackingSyncJob
                 result.CurrentStatus,
                 result.ErrorMessage,
                 null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -203,6 +216,40 @@ public class TrackingSyncJob : ITrackingSyncJob
                 null,
                 ex.Message,
                 ex);
+        }
+    }
+
+    private async Task<AsyncServiceScope> CreateTenantScopeAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (tenantId == Guid.Empty)
+            throw new InvalidOperationException("TRACKING_TENANT_REQUIRED");
+
+        var scope = _scopeFactory.CreateAsyncScope();
+        try
+        {
+            // Establish identity before DbContext/options/repositories/services
+            // can capture it. Never reuse or mutate a request's ambient context.
+            var tenantContext = scope.ServiceProvider.GetRequiredService<TenantContext>();
+            var tenantAuthority = scope.ServiceProvider.GetRequiredService<ITenantContext>();
+            if (!ReferenceEquals(tenantContext, tenantAuthority) || tenantContext.TenantId.HasValue)
+                throw new InvalidOperationException("TRACKING_TENANT_CONTEXT_INVALID");
+            tenantContext.SetTenantId(tenantId);
+
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            // A supplied ID is only a locator. Qualify SQL lifecycle before any
+            // shipment selection/provider work, also rechecking each worker scope.
+            if (!await dbContext.Tenants.AsNoTracking().AnyAsync(tenant =>
+                    tenant.Id == tenantId && tenant.IsActive &&
+                    tenant.Status == TenantStatus.Active && tenant.DeletedAtUtc == null, cancellationToken))
+                throw new InvalidOperationException("TRACKING_TENANT_NOT_ELIGIBLE");
+
+            return scope;
+        }
+        catch
+        {
+            await scope.DisposeAsync();
+            throw;
         }
     }
 }

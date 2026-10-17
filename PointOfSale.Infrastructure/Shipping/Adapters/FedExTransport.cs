@@ -68,7 +68,8 @@ public sealed class FedExTransportClient : IFedExTransportClient
         FedExTransportRequest<TRequest> request,
         CancellationToken cancellationToken = default)
     {
-        if (!IsCertifiedRequestDto(request.Body))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsCertifiedRequestDto(request.Body) || !MatchesEndpoint(request) || !FedExContractValidator.Validate(request.Body).Success)
         {
             return Failure(
                 UnsupportedRequestCode,
@@ -81,7 +82,10 @@ public sealed class FedExTransportClient : IFedExTransportClient
             ? Guid.NewGuid().ToString("N")
             : request.CorrelationId.Trim();
         var requestUri = _options.GetTransportUri(request.UseSandbox, request.EndpointPath);
-        var attempts = Math.Max(0, _options.TransportMaxRetryCount) + 1;
+        // Only explicitly mapped read-only operations may retry. Correlation is not idempotency.
+        var readOnly = request.Body is FedExTrackingNumbersRequest or FedExPickupAvailabilityRequest
+            or FedExAddressValidationRequest or FedExServiceAvailabilityRequest;
+        var attempts = readOnly ? Math.Clamp(_options.TransportMaxRetryCount, 0, 3) + 1 : 1;
         var retryCount = 0;
         var refreshedAfterUnauthorized = false;
         var authorization = await _oauthClient.GetAuthorizationHeaderAsync(
@@ -103,10 +107,12 @@ public sealed class FedExTransportClient : IFedExTransportClient
             var started = Stopwatch.GetTimestamp();
             try
             {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(_options.RequestTimeout);
                 using var httpRequest = CreateRequest(request, requestUri, correlationId, authorization.AuthorizationHeader!);
                 var client = _httpClientFactory.CreateClient(_options.TransportHttpClientName);
-                using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                var rawJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                var rawJson = await FedExHttpSafety.ReadBodyAsync(response.Content, FedExHttpSafety.ResponseLimit, timeout.Token);
                 var duration = Stopwatch.GetElapsedTime(started);
                 var transportResponse = new FedExTransportResponse(
                     response.StatusCode,
@@ -119,12 +125,13 @@ public sealed class FedExTransportClient : IFedExTransportClient
 
                 LogTransportAttempt(correlationId, requestUri, duration, response.StatusCode, retryCount);
 
-                if (response.StatusCode == HttpStatusCode.Unauthorized && !refreshedAfterUnauthorized)
+                if (readOnly && response.StatusCode == HttpStatusCode.Unauthorized && !refreshedAfterUnauthorized)
                 {
                     refreshedAfterUnauthorized = true;
                     authorization = await _oauthClient.RefreshAuthorizationHeaderAfterUnauthorizedAsync(
                         request.OAuthRequest,
                         request.UseSandbox,
+                        authorization.AuthorizationHeader!.Parameter!,
                         cancellationToken);
                     if (!authorization.Success)
                     {
@@ -137,12 +144,14 @@ public sealed class FedExTransportClient : IFedExTransportClient
                     }
 
                     retryCount++;
+                    attempts = Math.Max(attempts, attempt + 1);
                     continue;
                 }
 
-                if (IsRetryableStatus(response.StatusCode) && attempt < attempts)
+                if (IsRetryableStatus(response.StatusCode) && attempt < attempts && FedExHttpSafety.RetryDelay(response, attempt) is { } delay)
                 {
                     retryCount++;
+                    await Task.Delay(delay, cancellationToken);
                     continue;
                 }
 
@@ -155,12 +164,13 @@ public sealed class FedExTransportClient : IFedExTransportClient
                         IsRetryableStatus(response.StatusCode),
                         transportResponse);
             }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < attempts)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < attempts)
             {
                 LogTransportAttempt(correlationId, requestUri, Stopwatch.GetElapsedTime(started), null, retryCount);
                 retryCount++;
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
             }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 var duration = Stopwatch.GetElapsedTime(started);
                 LogTransportAttempt(correlationId, requestUri, duration, null, retryCount);
@@ -170,11 +180,20 @@ public sealed class FedExTransportClient : IFedExTransportClient
             {
                 LogTransportAttempt(correlationId, requestUri, Stopwatch.GetElapsedTime(started), null, retryCount);
                 retryCount++;
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
             }
-            catch (HttpRequestException ex)
+            catch (HttpRequestException)
             {
                 LogTransportAttempt(correlationId, requestUri, Stopwatch.GetElapsedTime(started), null, retryCount);
-                return Failure(NetworkFailureCode, ex.Message, null, isTransient: true);
+                return Failure(NetworkFailureCode, "FedEx HTTP transport failed; remote outcome may be unknown.", null, isTransient: true);
+            }
+            catch (FedExResponseLimitException)
+            {
+                return Failure("FEDEX_TRANSPORT_RESPONSE_TOO_LARGE", "FedEx response exceeds the local size limit; remote outcome may be unknown.", null, false);
+            }
+            catch (IOException)
+            {
+                return Failure(NetworkFailureCode, "FedEx response stream failed; remote outcome may be unknown.", null, true);
             }
         }
 
@@ -205,6 +224,18 @@ public sealed class FedExTransportClient : IFedExTransportClient
         request is FedExCreatePickupRequest ||
         request is FedExAddressValidationRequest ||
         request is FedExServiceAvailabilityRequest;
+
+    private static bool MatchesEndpoint<TRequest>(FedExTransportRequest<TRequest> request) =>
+        request.Method == HttpMethod.Post && request.EndpointPath == (request.Body switch
+        {
+            FedExShipmentRequest => FedExOptions.CreateShipmentPath,
+            FedExTrackingNumbersRequest => FedExOptions.TrackByTrackingNumberPath,
+            FedExPickupAvailabilityRequest => FedExOptions.PickupAvailabilityPath,
+            FedExCreatePickupRequest => FedExOptions.CreatePickupPath,
+            FedExAddressValidationRequest => FedExOptions.AddressValidationPath,
+            FedExServiceAvailabilityRequest => FedExOptions.TransitTimesPath,
+            _ => null
+        });
 
     private static bool IsRetryableStatus(HttpStatusCode statusCode) =>
         statusCode == HttpStatusCode.RequestTimeout ||

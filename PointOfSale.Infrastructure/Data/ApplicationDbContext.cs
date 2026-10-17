@@ -45,6 +45,9 @@ public class ApplicationDbContext : DbContext
 
     // Master Data
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<ShipmentCancellationOperation> ShipmentCancellationOperations => Set<ShipmentCancellationOperation>();
+    public DbSet<CarrierCollectionEvidence> CarrierCollectionEvidence => Set<CarrierCollectionEvidence>();
+    public DbSet<CarrierCodShipmentBinding> CarrierCodShipmentBindings => Set<CarrierCodShipmentBinding>();
     public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
     public DbSet<CustomerAddressVersion> CustomerAddressVersions => Set<CustomerAddressVersion>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
@@ -219,7 +222,10 @@ public class ApplicationDbContext : DbContext
     public DbSet<FawryWebhookReplayRecord> FawryWebhookReplayRecords => Set<FawryWebhookReplayRecord>();
     public DbSet<PaymentSettlementBatch> PaymentSettlementBatches => Set<PaymentSettlementBatch>();
     public DbSet<PaymentSettlementOrder> PaymentSettlementOrders => Set<PaymentSettlementOrder>();
+    public DbSet<CarrierRemittance> CarrierRemittances => Set<CarrierRemittance>();
+    public DbSet<CarrierRemittanceOrder> CarrierRemittanceOrders => Set<CarrierRemittanceOrder>();
     public DbSet<ShippingWebhookLog> ShippingWebhookLogs => Set<ShippingWebhookLog>();
+    public DbSet<ShippingWebhookClaim> ShippingWebhookClaims => Set<ShippingWebhookClaim>();
 
     // Shipping Methods
     public DbSet<ShippingMethod> ShippingMethods => Set<ShippingMethod>();
@@ -695,6 +701,7 @@ public class ApplicationDbContext : DbContext
             !e.IsDeleted && e.TenantId == CurrentTenantId);
         modelBuilder.Entity<ShippingMethod>(entity =>
         {
+            entity.Property(e => e.UpdatedAt).IsConcurrencyToken();
             entity.ToTable(table => table.HasCheckConstraint(
                 "CK_ShippingMethods_ActiveRequiresFulfillmentWarehouse",
                 "NOT \"IsActive\" OR \"FulfillmentWarehouseId\" IS NOT NULL"));
@@ -740,6 +747,13 @@ public class ApplicationDbContext : DbContext
              
         modelBuilder.Entity<Shipment>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.ApplyConfiguration(new Configurations.ShipmentCancellationOperationConfiguration());
+        // Cancellation identity is permanent, including records marked deleted.
+        modelBuilder.Entity<ShipmentCancellationOperation>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.ApplyConfiguration(new Configurations.CarrierCollectionEvidenceConfiguration());
+        modelBuilder.ApplyConfiguration(new Configurations.CarrierCodShipmentBindingConfiguration());
+        modelBuilder.Entity<CarrierCollectionEvidence>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CarrierCodShipmentBinding>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         
         // Transaction entities (also tenant-owned)
         modelBuilder.Entity<AccountLedger>().HasQueryFilter(e => 
@@ -908,7 +922,6 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Fees).HasPrecision(18, 2);
             entity.HasIndex(e => new { e.TenantId, e.SettlementType, e.SettlementId })
                 .IsUnique()
-                .HasFilter("\"IsDeleted\" = false")
                 .HasDatabaseName("IX_PaymentSettlementBatches_Tenant_Type_SettlementId");
             entity.HasIndex(e => new { e.TenantId, e.PayoutBatchId })
                 .HasDatabaseName("IX_PaymentSettlementBatches_Tenant_PayoutBatchId");
@@ -917,6 +930,11 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(e => e.SettlementBatchId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        modelBuilder.ApplyConfiguration(new Configurations.CarrierRemittanceConfiguration());
+        modelBuilder.ApplyConfiguration(new Configurations.CarrierRemittanceOrderConfiguration());
+        modelBuilder.Entity<CarrierRemittance>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CarrierRemittanceOrder>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<PaymentSettlementOrder>(entity =>
         {
@@ -929,7 +947,6 @@ public class ApplicationDbContext : DbContext
                 .HasDatabaseName("IX_PaymentSettlementOrders_Tenant_Batch_Order");
             entity.HasIndex(e => new { e.TenantId, e.OrderId })
                 .IsUnique()
-                .HasFilter("\"IsDeleted\" = false")
                 .HasDatabaseName("IX_PaymentSettlementOrders_Tenant_Order");
             entity.HasIndex(e => new { e.TenantId, e.PaymentIntentId })
                 .HasFilter("\"IsDeleted\" = false AND \"PaymentIntentId\" IS NOT NULL")
@@ -946,6 +963,7 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<ShippingWebhookLog>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ShippingWebhookClaim>().HasQueryFilter(e => e.TenantId == CurrentTenantId);
         
         // -------------------------------------------------------------------------
         // UNIFIED FINANCIAL ENGINE ENTITIES (Phase 1 - Core Ledger Engine)
@@ -1871,6 +1889,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Currency).HasMaxLength(3).IsRequired();
             entity.Property(e => e.Notes).HasMaxLength(500);
             entity.Property(e => e.CostAmount).HasPrecision(18, 2);
+            entity.Property(e => e.UpdatedAtUtc).IsConcurrencyToken();
             
             // Tenant isolation filter
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
@@ -3477,6 +3496,9 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ShippingZipCode).HasMaxLength(20);
             entity.Property(e => e.ShippingCountry).HasMaxLength(10);
             entity.Property(e => e.PackageDescription).HasMaxLength(500);
+            entity.Property(e => e.ParcelEvidenceJson).HasColumnType("text");
+            entity.Property(e => e.CarrierRequestSnapshotJson).HasColumnType("text");
+            entity.Property(e => e.CarrierRequestFingerprint).HasMaxLength(64);
             entity.Property(e => e.CancellationReason).HasMaxLength(500);
             entity.Property(e => e.FailureReason).HasMaxLength(500);
             entity.Property(e => e.ReturnReason).HasMaxLength(500);
@@ -3638,19 +3660,26 @@ public class ApplicationDbContext : DbContext
     }
     
     public override int SaveChanges()
+        => SaveChanges(true);
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ApplyAuditAndCommerceHubImmutabilityGuards();
-        return base.SaveChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        => SaveChangesAsync(true, cancellationToken);
+
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         await ApplyAuditAndCommerceHubImmutabilityGuardsAsync(cancellationToken);
-        return await base.SaveChangesAsync(cancellationToken);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     private void ApplyAuditAndCommerceHubImmutabilityGuards()
     {
+        GuardPersistedShippingEvidenceAsync(false).GetAwaiter().GetResult();
         NormalizeCouponCodes();
         NormalizePosUserIdentities();
         BumpPosUserRowVersion();
@@ -3662,6 +3691,7 @@ public class ApplicationDbContext : DbContext
 
     private async Task ApplyAuditAndCommerceHubImmutabilityGuardsAsync(CancellationToken cancellationToken)
     {
+        await GuardPersistedShippingEvidenceAsync(true, cancellationToken);
         NormalizeCouponCodes();
         NormalizePosUserIdentities();
         BumpPosUserRowVersion();
@@ -3786,6 +3816,14 @@ public class ApplicationDbContext : DbContext
         GuardCommerceHubFinancialLifecycleRecordImmutability();
         GuardCommerceHubFinancialLedgerImmutability();
         GuardTreasuryCashAuthority();
+        GuardShipmentCancellationOperations();
+        foreach (var entry in ChangeTracker.Entries().Where(e => e.Entity is PointOfSale.Core.Entities.CarrierCollectionEvidence or CarrierCodShipmentBinding))
+        {
+            if (entry.State is EntityState.Modified or EntityState.Deleted)
+                throw new InvalidOperationException("Carrier money evidence and bindings are immutable permanent identities.");
+            if (entry.State == EntityState.Added && !PointOfSale.Infrastructure.Shipping.CarrierMoneyPersistenceAuthority.IsActive)
+                throw new InvalidOperationException("Carrier money evidence requires internal observed-money authority.");
+        }
         GuardSupplierCardAuthority();
         GuardCommerceHubFinancialSafetyGuardImmutability();
         GuardCommerceHubVendorSettlementImmutability();
@@ -3856,6 +3894,11 @@ public class ApplicationDbContext : DbContext
         GuardAppendOnlyEvidence<PlaceMergeHistory>();
         GuardAppendOnlyEvidence<PlaceDeprecation>();
         GuardAppendOnlyEvidence<AddressAdmissionEvidence>();
+        foreach (var entry in ChangeTracker.Entries<AddressAdmissionEvidence>().Where(e => e.State == EntityState.Added))
+        {
+            if (entry.Entity.CanonicalAddressEvidenceJson != null)
+                PointOfSale.Infrastructure.Geographic.CanonicalAddressEvidence.Restore(entry.Entity.CanonicalAddressEvidenceJson, entry.Entity);
+        }
         GuardAppendOnlyEvidence<GeographicAudit>();
 
         foreach (var entry in ChangeTracker.Entries<GeographicCatalogRelease>())
@@ -3944,6 +3987,95 @@ public class ApplicationDbContext : DbContext
         }
     }
 
+    private async Task GuardPersistedShippingEvidenceAsync(bool useAsync, CancellationToken cancellationToken = default)
+    {
+        // OriginalValues alone are not persisted authority for detached Update/Remove
+        // or entries whose state was reset before save. Never rewrite those originals.
+        var shipments = ChangeTracker.Entries<Shipment>()
+            .Where(e => e.State is EntityState.Modified or EntityState.Deleted).ToList();
+        var ids = shipments.Select(e => e.Entity.Id).ToArray();
+        if (ids.Length > 0)
+        {
+            var query = Shipments.IgnoreQueryFilters().AsNoTracking().Where(s => ids.Contains(s.Id));
+            var stored = useAsync ? await query.ToListAsync(cancellationToken) : query.ToList();
+            foreach (var entry in shipments)
+            {
+                var original = stored.SingleOrDefault(s => s.Id == entry.Entity.Id);
+                if (original == null) continue;
+                if (Shipping.BostaNativeDestination.IsNative(original.CarrierGeographicMappingSnapshotJson))
+                {
+                    if (entry.State == EntityState.Deleted || entry.Entity.IsDeleted ||
+                        original.CarrierGeographicMappingSnapshotJson != entry.Entity.CarrierGeographicMappingSnapshotJson)
+                        throw new InvalidOperationException("Bosta native destination evidence is immutable and retained.");
+                    Shipping.BostaNativeDestination.Restore(entry.Entity);
+                }
+                var canonical = original.OriginGeographicSnapshotVersion == 2 ||
+                    FindCanonicalAddressEvidence(original.DestinationAddressAdmissionEvidenceId) != null;
+                if (entry.State == EntityState.Deleted || entry.Entity.IsDeleted)
+                {
+                    if (canonical) throw new InvalidOperationException("Canonical shipment address evidence is retained and cannot be deleted.");
+                    if (original.OriginSnapshotJson != null || original.ParcelEvidenceJson != null ||
+                        Shipping.CarrierRegistrationEvidence.HasOutboundEvidence(original))
+                        throw new InvalidOperationException("Shipment registration and parcel evidence is retained and cannot be deleted.");
+                    continue;
+                }
+                foreach (var name in new[] { nameof(Shipment.OriginSnapshotJson), nameof(Shipment.ParcelEvidenceJson),
+                    nameof(Shipment.CarrierRequestSnapshotJson), nameof(Shipment.CarrierRequestFingerprint) })
+                {
+                    var retained = entry.Property(name).Metadata.PropertyInfo!.GetValue(original);
+                    if (retained != null && !Equals(retained, entry.Property(name).CurrentValue))
+                        throw new InvalidOperationException(name == nameof(Shipment.OriginSnapshotJson)
+                            ? "Shipment origin snapshot evidence is immutable and cannot be replaced or removed after persistence."
+                            : "Shipment parcel and original carrier request evidence is immutable.");
+                }
+                if (canonical || Shipping.CarrierRegistrationEvidence.HasOutboundEvidence(original))
+                {
+                    foreach (var name in new[] { nameof(Shipment.TenantId), nameof(Shipment.OrderId), nameof(Shipment.CarrierCode),
+                        nameof(Shipment.ShippingMethodId), nameof(Shipment.ShippingMethodName), nameof(Shipment.ServiceLevel),
+                        nameof(Shipment.CarrierRequestId), nameof(Shipment.ShippingCost), nameof(Shipment.Currency) })
+                    {
+                        if (name == nameof(Shipment.CarrierRequestId) && original.CarrierRequestId == null &&
+                            !Shipping.CarrierRegistrationEvidence.HasOutboundEvidence(original)) continue;
+                        if (!Equals(entry.Property(name).Metadata.PropertyInfo!.GetValue(original), entry.Property(name).CurrentValue))
+                            throw new InvalidOperationException("Retained shipment lineage and original operation identity are immutable.");
+                    }
+                }
+                if (original.OriginSnapshotJson != null)
+                {
+                    foreach (var property in entry.Properties.Where(p => p.Metadata.Name.StartsWith("Origin", StringComparison.Ordinal)))
+                        if (!Equals(property.Metadata.PropertyInfo!.GetValue(original), property.CurrentValue))
+                        {
+                            if (original.OriginGeographicSnapshotVersion == 2)
+                                throw new ArgumentException("CANONICAL_SHIPMENT_ORIGIN_SUBSTITUTION");
+                            throw new InvalidOperationException("Shipment origin snapshot evidence is immutable and cannot be replaced or removed after persistence.");
+                        }
+                }
+                if (entry.Entity.Status == ShipmentStatus.Cancelled && original.Status != ShipmentStatus.Cancelled &&
+                    !original.IsCarrierManaged && !Shipping.ShipmentCancellationService.CanCancelLocally(original))
+                    throw new InvalidOperationException("Carrier cancellation requires the durable confirmation authority.");
+            }
+        }
+        foreach (var entry in ChangeTracker.Entries<Order>().Where(e => e.State == EntityState.Deleted ||
+                     e.State == EntityState.Modified && e.Entity.IsDeleted).ToList())
+        {
+            var query = Orders.IgnoreQueryFilters().AsNoTracking().Where(o => o.Id == entry.Entity.Id);
+            var original = useAsync ? await query.SingleOrDefaultAsync(cancellationToken) : query.SingleOrDefault();
+            if (original != null && (FindCanonicalAddressEvidence(original.ShippingAddressAdmissionEvidenceId) != null ||
+                                    FindCanonicalAddressEvidence(original.BillingAddressAdmissionEvidenceId) != null))
+                throw new InvalidOperationException("Canonical order address evidence is retained and cannot be deleted.");
+        }
+        foreach (var entry in ChangeTracker.Entries<CarrierConfiguration>().Where(e => e.State == EntityState.Deleted ||
+                     e.State == EntityState.Modified && e.Entity.IsDeleted).ToList())
+        {
+            var query = CarrierConfigurations.IgnoreQueryFilters().AsNoTracking().Where(c => c.Id == entry.Entity.Id);
+            var original = useAsync ? await query.SingleOrDefaultAsync(cancellationToken) : query.SingleOrDefault();
+            if (original == null) continue;
+            var associations = Shipments.IgnoreQueryFilters().Where(s => s.TenantId == original.TenantId && s.CarrierCode == original.CarrierCode);
+            if (useAsync ? await associations.AnyAsync(cancellationToken) : associations.Any())
+                throw new InvalidOperationException("CARRIER_CONFIGURATION_RETAINED");
+        }
+    }
+
     private void GuardGeographicBusinessSnapshotPersistence()
     {
         foreach (var entry in ChangeTracker.Entries<CustomerAddressVersion>())
@@ -3966,8 +4098,18 @@ public class ApplicationDbContext : DbContext
             }
         }
 
-        foreach (var entry in ChangeTracker.Entries<Order>())
+        foreach (var entry in ChangeTracker.Entries<Order>().ToList())
         {
+            foreach (var billing in new[] { false, true })
+            {
+                var id = billing ? entry.Entity.BillingAddressAdmissionEvidenceId : entry.Entity.ShippingAddressAdmissionEvidenceId;
+                var evidence = FindCanonicalAddressEvidence(id);
+                if (evidence == null) continue;
+                if (entry.State == EntityState.Deleted || entry.Entity.IsDeleted)
+                    throw new InvalidOperationException("Canonical order address evidence is retained and cannot be deleted.");
+                if (entry.State is EntityState.Added or EntityState.Modified)
+                    Shipping.CanonicalShipmentAddresses.RestoreOrderAddress(entry.Entity, evidence, billing);
+            }
             if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
             {
                 ValidateOrderGeographicSnapshot(entry.Entity);
@@ -3993,6 +4135,41 @@ public class ApplicationDbContext : DbContext
 
         foreach (var entry in ChangeTracker.Entries<Shipment>().ToList())
         {
+            // Deleted entries skip modified-property guards. Unsaved marker edits
+            // cannot revoke the canonical ownership retained in OriginalValues.
+            if (entry.State == EntityState.Deleted &&
+                (entry.Property(nameof(Shipment.OriginGeographicSnapshotVersion)).OriginalValue as int? == 2 ||
+                 FindCanonicalAddressEvidence(entry.Property(nameof(Shipment.DestinationAddressAdmissionEvidenceId)).OriginalValue as Guid?) != null))
+            {
+                throw new InvalidOperationException("Canonical shipment address evidence is retained and cannot be deleted.");
+            }
+            var destinationEvidence = FindCanonicalAddressEvidence(entry.Entity.DestinationAddressAdmissionEvidenceId);
+            var hasCanonicalOrigin = entry.Entity.OriginGeographicSnapshotVersion == 2;
+            if (destinationEvidence != null || hasCanonicalOrigin)
+            {
+                if (entry.State == EntityState.Deleted || entry.Entity.IsDeleted)
+                    throw new InvalidOperationException("Canonical shipment address evidence is retained and cannot be deleted.");
+                if (entry.State is EntityState.Added or EntityState.Modified)
+                {
+                    var shipment = entry.Entity;
+                    var order = ChangeTracker.Entries<Order>().Select(e => e.Entity).SingleOrDefault(o => o.Id == shipment.OrderId)
+                        ?? Orders.IgnoreQueryFilters().AsNoTracking().SingleOrDefault(o => o.Id == shipment.OrderId);
+                    if (order == null) throw new InvalidOperationException("Canonical shipment order binding required.");
+                    if (destinationEvidence != null) Shipping.CanonicalShipmentAddresses.RestoreDestination(shipment, order, destinationEvidence);
+                    if (hasCanonicalOrigin)
+                    {
+                        var origin = FindCanonicalAddressEvidence(shipment.OriginAddressAdmissionEvidenceId)
+                            ?? throw new InvalidOperationException("Canonical shipment origin evidence required.");
+                        Shipping.CanonicalShipmentAddresses.RestoreOrigin(shipment, order, origin);
+                        if (entry.State == EntityState.Modified && entry.Property(nameof(Shipment.OriginSnapshotJson)).OriginalValue == null &&
+                            ((int)entry.Property(nameof(Shipment.ExternalRegistrationAttemptCount)).OriginalValue! > 0 ||
+                             new[] { nameof(Shipment.ExternalRegistrationLastAttemptAtUtc),
+                                 nameof(Shipment.ExternalRegistrationCompletedAtUtc), nameof(Shipment.CarrierRequestSnapshotJson), nameof(Shipment.CarrierRequestFingerprint),
+                                 nameof(Shipment.ExternalReferenceId), nameof(Shipment.TrackingNumber) }.Any(name => entry.Property(name).OriginalValue != null)))
+                            throw new InvalidOperationException("Uncertain registration cannot capture new canonical origin.");
+                    }
+                }
+            }
             if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
             {
                 ValidateShipmentGeographicSnapshot(entry.Entity);
@@ -4001,7 +4178,21 @@ public class ApplicationDbContext : DbContext
             if (entry.State == EntityState.Modified)
             {
                 GuardSnapshotPropertyMutation(entry, "Destination", "Shipment destination");
+                if (entry.Property(nameof(Shipment.OriginGeographicSnapshotVersion)).OriginalValue as int? == 2)
+                {
+                    foreach (var name in new[] { nameof(Shipment.TenantId), nameof(Shipment.OrderId), nameof(Shipment.ShippingMethodId),
+                        nameof(Shipment.ServiceLevel), nameof(Shipment.CarrierCode), nameof(Shipment.RecipientName), nameof(Shipment.RecipientPhone),
+                        nameof(Shipment.RecipientEmail), nameof(Shipment.ShippingCountry), nameof(Shipment.ShippingZipCode) })
+                        if (entry.Property(name).IsModified)
+                            throw new InvalidOperationException("Canonical shipment identity and address projections are immutable.");
+                }
                 var originalOriginSnapshot = entry.Property(nameof(Shipment.OriginSnapshotJson)).OriginalValue as string;
+                // The payload itself is retained evidence, including legacy v1.
+                // Scalar-prefix checks below do not include OriginSnapshotJson.
+                if (originalOriginSnapshot != null && entry.Property(nameof(Shipment.OriginSnapshotJson)).IsModified)
+                {
+                    throw new InvalidOperationException("Shipment origin snapshot evidence is immutable and cannot be replaced or removed after persistence.");
+                }
                 if (!string.IsNullOrWhiteSpace(originalOriginSnapshot))
                 {
                     GuardSnapshotPropertyMutation(entry, "Origin", "Shipment origin");
@@ -4024,6 +4215,14 @@ public class ApplicationDbContext : DbContext
                     "Shipment persisted immutable destination geographic snapshot copied from order snapshot.");
             }
         }
+    }
+
+    private AddressAdmissionEvidence? FindCanonicalAddressEvidence(Guid? id)
+    {
+        if (!id.HasValue) return null;
+        var evidence = ChangeTracker.Entries<AddressAdmissionEvidence>().Select(e => e.Entity).SingleOrDefault(e => e.Id == id)
+            ?? AddressAdmissionEvidence.IgnoreQueryFilters().AsNoTracking().SingleOrDefault(e => e.Id == id);
+        return evidence?.CanonicalAddressEvidenceJson == null ? null : evidence;
     }
 
     private void AddGeographicSnapshotAudit(
@@ -4303,7 +4502,7 @@ public class ApplicationDbContext : DbContext
             evidenceId: shipment.OriginAddressAdmissionEvidenceId,
             catalogReleaseId: shipment.OriginGeographicCatalogReleaseId,
             countryPlaceId: shipment.OriginCountryPlaceId,
-            snapshotVersion: shipment.OriginGeographicSnapshotVersion,
+            snapshotVersion: shipment.OriginGeographicSnapshotVersion == 2 ? 1 : shipment.OriginGeographicSnapshotVersion,
             snapshotCreatedAtUtc: shipment.OriginGeographicSnapshotCreatedAtUtc,
             owner: "Shipment origin");
         if (!string.IsNullOrWhiteSpace(shipment.OriginSnapshotJson) &&
@@ -4322,6 +4521,11 @@ public class ApplicationDbContext : DbContext
         var hasCarrierSnapshot =
             shipment.CarrierGeographicMappingReleaseId.HasValue ||
             !string.IsNullOrWhiteSpace(shipment.CarrierGeographicMappingSnapshotJson);
+        if (Shipping.BostaNativeDestination.IsNative(shipment.CarrierGeographicMappingSnapshotJson))
+        {
+            Shipping.BostaNativeDestination.Restore(shipment);
+            return;
+        }
         if (hasCarrierSnapshot &&
             (!shipment.CarrierGeographicMappingReleaseId.HasValue ||
              shipment.CarrierGeographicMappingReleaseId == Guid.Empty ||
@@ -7155,8 +7359,73 @@ public class ApplicationDbContext : DbContext
         tenantWideProductPromotionTenantIds.Add(tenantId);
     }
 
+    private void GuardShipmentCancellationOperations()
+    {
+        foreach (var shipment in ChangeTracker.Entries<Shipment>().Where(e => e.State == EntityState.Modified &&
+                     e.Entity.Status == ShipmentStatus.Cancelled &&
+                     e.Property(x => x.Status).OriginalValue != ShipmentStatus.Cancelled))
+        {
+            var order = ChangeTracker.Entries<Order>().FirstOrDefault(e => e.Entity.Id == shipment.Entity.OrderId &&
+                e.Entity.TenantId == shipment.Entity.TenantId)?.Entity ?? Orders.AsNoTracking().SingleOrDefault(e =>
+                e.Id == shipment.Entity.OrderId && e.TenantId == shipment.Entity.TenantId);
+            // Preserve eligible generic Manual/local cancellation. A mislabeled
+            // Manual row with carrier order ownership or external facts cannot
+            // escape the same confirmation boundary through a generic writer.
+            if (!shipment.Entity.IsCarrierManaged && order?.FulfillmentMode == FulfillmentMode.Manual &&
+                PointOfSale.Core.Constants.CarrierCodes.IsManual(order.FulfillmentCarrierCode) &&
+                PointOfSale.Infrastructure.Shipping.ShipmentCancellationService.CanCancelLocally(shipment.Entity)) continue;
+            var confirmed = ChangeTracker.Entries<ShipmentCancellationOperation>().Any(e =>
+                e.Entity.TenantId == shipment.Entity.TenantId && e.Entity.ShipmentId == shipment.Entity.Id &&
+                e.Entity.OrderId == shipment.Entity.OrderId && e.Entity.Outcome == ShipmentCancellationOutcome.Confirmed &&
+                e.Entity.ConfirmedAtUtc != null && e.Entity.ConfirmationBasis is "CarrierConfirmed" or "NoExternalShipment");
+            if (!confirmed) throw new InvalidOperationException("Carrier cancellation requires the durable confirmation authority.");
+            if (!PointOfSale.Infrastructure.Shipping.CancellationPersistenceAuthority.IsActive)
+                throw new InvalidOperationException("Only the cancellation executor may finalize carrier cancellation.");
+        }
+        foreach (var entry in ChangeTracker.Entries<ShipmentCancellationOperation>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified && entry.Entity.Outcome == ShipmentCancellationOutcome.Confirmed &&
+                !PointOfSale.Infrastructure.Shipping.CancellationPersistenceAuthority.IsActive)
+                throw new InvalidOperationException("Cancellation confirmation requires the source-specific executor.");
+            if (entry.State == EntityState.Deleted || (entry.State == EntityState.Modified && entry.Entity.IsDeleted))
+                throw new InvalidOperationException("Cancellation identity cannot be deleted.");
+            if (entry.State != EntityState.Modified) continue;
+            var mutable = new HashSet<string> { "Outcome", "Code", "EvidenceReference", "EvidenceHash", "ConfirmationBasis", "ConfirmedAtUtc", "UpdatedAt", "Version" };
+            if (entry.Properties.Any(p => p.IsModified && !mutable.Contains(p.Metadata.Name)))
+                throw new InvalidOperationException("Cancellation request facts are immutable.");
+            var original = entry.Property(x => x.Outcome).OriginalValue;
+            if (original == ShipmentCancellationOutcome.Confirmed && entry.Properties.Any(p => p.IsModified))
+                throw new InvalidOperationException("Confirmed cancellation is immutable.");
+            if (original != ShipmentCancellationOutcome.Requested && entry.Property(x => x.Code).OriginalValue != "CANCELLATION_ATTEMPT_UNRESOLVED" &&
+                entry.Entity.Outcome == ShipmentCancellationOutcome.Confirmed)
+                throw new InvalidOperationException("Unresolved cancellation cannot be promoted by retry.");
+        }
+    }
+
     private void GuardTreasuryCashAuthority()
     {
+        foreach (var entry in ChangeTracker.Entries<CarrierRemittance>())
+        {
+            if (entry.State == EntityState.Unchanged || entry.State == EntityState.Detached) continue;
+            if (!PointOfSale.Infrastructure.Accounting.CarrierRemittancePersistenceAuthority.IsActive || entry.State == EntityState.Deleted)
+                throw new InvalidOperationException("Carrier remittance requires its dedicated receipt authority.");
+            if (entry.State == EntityState.Modified &&
+                (entry.Property(x => x.Outcome).OriginalValue != "Preparing" || entry.Entity.Outcome != "Posted" ||
+                 entry.Properties.Any(p => p.IsModified && p.Metadata.Name is not (nameof(CarrierRemittance.Outcome) or nameof(CarrierRemittance.PostedJournalId) or nameof(CarrierRemittance.PostedAtUtc) or nameof(BaseEntity.UpdatedAt)))))
+                throw new InvalidOperationException("Carrier receipt facts are immutable.");
+        }
+        foreach (var entry in ChangeTracker.Entries<CarrierRemittanceOrder>())
+        {
+            if (entry.State is EntityState.Modified or EntityState.Deleted ||
+                entry.State == EntityState.Added && !PointOfSale.Infrastructure.Accounting.CarrierRemittancePersistenceAuthority.IsActive)
+                throw new InvalidOperationException("Carrier remittance membership is immutable source authority.");
+        }
+        // Successful settlement economic facts and membership are permanent refund
+        // lineage. Retrying accounting changes its outbox/journal, never these rows.
+        GuardImmutableCommerceHubEntity<PaymentSettlementBatch>();
+        GuardImmutableCommerceHubEntity<PaymentSettlementOrder>();
+        GuardImmutableCommerceHubEntity<LedgerEntry>();
+
         foreach (var entry in ChangeTracker.Entries<TreasuryInitialCapitalizationAllocation>())
         {
             if (entry.State is EntityState.Modified or EntityState.Deleted)

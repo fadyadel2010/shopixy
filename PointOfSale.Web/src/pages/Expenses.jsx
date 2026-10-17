@@ -65,7 +65,7 @@ export default function Expenses() {
             const params = new URLSearchParams({
                 page: page.toString(),
                 pageSize: '20',
-                ...Object.fromEntries(Object.entries(filters).filter(([_, v]) => v !== ''))
+                ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== ''))
             })
             const response = await api.get(`/expenses?${params}`)
 

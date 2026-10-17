@@ -41,6 +41,7 @@ const SAFE_ANCHOR_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:']);
 const SAFE_ANCHOR_TARGETS = new Set(['_blank', '_self']);
 
 const HOOKS_REGISTERED_SYMBOL = Symbol('htmlSanitizer.hooksRegistered');
+const purifier: typeof DOMPurify & { [HOOKS_REGISTERED_SYMBOL]?: boolean } = DOMPurify;
 
 function isSafeAnchorHref(value: string): boolean {
     const trimmedValue = value.trim();
@@ -85,7 +86,7 @@ function mergeRelValue(existingRel: string | null): string {
 
 function ensureHooksRegistered(): void {
     // Check if hooks are already registered on this DOMPurify instance
-    if ((DOMPurify as any)[HOOKS_REGISTERED_SYMBOL]) {
+    if (purifier[HOOKS_REGISTERED_SYMBOL]) {
         return;
     }
 
@@ -123,7 +124,7 @@ function ensureHooksRegistered(): void {
     });
 
     // Mark this DOMPurify instance as having hooks registered
-    (DOMPurify as any)[HOOKS_REGISTERED_SYMBOL] = true;
+    purifier[HOOKS_REGISTERED_SYMBOL] = true;
 }
 
 export function sanitizeRichTextHtml(html: string | null | undefined): string {
@@ -139,6 +140,6 @@ export function sanitizeRichTextHtml(html: string | null | undefined): string {
 if (import.meta.hot) {
     import.meta.hot.dispose(() => {
         DOMPurify.removeAllHooks();
-        delete (DOMPurify as any)[HOOKS_REGISTERED_SYMBOL];
+        delete purifier[HOOKS_REGISTERED_SYMBOL];
     });
 }

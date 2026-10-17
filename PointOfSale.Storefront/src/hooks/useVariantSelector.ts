@@ -122,6 +122,7 @@ export function useVariantSelector(product: ProductReadDto | null): VariantSelec
         }
 
         const controller = new AbortController();
+        setSelectedVariant(null);
         setIsResolvingVariant(true);
         setHasVariantResolutionError(false);
 
@@ -131,6 +132,7 @@ export function useVariantSelector(product: ProductReadDto | null): VariantSelec
             controller.signal
         )
             .then((response) => {
+                if (controller.signal.aborted) return;
                 setSelectedVariant(response.variant);
                 setHasVariantResolutionError(false);
             })
@@ -203,4 +205,3 @@ export function useVariantSelector(product: ProductReadDto | null): VariantSelec
 }
 
 export default useVariantSelector;
-

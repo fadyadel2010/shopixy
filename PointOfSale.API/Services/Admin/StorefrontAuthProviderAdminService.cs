@@ -61,7 +61,8 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 AdditionalScopes = s.AdditionalScopes,
                 CreatedAtUtc = s.CreatedAtUtc,
                 UpdatedAtUtc = s.UpdatedAtUtc,
-                UpdatedByUserId = s.UpdatedByUserId
+                UpdatedByUserId = s.UpdatedByUserId,
+                Revision = (s.UpdatedAtUtc ?? s.CreatedAtUtc).Ticks.ToString()
             })
             .ToListAsync(cancellationToken);
 
@@ -77,7 +78,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                     Provider = provider.ToString(),
                     IsEnabled = false,
                     HasClientSecret = false,
-                    CreatedAtUtc = DateTime.UtcNow
+                    CreatedAtUtc = UtcNow()
                 });
             }
         }
@@ -102,7 +103,8 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 AdditionalScopes = s.AdditionalScopes,
                 CreatedAtUtc = s.CreatedAtUtc,
                 UpdatedAtUtc = s.UpdatedAtUtc,
-                UpdatedByUserId = s.UpdatedByUserId
+                UpdatedByUserId = s.UpdatedByUserId,
+                Revision = (s.UpdatedAtUtc ?? s.CreatedAtUtc).Ticks.ToString()
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -122,8 +124,10 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
         AuthProvider provider,
         UpdateProviderSettingsRequest request,
         Guid updatedByUserId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? expectedRevision = null)
     {
+        var validation = ValidateSettings(provider, request);
+        if (validation != null) return new() { Error = "INVALID_CONFIGURATION", Message = validation };
         _logger.LogInformation(
             "[AuthProviderAdmin] UPDATE request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId}",
             tenantId, provider, updatedByUserId);
@@ -132,6 +136,10 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
         {
             var settings = await _dbContext.StorefrontAuthProviderSettings
                 .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Provider == provider, cancellationToken);
+
+            if (!MatchesRevision(settings, expectedRevision)) return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." };
+            if (settings?.IsEnabled == true && request.ClientId != null && string.IsNullOrWhiteSpace(request.ClientId))
+                return new() { Error = "MISSING_CLIENT_ID", Message = "Disable the provider before clearing its Client ID." };
 
             bool isNew = settings == null;
             bool clientIdChanged = false;
@@ -154,7 +162,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
             if (request.ClientId != null && request.ClientId != settings.ClientId)
             {
                 clientIdChanged = true;
-                settings.ClientId = request.ClientId;
+                settings.ClientId = request.ClientId.Trim();
             }
 
             // Update ClientSecret (encrypt it)
@@ -167,10 +175,10 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
             // Update additional scopes
             if (request.AdditionalScopes != null)
             {
-                settings.AdditionalScopes = request.AdditionalScopes;
+                settings.AdditionalScopes = request.AdditionalScopes.Trim();
             }
 
-            settings.UpdatedAtUtc = DateTime.UtcNow;
+            settings.UpdatedAtUtc = UtcNow();
             settings.UpdatedByUserId = updatedByUserId;
 
             // Publish before SaveChanges so the EF outbox entry commits atomically with the SQL mutation.
@@ -197,6 +205,9 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 Settings = await GetProviderSettingsAsync(tenantId, provider, cancellationToken)
             };
         }
+        catch (DbUpdateConcurrencyException) { return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." }; }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        { return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings were created concurrently. Reload before retrying." }; }
         catch (Exception ex)
         {
             _logger.LogError(ex,
@@ -216,8 +227,9 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
         Guid tenantId,
         AuthProvider provider,
         Guid enabledByUserId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? expectedRevision = null)
     {
+        if (!Supported(provider)) return new() { Error = "INVALID_PROVIDER", Message = "Unsupported provider" };
         _logger.LogInformation(
             "[AuthProviderAdmin] ENABLE request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId}",
             tenantId, provider, enabledByUserId);
@@ -228,6 +240,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Provider == provider, cancellationToken);
 
             // Validation: Settings must exist
+            if (!MatchesRevision(settings, expectedRevision)) return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." };
             if (settings == null)
             {
                 _logger.LogWarning(
@@ -288,7 +301,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
 
             // Enable provider
             settings.IsEnabled = true;
-            settings.UpdatedAtUtc = DateTime.UtcNow;
+            settings.UpdatedAtUtc = UtcNow();
             settings.UpdatedByUserId = enabledByUserId;
 
             // Publish before SaveChanges so the EF outbox entry commits atomically with the SQL mutation.
@@ -312,6 +325,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 Message = $"{provider} login is now enabled for customers"
             };
         }
+        catch (DbUpdateConcurrencyException) { return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." }; }
         catch (Exception ex)
         {
             _logger.LogError(ex,
@@ -332,12 +346,11 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
         AuthProvider provider,
         Guid disabledByUserId,
         string? reason = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? expectedRevision = null)
     {
+        if (!Supported(provider) || reason?.Length > 500) return new() { Error = "INVALID_CONFIGURATION", Message = "Invalid provider or reason" };
         // Log at WARNING level - this is a security-critical action
-        _logger.LogWarning(
-            "[AuthProviderAdmin] DISABLE request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId} | Reason: {Reason}",
-            tenantId, provider, disabledByUserId, reason ?? "Not specified");
+        _logger.LogWarning("[AuthProviderAdmin] DISABLE request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId}", tenantId, provider, disabledByUserId);
 
         try
         {
@@ -345,6 +358,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Provider == provider, cancellationToken);
 
             // No settings = already disabled
+            if (!MatchesRevision(settings, expectedRevision)) return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." };
             if (settings == null || !settings.IsEnabled)
             {
                 _logger.LogDebug(
@@ -360,7 +374,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
 
             // Disable provider
             settings.IsEnabled = false;
-            settings.UpdatedAtUtc = DateTime.UtcNow;
+            settings.UpdatedAtUtc = UtcNow();
             settings.UpdatedByUserId = disabledByUserId;
 
             // Publish before SaveChanges so the EF outbox entry commits atomically with the SQL mutation.
@@ -376,8 +390,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogWarning(
-                "[AuthProviderAdmin] DISABLE success - Provider login BLOCKED | TenantId: {TenantId} | Provider: {Provider} | Reason: {Reason}",
-                tenantId, provider, reason ?? "Not specified");
+                "[AuthProviderAdmin] DISABLE success - Provider login BLOCKED | TenantId: {TenantId} | Provider: {Provider}", tenantId, provider);
 
             return new DisableProviderResult
             {
@@ -385,6 +398,7 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 Message = $"{provider} login is now disabled. Customers can no longer log in using this provider."
             };
         }
+        catch (DbUpdateConcurrencyException) { return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." }; }
         catch (Exception ex)
         {
             _logger.LogError(ex,
@@ -405,8 +419,9 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
         AuthProvider provider,
         string newClientSecret,
         Guid rotatedByUserId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? expectedRevision = null)
     {
+        if (!Supported(provider) || !ValidSecret(newClientSecret)) return new() { Error = "INVALID_SECRET", Message = "A non-masked secret of at most 512 characters is required." };
         // Log at WARNING level - this is a security-critical action
         _logger.LogWarning(
             "[AuthProviderAdmin] ROTATE_SECRET request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId}",
@@ -437,9 +452,11 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
                 };
             }
 
+            if (!MatchesRevision(settings, expectedRevision)) return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." };
+
             // Encrypt and save new secret
             settings.ClientSecretEncrypted = EncryptSecret(newClientSecret);
-            settings.UpdatedAtUtc = DateTime.UtcNow;
+            settings.UpdatedAtUtc = UtcNow();
             settings.UpdatedByUserId = rotatedByUserId;
 
             // Publish before SaveChanges so the EF outbox entry commits atomically with the SQL mutation.
@@ -460,9 +477,10 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
             return new RotateSecretResult
             {
                 Success = true,
-                Message = "Client secret has been rotated. The old secret is now invalid."
+                Message = "Stored secret replaced. External provider credentials were not changed or verified."
             };
         }
+        catch (DbUpdateConcurrencyException) { return new() { Error = "CONCURRENCY_CONFLICT", Message = "Provider settings changed. Reload before retrying." }; }
         catch (Exception ex)
         {
             _logger.LogError(ex,
@@ -479,6 +497,26 @@ public class StorefrontAuthProviderAdminService : IStorefrontAuthProviderAdminSe
     }
 
     #region Private Methods
+
+    private static bool Supported(AuthProvider provider) => provider is AuthProvider.Google or AuthProvider.Facebook;
+    // PostgreSQL timestamptz precision is microseconds. Returned revisions must
+    // also match an already-tracked row after a save in this same request scope.
+    private static DateTime UtcNow() => new(DateTime.UtcNow.Ticks / 10 * 10, DateTimeKind.Utc);
+    private static bool ValidSecret(string secret) => !string.IsNullOrWhiteSpace(secret) && secret.Length <= 512 && !secret.All(c => c is '*' or '•' or '●');
+    private static bool MatchesRevision(StorefrontAuthProviderSettings? settings, string? revision) => revision == null ||
+        revision == (settings == null ? "0" : (settings.UpdatedAtUtc ?? settings.CreatedAtUtc).Ticks.ToString());
+    private static string? ValidateSettings(AuthProvider provider, UpdateProviderSettingsRequest request)
+    {
+        if (!Supported(provider)) return "Unsupported provider";
+        if (request.ClientId?.Length > 256 || request.ClientId?.Any(char.IsControl) == true) return "Invalid Client ID";
+        if (request.ClientSecret != null && !ValidSecret(request.ClientSecret)) return "A non-masked secret of at most 512 characters is required";
+        if (request.AdditionalScopes?.Length > 512) return "Scopes cannot exceed 512 characters";
+        // These SDK flows support only their base identity permissions, not arbitrary OAuth authorization.
+        var allowed = provider == AuthProvider.Google ? new[] { "openid", "email", "profile" } : new[] { "email", "public_profile" };
+        if (request.AdditionalScopes?.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries).Any(s => !allowed.Contains(s)) == true)
+            return "Only base identity scopes are supported by this login flow";
+        return null;
+    }
 
     /// <summary>
     /// Encrypts a client secret using Data Protection API.

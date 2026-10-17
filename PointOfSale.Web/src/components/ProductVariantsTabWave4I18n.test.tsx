@@ -142,7 +142,7 @@ describe('Wave 4 Arabic RTL rendering (real locale)', () => {
     })
 
     it('keeps responsive/ARIA structure intact in Arabic', async () => {
-        const { container } = await renderWithLocale('ar')
+        await renderWithLocale('ar')
 
         const toggle = await screen.findByRole('button', { name: /أدوات المتغيرات المتقدمة/ })
         expect(toggle).toHaveAttribute('type', 'button')

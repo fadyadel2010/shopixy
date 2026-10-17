@@ -2,6 +2,9 @@ using PointOfSale.API.DTOs.Cart;
 using PointOfSale.API.DTOs.Checkout;
 using PointOfSale.Core.Financial;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.API.Services.Checkout;
+using PointOfSale.Core.Helpers;
+using System.Text.Json;
 
 namespace PointOfSale.API.Services.Pricing;
 
@@ -121,6 +124,7 @@ public sealed class StorefrontPricingService : IStorefrontPricingService
         bool pricesRefreshed,
         CancellationToken cancellationToken)
     {
+        ValidateShippingCountry(shippingMethod, shippingCountry);
         var shipping = shippingMethod == null
             ? 0m
             : _shippingCalculationService.Calculate(
@@ -180,6 +184,27 @@ public sealed class StorefrontPricingService : IStorefrontPricingService
         };
 
         return RoundCurrency(Math.Max(0m, calculatedFee));
+    }
+
+    private static void ValidateShippingCountry(ShippingMethodDocument? method, string? country)
+    {
+        if (method?.AvailableCountries == null) return; // Existing unrestricted policy.
+        try
+        {
+            var countries = JsonSerializer.Deserialize<string?[]>(method.AvailableCountries);
+            if (countries == null || countries.Length == 0 || countries.Any(code =>
+                code == null || !CountryCodeHelper.TryNormalizeCountryCode(code, out var normalized) || code != normalized))
+                throw new CheckoutShippingMethodException(method.ShippingMethodId, "Saved country scope is invalid");
+            // An incomplete cart preview may not yet know its destination. Final
+            // checkout requires an address and uses this same pricing authority.
+            if (!string.IsNullOrWhiteSpace(country) &&
+                (!CountryCodeHelper.TryNormalizeCountryCode(country, out var destination) || !countries.Contains(destination)))
+                throw new CheckoutShippingMethodException(method.ShippingMethodId, "Not available for the selected shipping country");
+        }
+        catch (JsonException)
+        {
+            throw new CheckoutShippingMethodException(method.ShippingMethodId, "Saved country scope is invalid");
+        }
     }
 
     private static decimal RoundCurrency(decimal value)

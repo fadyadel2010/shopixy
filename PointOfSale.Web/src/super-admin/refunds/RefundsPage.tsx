@@ -2502,7 +2502,7 @@ export default function RefundsPage() {
             </div>
 
             <RefundDetailsDrawer
-                refund={acceptedRefundDetails}
+                refund={acceptedRefundDetails ?? undefined}
                 isOpen={Boolean(currentSelectedRefundId)}
                 isLoading={detailsQuery.isLoading}
                 isError={detailsQuery.isError}

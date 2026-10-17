@@ -16,6 +16,32 @@ public sealed class ProviderDeliveryContractTests
     private static readonly JsonSerializerOptions DocumentOptions = new(JsonSerializerDefaults.Web);
 
     [Theory]
+    [InlineData(AnalyticsProvider.GoogleAnalytics)]
+    [InlineData(AnalyticsProvider.Meta)]
+    [InlineData(AnalyticsProvider.TikTok)]
+    public async Task PurchaseDispatch_RejectsForeignTenantOrderItems_AndDisabledProvidersQueueNothing(AnalyticsProvider provider)
+    {
+        await using var db = CreateDbContext(); SeedOrderItems(db); await db.SaveChangesAsync();
+        var outbox = new RecordingProviderDeliveryOutbox();
+        IAnalyticsDispatcher dispatcher = provider switch {
+            AnalyticsProvider.GoogleAnalytics => new GoogleAnalyticsDispatcher(outbox, new SumPixelValueResolver(), CreateScopeFactory(db), NullLogger<GoogleAnalyticsDispatcher>.Instance),
+            AnalyticsProvider.Meta => new MetaConversionsApiDispatcher(outbox, new SumPixelValueResolver(), CreateScopeFactory(db), NullLogger<MetaConversionsApiDispatcher>.Instance),
+            _ => new TikTokAnalyticsDispatcher(outbox, new SumPixelValueResolver(), CreateScopeFactory(db), NullLogger<TikTokAnalyticsDispatcher>.Instance)
+        };
+        var settings = new TenantAnalyticsSettings {
+            Google = new() { Enabled = false, MeasurementId = "G-QATEST", ApiSecret = "not-a-real-secret" },
+            Meta = new() { Enabled = false, PixelId = "QATEST", AccessToken = "not-a-real-secret" },
+            TikTok = new() { Enabled = false, PixelId = "QATEST", AccessToken = "not-a-real-secret", TestMode = true }
+        };
+        await dispatcher.DispatchAsync(CreatePurchaseEvent(), settings, default);
+        Assert.Null(outbox.Request);
+        settings.Google.Enabled = settings.Meta.Enabled = settings.TikTok.Enabled = true;
+        var foreign = CreatePurchaseEvent(); foreign.TenantId = Guid.NewGuid();
+        Assert.False((await dispatcher.DispatchAsync(foreign, settings, default)).Success);
+        Assert.Null(outbox.Request);
+    }
+
+    [Theory]
     [InlineData(AnalyticsEventType.PageView, "page_view", "google-analytics-page-view.json")]
     [InlineData(AnalyticsEventType.ProductView, "view_item", "google-analytics-view-content.json")]
     [InlineData(AnalyticsEventType.SearchPerformed, "search", "google-analytics-search.json")]
@@ -330,6 +356,7 @@ public sealed class ProviderDeliveryContractTests
 
     private static void SeedOrderItems(ApplicationDbContext dbContext)
     {
+        dbContext.Orders.Add(new Order { Id = Guid.Parse("33333333-3333-3333-3333-333333333333"), TenantId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), OrderNumber = "QA-provider-contract", Currency = "USD" });
         dbContext.OrderItems.AddRange(
             new OrderItem
             {

@@ -47,6 +47,17 @@ const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, model, slots }
     // Body scroll lock when menu is open
     useBodyScrollLock(isOpen);
 
+    // CSS hides the mobile panel on desktop but does not release its body lock.
+    // Close through the real component state when crossing that breakpoint.
+    useEffect(() => {
+        if (!isOpen) return;
+        const desktop = window.matchMedia('(min-width: 768px)');
+        const closeOnDesktop = () => { if (desktop.matches) onClose(); };
+        closeOnDesktop();
+        desktop.addEventListener('change', closeOnDesktop);
+        return () => desktop.removeEventListener('change', closeOnDesktop);
+    }, [isOpen, onClose]);
+
     // Focus trap when menu is open
     useFocusTrap(menuRef, isOpen);
 

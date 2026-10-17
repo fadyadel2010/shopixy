@@ -14,7 +14,7 @@ using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Admin;
 
-public sealed class AdminOrderListPostgresTests
+public sealed partial class AdminOrderListPostgresTests
 {
     [Fact]
     public async Task ListOrders_Postgres_IsolatesStorefrontAndCommerceHubWithoutSetOperationFailure()

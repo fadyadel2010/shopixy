@@ -80,8 +80,8 @@ public enum PaymentStatus
     Rejected = 8,
     
     /// <summary>
-    /// Money has reached company bank account.
-    /// JOURNAL CREATED: DEBIT Bank, CREDIT Clearing (net of fees)
+    /// Collected money has reached the receiving Treasury account recorded in posted settlement history.
+    /// JOURNAL CREATED: DEBIT receiving Cashbox/Bank, CREDIT Clearing (plus any authorized fee expense)
     /// This is the final financial state for successful orders.
     /// </summary>
     Settled = 9,

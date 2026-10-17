@@ -1034,6 +1034,8 @@ function BlocksEditor({ blocks, onUpdate, onRemove }) {
                                     const items = JSON.parse(value)
                                     onUpdate(index, { ...block, data: { ...block.data, items } })
                                 } catch {
+                                    // Invalid JSON must not replace the last accepted FAQ items.
+                                    return
                                 }
                             }}
                             rows={8}

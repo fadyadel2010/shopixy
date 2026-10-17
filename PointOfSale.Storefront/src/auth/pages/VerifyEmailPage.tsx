@@ -6,7 +6,7 @@
  * Calls the Storefront auth API to verify the token.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { Layout } from '@/components/layout';
 import { useCategories } from '@/hooks';
@@ -31,11 +31,14 @@ export const VerifyEmailPage: React.FC = () => {
 
     const [status, setStatus] = useState<VerificationStatus>('verifying');
     const [message, setMessage] = useState<string>('');
+    const requestRef = useRef<{ key: string; promise: ReturnType<typeof httpClient.post<VerificationResult>> } | null>(null);
+    const revisionRef = useRef(0);
 
     const token = searchParams.get('token');
     const tenantId = searchParams.get('tenant');
 
     const verifyEmail = useCallback(async () => {
+        const revision = ++revisionRef.current;
         if (!token) {
             setStatus('error');
             setMessage(t('auth.verifyEmail.noToken', {
@@ -46,13 +49,19 @@ export const VerifyEmailPage: React.FC = () => {
 
         try {
             // Call the Storefront auth endpoint (not POS)
-            const response = await httpClient.post<VerificationResult>(
-                '/api/storefront/auth/verify-email',
-                { token },
-                {
-                    params: tenantId ? { tenant: tenantId } : undefined
-                }
-            );
+            const key = JSON.stringify([tenantId, token]);
+            if (requestRef.current?.key !== key) {
+                requestRef.current = {
+                    key,
+                    promise: httpClient.post<VerificationResult>(
+                        '/api/storefront/auth/verify-email',
+                        { token },
+                        { params: tenantId ? { tenant: tenantId } : undefined }
+                    ),
+                };
+            }
+            const response = await requestRef.current.promise;
+            if (revision !== revisionRef.current) return;
 
             const result = response.data;
 
@@ -77,17 +86,19 @@ export const VerifyEmailPage: React.FC = () => {
                 }));
             }
         } catch (error: unknown) {
+            if (revision !== revisionRef.current) return;
             setStatus('error');
 
             // Handle specific error responses
             const axiosError = error as { response?: { data?: { error?: string; message?: string } } };
             const errorData = axiosError?.response?.data;
 
-            if (errorData?.error === 'TOKEN_EXPIRED') {
+            const errorCode = (errorData as { code?: string } | undefined)?.code ?? errorData?.error;
+            if (errorCode === 'TOKEN_EXPIRED') {
                 setMessage(t('auth.verifyEmail.expired', {
                     defaultValue: 'This verification link has expired. Please request a new one.'
                 }));
-            } else if (errorData?.error === 'TOKEN_USED') {
+            } else if (errorCode === 'TOKEN_USED') {
                 setMessage(t('auth.verifyEmail.alreadyUsed', {
                     defaultValue: 'This verification link has already been used.'
                 }));
@@ -100,7 +111,8 @@ export const VerifyEmailPage: React.FC = () => {
     }, [token, tenantId, t, checkAuth]);
 
     useEffect(() => {
-        verifyEmail();
+        void verifyEmail();
+        return () => { revisionRef.current++; };
     }, [verifyEmail]);
 
     const getStatusIcon = () => {

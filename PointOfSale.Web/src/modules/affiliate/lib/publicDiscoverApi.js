@@ -3,12 +3,12 @@
  *
  * CONTRACT:
  * - Targets the explicitly [AllowAnonymous] /api/affiliate/discover/public-products routes.
- * - Uses the bare axios package (no auth interceptors) so an Affiliate
- *   Authorization header is never attached, even when a portal session exists.
+ * - Uses the centralized anonymous GET transport (no cookies/auth interceptors),
+ *   so portal session material is never attached to public discovery.
  * - Sort values are restricted to the backend public allowlist; commission
  *   ordering is impossible through this boundary.
  */
-import axios from 'axios'
+import { publicJsonClient } from '../../../core/publicJsonClient'
 
 export const PUBLIC_PRODUCT_LIST_ROUTE = '/api/affiliate/discover/public-products'
 
@@ -28,7 +28,7 @@ export function isValidPublicSort(sort) {
 }
 
 export function discoverPublicProducts({ page = 1, pageSize = 20, search, categorySlug, sort, signal } = {}) {
-    return axios.get(PUBLIC_PRODUCT_LIST_ROUTE, {
+    return publicJsonClient.get(PUBLIC_PRODUCT_LIST_ROUTE, {
         timeout: PUBLIC_DISCOVERY_TIMEOUT_MS,
         params: {
             page,
@@ -42,7 +42,7 @@ export function discoverPublicProducts({ page = 1, pageSize = 20, search, catego
 }
 
 export function discoverPublicProductDetail(productId, { signal } = {}) {
-    return axios.get(`${PUBLIC_PRODUCT_LIST_ROUTE}/${encodeURIComponent(productId)}`, {
+    return publicJsonClient.get(`${PUBLIC_PRODUCT_LIST_ROUTE}/${encodeURIComponent(productId)}`, {
         timeout: PUBLIC_DISCOVERY_TIMEOUT_MS,
         ...(signal && { signal }),
     }).then(r => r.data)

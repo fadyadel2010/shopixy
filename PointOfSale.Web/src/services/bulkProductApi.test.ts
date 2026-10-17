@@ -316,13 +316,13 @@ describe('bulkProductApi', () => {
             expect(result.correlationId).toBe('corr-success-1')
             expect(result.results).toEqual(payload.results)
 
-            const [firstItem] = result.results as BulkItem[]
+            const [firstItem] = result.results
             expect(firstItem.productId).toBe(payload.results[0].productId)
             expect(firstItem.status).toBe('processed')
             expect(firstItem.previousVersion).toBe('7')
             expect(firstItem.newVersion).toBe('8')
-            expect((result.results as BulkItem[])[1].code).toBe('ALREADY_ACTIVE')
-            expect((result.results as BulkItem[])[1].message).toBe('Product is already active.')
+            expect(result.results[1].code).toBe('ALREADY_ACTIVE')
+            expect(result.results[1].message).toBe('Product is already active.')
         })
 
         it('rejects a malformed success payload instead of returning a false all-zero success', async () => {

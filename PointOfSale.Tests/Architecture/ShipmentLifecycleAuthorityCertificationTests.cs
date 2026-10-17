@@ -54,9 +54,11 @@ public sealed class ShipmentLifecycleAuthorityCertificationTests
         Assert.Contains("ShipmentStatus.PendingExternalRegistration, ShipmentStatus.Failed", policy, StringComparison.Ordinal);
         Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(from, to)", shipmentService, StringComparison.Ordinal);
         Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(current, requested)", adminShipmentService, StringComparison.Ordinal);
-        Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled)", adminShipmentService, StringComparison.Ordinal);
+        var cancellation = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/ShipmentCancellationService.cs");
+        Assert.Contains("authority.CancelForAdminAsync", adminShipmentService, StringComparison.Ordinal);
+        Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled)", cancellation, StringComparison.Ordinal);
         Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(currentStatus, newStatus)", carrierShipmentService, StringComparison.Ordinal);
-        Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled)", carrierShipmentService, StringComparison.Ordinal);
+        Assert.Contains("_cancellation.CancelForOrderAsync", carrierShipmentService, StringComparison.Ordinal);
         Assert.Contains("ShipmentLifecycleTransitionPolicy.CanTransition(previousStatus, result.InitialStatus)", carrierShipmentService, StringComparison.Ordinal);
     }
 
@@ -166,21 +168,38 @@ public sealed class ShipmentLifecycleAuthorityCertificationTests
     [Fact]
     public void CertificationArtifacts_MustRecordShipmentLifecycleAuthorityTruth()
     {
-        Assert.Contains(
-            "PASS SF-SHP5",
-            CertificationSource.ReadRepoFile("docs/architecture/shipment-lifecycle-authority-certification-findings.md"),
-            StringComparison.Ordinal);
-
-        foreach (var path in new[]
+        // The dedicated findings are the historical certification evidence;
+        // general context files are not required to duplicate its verdict marker.
+        var findings = CertificationSource.ReadRepoFile("docs/architecture/shipment-lifecycle-authority-certification-findings.md");
+        foreach (var evidence in new[]
                  {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
+                     "PASS SF-SHP5 Shipment Lifecycle Authority Certification Findings",
+                     "Shipment Lifecycle owner: backend SQL shipment aggregate plus `ShipmentLifecycleTransitionPolicy`.",
+                     "Tenant Scope owner: trusted backend tenant context and tenant-scoped SQL predicates.",
+                     "Can frontend fabricate Shipment Lifecycle? No.",
+                     "Same-status direct/admin replays are no-op, carrier duplicates collapse, and recovery recomposes SQL truth.",
+                     "Carrier evidence must resolve an existing shipment, pass trust/idempotency, and pass backend transition policy."
                  })
         {
-            Assert.Contains("PASS SF-SHP5", CertificationSource.ReadRepoFile(path), StringComparison.Ordinal);
+            Assert.Contains(evidence, findings, StringComparison.Ordinal);
+        }
+
+        // Cancellation's stronger, current boundary supersedes the older
+        // policy-only description without inventing another historical PASS.
+        var cancellation = CertificationSource.ReadRepoFile(".ai/reports/SHIPPING_CARRIER_CANCELLATION_SAFETY_CERTIFICATION.md");
+        foreach (var evidence in new[]
+                 {
+                     "IShipmentCancellationService.CancelForAdminAsync",
+                     "IShipmentCancellationService.CancelForOrderAsync",
+                     "Only typed Confirmed with exact tracking target, evidence reference",
+                     "Unknown → ReconciliationRequired",
+                     "unique `(TenantId, ShipmentId)`",
+                     "Canonical order cancellation/payment cancellation/refund/inventory release remains",
+                     "WaitingRegistrationClaim_SeesCancellationCommittedWhileItsSqlSnapshotWasWaiting",
+                     "WaitingCancellation_SeesRegistrationCommittedWhileWaitingForShipmentLock"
+                 })
+        {
+            Assert.Contains(evidence, cancellation, StringComparison.Ordinal);
         }
     }
 }

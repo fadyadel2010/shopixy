@@ -9,9 +9,7 @@ namespace PointOfSale.Infrastructure.Shipping.Adapters;
 /// KEY CAPABILITIES:
 /// - Domestic and International Express
 /// - Cash on Delivery (COD)
-/// - Scheduled Pickups
 /// - Real-time Tracking
-/// - Webhook Notifications
 /// 
 /// API Documentation: https://www.aramex.com/developers
 /// 
@@ -47,9 +45,10 @@ public sealed class AramexCarrierDefinition : ShippingCarrierDefinition
     public override bool SupportsWebhooks => false;
     
     /// <summary>
-    /// Aramex supports scheduled pickup requests via API.
+    /// Pickup scheduling is not implemented by this adapter. Provider contract
+    /// availability alone is not an application capability.
     /// </summary>
-    public override bool SupportsPickupScheduling => true;
+    public override bool SupportsPickupScheduling => false;
     
     /// <summary>
     /// Aramex provides AWB labels in PDF format.

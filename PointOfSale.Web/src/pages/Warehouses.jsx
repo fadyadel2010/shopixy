@@ -3,7 +3,8 @@ import api from '../services/api'
 import { useToast } from '../components/Toast'
 import { useTranslation } from 'react-i18next'
 import { useRTL } from '../hooks/useRTL'
-import { useHasPermission } from '../components/PermissionGuard'
+import { useHasPermission } from '../hooks/usePosSessionPermission'
+import WarehouseAddressAdmission from '../modules/shipping/components/WarehouseAddressAdmission'
 
 export default function Warehouses() {
     const { t } = useTranslation()
@@ -17,6 +18,7 @@ export default function Warehouses() {
     const [loading, setLoading] = useState(true)
     const [showModal, setShowModal] = useState(false)
     const [editingWarehouse, setEditingWarehouse] = useState(null)
+    const [admittingWarehouse, setAdmittingWarehouse] = useState(null)
     const [formData, setFormData] = useState({
         name: '',
         code: '',
@@ -166,6 +168,7 @@ export default function Warehouses() {
                                         <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${actionAlignClass}`}>
                                             {canManageWarehouses && (
                                                 <>
+                                                    {warehouse.isActive && <button onClick={() => setAdmittingWarehouse(warehouse)} className={`text-primary-600 ${actionSpacingClass}`}>{t('shipping.warehouseAdmission.title')}</button>}
                                                     <button
                                                         onClick={() => handleEdit(warehouse)}
                                                         className={`text-primary-600 hover:text-primary-900 ${actionSpacingClass}`}
@@ -190,6 +193,7 @@ export default function Warehouses() {
             </div>
 
             {/* Create/Edit Modal */}
+            {canManageWarehouses && admittingWarehouse && <WarehouseAddressAdmission warehouse={admittingWarehouse} onClose={() => setAdmittingWarehouse(null)} />}
             {canManageWarehouses && showModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">

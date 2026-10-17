@@ -34,7 +34,7 @@ export default function AffiliateResetPassword() {
         try {
             await affiliateAuthApi.resetPassword(token, form.password)
             setStatus('success')
-        } catch (error) {
+        } catch {
             setStatus('error')
             setMessage(t('identity.reset.failed'))
         } finally {

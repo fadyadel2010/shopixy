@@ -63,6 +63,8 @@ public class AdminShipmentsController : ControllerBase
     /// - fromDate: DateTime? (optional)
     /// - toDate: DateTime? (optional)
     /// - orderId: Guid? (optional)
+    /// - isCod: bool? (optional)
+    /// - search: string? (optional)
     /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(AdminPagedResult<AdminShipmentListItemDto>), StatusCodes.Status200OK)]
@@ -75,6 +77,8 @@ public class AdminShipmentsController : ControllerBase
         [FromQuery] DateTime? fromDate = null,
         [FromQuery] DateTime? toDate = null,
         [FromQuery] Guid? orderId = null,
+        [FromQuery] bool? isCod = null,
+        [FromQuery] string? search = null,
         CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
@@ -93,7 +97,9 @@ public class AdminShipmentsController : ControllerBase
             Carrier = carrier,
             FromDate = fromDate,
             ToDate = toDate,
-            OrderId = orderId
+            OrderId = orderId,
+            IsCod = isCod,
+            Search = search
         };
 
         // Validate query
@@ -365,6 +371,10 @@ public class AdminShipmentsController : ControllerBase
 
         try
         {
+            if (User.Identity?.IsAuthenticated != true ||
+                !Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var actorId) || actorId == Guid.Empty)
+                return Forbid();
+            request.ActorUserId = actorId;
             var result = await _adminShipmentService.CancelShipmentAsync(
                 validation.TenantId!.Value,
                 shipmentId,
@@ -372,7 +382,7 @@ public class AdminShipmentsController : ControllerBase
                 traceId,
                 cancellationToken);
 
-            return Ok(result);
+            return StatusCode(result.Outcome == "Confirmed" ? 200 : result.Outcome == "Requested" ? 202 : 409, result);
         }
         catch (AdminShipmentNotFoundException)
         {
@@ -386,6 +396,8 @@ public class AdminShipmentsController : ControllerBase
         {
             return BadRequest(new AdminShipmentApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (ArgumentException) { return BadRequest(new AdminShipmentApiErrorResponse("CANCELLATION_REASON_INVALID", "A reason of at most 500 characters is required.", traceId)); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "CancelShipment | TenantId: {TenantId} | ShipmentId: {ShipmentId} | Error | TraceId: {TraceId}", 
@@ -396,6 +408,39 @@ public class AdminShipmentsController : ControllerBase
     }
 
     #region Header Validation
+
+    [Authorize(Policy = PointOfSale.Core.Security.PosPermissions.ShippingView)]
+    [HttpGet("{shipmentId:guid}/parcel-evidence")]
+    public async Task<IActionResult> GetParcelEvidence(Guid shipmentId,
+        [FromServices] PointOfSale.Infrastructure.Shipping.ShipmentParcelEvidenceService evidence, CancellationToken ct)
+    {
+        try { return Ok(await evidence.ReadAsync(_tenantContext.RequiredTenantId, shipmentId, ct)); }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return Conflict(new { code = ex.Message }); }
+    }
+
+    [Authorize(Policy = PointOfSale.Core.Security.PosPermissions.ShippingFulfill)]
+    [HttpPut("{shipmentId:guid}/parcel-evidence")]
+    public async Task<IActionResult> SaveParcelEvidence(Guid shipmentId,
+        [FromBody] PointOfSale.Infrastructure.Shipping.ParcelMeasurement request,
+        [FromServices] PointOfSale.Infrastructure.Shipping.ShipmentParcelEvidenceService evidence, CancellationToken ct)
+    {
+        if (!Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var actor) || actor == Guid.Empty)
+            return Forbid();
+        try { return Ok(await evidence.SaveAsync(_tenantContext.RequiredTenantId, shipmentId, actor, request, ct)); }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return BadRequest(new { code = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { code = ex.Message }); }
+    }
+
+    [Authorize(Policy = PointOfSale.Core.Security.PosPermissions.ShippingFulfill)]
+    [HttpPost("{shipmentId:guid}/parcel-quote")]
+    public async Task<IActionResult> QuoteParcel(Guid shipmentId,
+        [FromServices] PointOfSale.Infrastructure.Shipping.ICarrierShipmentService carrier, CancellationToken ct)
+    {
+        var result = await carrier.QuoteExistingShipmentAsync(_tenantContext.RequiredTenantId, shipmentId, ct);
+        return StatusCode(result.Success ? 200 : 409, result);
+    }
 
     private (Guid? TenantId, IActionResult? Error) ValidateTenantHeader(string traceId)
     {

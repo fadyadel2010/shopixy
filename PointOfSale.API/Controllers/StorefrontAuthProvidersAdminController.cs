@@ -144,11 +144,11 @@ public class StorefrontAuthProvidersAdminController : ControllerBase
             authProvider,
             request,
             userId,
-            cancellationToken);
+            cancellationToken, ExpectedRevision);
 
         if (!result.Success)
         {
-            return BadRequest(new { error = result.Error, message = result.Message });
+            return StatusCode(result.Error == "CONCURRENCY_CONFLICT" ? 409 : 400, new { error = result.Error, message = result.Message });
         }
 
         return Ok(result);
@@ -187,11 +187,11 @@ public class StorefrontAuthProvidersAdminController : ControllerBase
             tenantId,
             authProvider,
             userId,
-            cancellationToken);
+            cancellationToken, ExpectedRevision);
 
         if (!result.Success)
         {
-            return BadRequest(new { error = result.Error, message = result.Message });
+            return StatusCode(result.Error == "CONCURRENCY_CONFLICT" ? 409 : 400, new { error = result.Error, message = result.Message });
         }
 
         return Ok(result);
@@ -226,19 +226,19 @@ public class StorefrontAuthProvidersAdminController : ControllerBase
         }
 
         _logger.LogWarning(
-            "[AuthProviderAdmin] DISABLE request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId} | Reason: {Reason} | TraceId: {TraceId}",
-            tenantId, authProvider, userId, request?.Reason ?? "Not specified", traceId);
+            "[AuthProviderAdmin] DISABLE request | TenantId: {TenantId} | Provider: {Provider} | UserId: {UserId} | TraceId: {TraceId}",
+            tenantId, authProvider, userId, traceId);
 
         var result = await _providerService.DisableProviderAsync(
             tenantId,
             authProvider,
             userId,
             request?.Reason,
-            cancellationToken);
+            cancellationToken, ExpectedRevision);
 
         if (!result.Success)
         {
-            return BadRequest(new { error = result.Error, message = result.Message });
+            return StatusCode(result.Error == "CONCURRENCY_CONFLICT" ? 409 : 400, new { error = result.Error, message = result.Message });
         }
 
         return Ok(result);
@@ -287,17 +287,19 @@ public class StorefrontAuthProvidersAdminController : ControllerBase
             authProvider,
             request.ClientSecret,
             userId,
-            cancellationToken);
+            cancellationToken, ExpectedRevision);
 
         if (!result.Success)
         {
-            return BadRequest(new { error = result.Error, message = result.Message });
+            return StatusCode(result.Error == "CONCURRENCY_CONFLICT" ? 409 : 400, new { error = result.Error, message = result.Message });
         }
 
         return Ok(result);
     }
 
     #region Helper Methods
+
+    private string? ExpectedRevision => Request.Headers.IfMatch.FirstOrDefault()?.Trim('"');
 
     private string GetTraceId() => Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
@@ -310,7 +312,8 @@ public class StorefrontAuthProvidersAdminController : ControllerBase
     private static bool TryParseProvider(string provider, out AuthProvider authProvider)
     {
         return Enum.TryParse<AuthProvider>(provider, ignoreCase: true, out authProvider)
-            && authProvider != AuthProvider.Local; // Local is not configurable
+            && (authProvider is AuthProvider.Google or AuthProvider.Facebook)
+            && (provider.Equals("Google", StringComparison.OrdinalIgnoreCase) || provider.Equals("Facebook", StringComparison.OrdinalIgnoreCase));
     }
 
     #endregion

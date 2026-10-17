@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../../common/confirm/ConfirmDialogProvider'
 import api from '../../../services/api'
 import { useSettings } from '../../../contexts/SettingsContext'
 import { fetchSupportedCarriers, getCarrierDisplayName } from '../shippingAdministrationApi'
+import { getShippingMethodCountryOptions, parseShippingMethodCountryScope, serializeShippingMethodCountryScope } from '../shippingMethodCountryScope'
 
 const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const DEFAULT_CARRIER_CODE = 'manual'
@@ -46,6 +47,14 @@ function requireInteger(value, field, min = 0) {
     return value
 }
 
+function optionalWarehouseId(value) {
+    if (value === null || value === undefined) return null
+    if (typeof value !== 'string' || !GUID_REGEX.test(value)) {
+        throw new Error('Shipping method read authority rejected malformed fulfillment warehouse identity.')
+    }
+    return value
+}
+
 export function admitAdminShippingMethods(payload) {
     if (!Array.isArray(payload)) {
         throw new Error('Shipping method read authority rejected malformed DTO list.')
@@ -70,6 +79,7 @@ export function admitAdminShippingMethods(payload) {
 
         const minDays = requireInteger(method.estimatedDeliveryDaysMin, 'estimated delivery minimum', 0)
         const maxDays = requireInteger(method.estimatedDeliveryDaysMax, 'estimated delivery maximum', minDays)
+        parseShippingMethodCountryScope(method.availableCountries)
 
         return {
             ...method,
@@ -88,8 +98,9 @@ export function admitAdminShippingMethods(payload) {
             carrierName: optionalText(method.carrierName, 'carrier'),
             carrierCode: optionalText(method.carrierCode, 'carrier code'),
             serviceLevel: optionalText(method.serviceLevel, 'service level') || DEFAULT_SERVICE_LEVEL,
+            fulfillmentWarehouseId: optionalWarehouseId(method.fulfillmentWarehouseId),
             trackingUrlTemplate: optionalText(method.trackingUrlTemplate, 'tracking URL template'),
-            availableCountries: optionalText(method.availableCountries, 'zone assignment'),
+            availableCountries: method.availableCountries ?? null,
         }
     })
 }
@@ -105,22 +116,35 @@ function findCarrier(supportedCarriers, carrierCode) {
 }
 
 function getDefaultServiceLevel(carrier) {
-    return carrier?.serviceLevels?.[0]?.code || DEFAULT_SERVICE_LEVEL
+    return carrier?.serviceLevels?.[0]?.code || ''
 }
 
 function isServiceLevelAllowed(carrier, serviceLevel) {
     if (!carrier?.serviceLevels?.length) {
-        return serviceLevel === DEFAULT_SERVICE_LEVEL
+        return false
     }
 
     return carrier.serviceLevels.some((level) => level.code === serviceLevel)
 }
 
-export default function ShippingMethodsTab({ warehouses = [] }) {
+function isCarrierReadyForActiveMethod(carrier, carrierAccounts) {
+    if (!carrier) return false
+    if (['Unavailable', 'NotCertified'].includes(carrier.productionCapability)) return false
+    if (carrier.readinessRequired !== true) return true
+    return carrierAccounts.some((account) => (
+        account.carrierCode === carrier.carrierCode
+        && account.integrationReadiness?.canExecute === true
+    ))
+}
+
+export default function ShippingMethodsTab({ warehouses = [], carrierAccounts = [] }) {
     const { t, i18n } = useTranslation()
     const { confirm } = useConfirmDialog()
     const { formatCurrency, settings } = useSettings()
     const isRTL = i18n.language === 'ar'
+    const countryOptions = useMemo(() => getShippingMethodCountryOptions(isRTL ? 'ar' : 'en'), [isRTL])
+    const countryLabelByCode = useMemo(() => new Map(countryOptions.map(({ code, label }) => [code, label])), [countryOptions])
+    const countryText = (key, en, ar) => t(`shippingAdministration.methods.countries.${key}`, { defaultValue: isRTL ? ar : en })
     const [methods, setMethods] = useState([])
     const [supportedCarriers, setSupportedCarriers] = useState([])
     const [loading, setLoading] = useState(true)
@@ -143,24 +167,39 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
         serviceLevel: DEFAULT_SERVICE_LEVEL,
         fulfillmentWarehouseId: '',
         trackingUrlTemplate: '',
+        countryScope: null,
     })
+    const [countryScopeError, setCountryScopeError] = useState('')
     const [error, setError] = useState('')
     const [success, setSuccess] = useState('')
+    const [busy, setBusy] = useState(false)
+    const pending = useRef(false)
+    const mounted = useRef(true)
+    const readId = useRef(0)
 
     const fetchMethods = async () => {
+        const id = ++readId.current
         try {
             setLoading(true)
+            setError('')
             const response = await api.get('/shippingmethods?activeOnly=false', {
                 headers: {
                     'Cache-Control': 'no-store',
                     Pragma: 'no-cache',
                 },
             })
+            if (!mounted.current || readId.current !== id) return false
             setMethods(admitAdminShippingMethods(response.data))
+            return true
         } catch (err) {
-            setError(t('common.failedToLoad'))
+            if (!mounted.current || readId.current !== id) return false
+            setMethods([])
+            setError(err?.code === 'INVALID_SHIPPING_COUNTRY_SCOPE'
+                ? countryText('invalidSaved', 'Saved shipping country scope is invalid. Methods could not be loaded safely.', 'نطاق دول الشحن المحفوظ غير صالح. تعذر تحميل طرق الشحن بأمان.')
+                : t('common.failedToLoad'))
+            return false
         } finally {
-            setLoading(false)
+            if (mounted.current && readId.current === id) setLoading(false)
         }
     }
 
@@ -168,21 +207,47 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
         try {
             setCarriersLoading(true)
             setCarrierLoadError('')
-            setSupportedCarriers(await fetchSupportedCarriers())
+            const carriers = await fetchSupportedCarriers()
+            if (mounted.current) setSupportedCarriers(carriers)
         } catch (err) {
+            if (!mounted.current) return
             setSupportedCarriers([])
             setCarrierLoadError(err.message || t('shippingAdministration.methods.carrierLoadFailed'))
         } finally {
-            setCarriersLoading(false)
+            if (mounted.current) setCarriersLoading(false)
         }
     }
 
     useEffect(() => {
+        mounted.current = true
         fetchMethods()
         fetchCarriers()
+        return () => { mounted.current = false; readId.current += 1 }
     }, [])
 
+    const runMutation = async (operation, message, accepted) => {
+        if (pending.current || !mounted.current) return
+        pending.current = true
+        setBusy(true)
+        setSuccess('')
+        setError('')
+        readId.current += 1
+        try {
+            await operation()
+            if (!mounted.current) return
+            accepted?.()
+            if (await fetchMethods()) setSuccess(message)
+            else if (mounted.current) setError(t('phase5.savedReloadFailed', 'Saved, but fresh data could not be reloaded. Retry the read before making another change.'))
+        } catch (err) {
+            if (mounted.current) setError(err.response?.data?.message || t('common.error'))
+        } finally {
+            pending.current = false
+            if (mounted.current) setBusy(false)
+        }
+    }
+
     const selectedCarrier = findCarrier(supportedCarriers, formData.carrierCode)
+    const selectedCarrierReady = isCarrierReadyForActiveMethod(selectedCarrier, carrierAccounts)
     const selectedCarrierServiceLevels = selectedCarrier?.serviceLevels || []
     const activeWarehouses = warehouses.filter((warehouse) => warehouse.isActive !== false)
     const singleActiveWarehouseId = activeWarehouses.length === 1 ? activeWarehouses[0].id : ''
@@ -204,6 +269,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
 
     const resetForm = () => {
         setEditingMethod(null)
+        setCountryScopeError('')
         setFormData({
             name: '',
             nameAr: '',
@@ -219,6 +285,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             serviceLevel: getDefaultServiceLevel(findCarrier(supportedCarriers, DEFAULT_CARRIER_CODE)),
             fulfillmentWarehouseId: singleActiveWarehouseId,
             trackingUrlTemplate: '',
+            countryScope: null,
         })
     }
 
@@ -235,6 +302,18 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
     const handleSubmit = async (e) => {
         e.preventDefault()
         setError('')
+        setCountryScopeError('')
+
+        let availableCountries
+        try {
+            availableCountries = serializeShippingMethodCountryScope(formData.countryScope)
+            if (editingMethod && availableCountries === serializeShippingMethodCountryScope(parseShippingMethodCountryScope(editingMethod.availableCountries))) {
+                availableCountries = editingMethod.availableCountries
+            }
+        } catch {
+            setCountryScopeError(countryText('required', 'Select at least one valid shipping country, or explicitly choose all countries.', 'اختر دولة شحن صالحة واحدة على الأقل، أو اختر جميع الدول صراحةً.'))
+            return
+        }
 
         try {
             const normalizedCarrierCode = normalizeCarrierCode(formData.carrierCode)
@@ -244,9 +323,16 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                 return
             }
 
-            const normalizedServiceLevel = isServiceLevelAllowed(carrier, formData.serviceLevel)
-                ? formData.serviceLevel
-                : getDefaultServiceLevel(carrier)
+            if (formData.isActive && !isCarrierReadyForActiveMethod(carrier, carrierAccounts)) {
+                setError(t('shippingAdministration.methods.carrierNotReady'))
+                return
+            }
+
+            if (!isServiceLevelAllowed(carrier, formData.serviceLevel)) {
+                setError(t('shipping.closure.serviceUnavailable'))
+                return
+            }
+            const normalizedServiceLevel = formData.serviceLevel
 
             if (formData.isActive && !formData.fulfillmentWarehouseId) {
                 setError(t('shippingAdministration.methods.activeWarehouseRequired'))
@@ -262,25 +348,21 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                 fulfillmentWarehouseId: formData.fulfillmentWarehouseId || null,
                 isActive: formData.isActive,
                 trackingUrlTemplate: formData.trackingUrlTemplate,
+                availableCountries,
                 baseRate: parseFloat(formData.baseRate) || 0,
                 perKgRate: parseFloat(formData.perKgRate) || 0,
                 freeShippingThreshold: formData.freeShippingThreshold ? parseFloat(formData.freeShippingThreshold) : null,
-                estimatedDeliveryDaysMin: parseInt(formData.estimatedDeliveryDaysMin) || 1,
-                estimatedDeliveryDaysMax: parseInt(formData.estimatedDeliveryDaysMax) || 5,
+                estimatedDeliveryDaysMin: formData.estimatedDeliveryDaysMin === '' ? 1 : Number(formData.estimatedDeliveryDaysMin),
+                estimatedDeliveryDaysMax: formData.estimatedDeliveryDaysMax === '' ? 5 : Number(formData.estimatedDeliveryDaysMax),
                 sortOrder: parseInt(formData.sortOrder) || 0,
             }
 
-            if (editingMethod) {
-                await api.put(`/shippingmethods/${editingMethod.id}`, data)
-                setSuccess(t('common.updatedSuccessfully'))
-            } else {
-                await api.post('/shippingmethods', data)
-                setSuccess(t('shipping.created'))
-            }
-
-            setShowModal(false)
-            fetchMethods()
-            resetForm()
+            await runMutation(() => editingMethod
+                ? api.put(`/shippingmethods/${editingMethod.id}`, data, ...(editingMethod.revision ? [{ headers: { 'If-Match': editingMethod.revision } }] : []))
+                : api.post('/shippingmethods', data), editingMethod ? t('common.updatedSuccessfully') : t('shipping.created'), () => {
+                setShowModal(false)
+                resetForm()
+            })
         } catch (err) {
             setError(err.response?.data?.message || t('common.error'))
         }
@@ -291,6 +373,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
         const carrier = findCarrier(supportedCarriers, normalizedCarrierCode)
         const serviceLevel = method.serviceLevel || getDefaultServiceLevel(carrier)
         setEditingMethod(method)
+        setCountryScopeError('')
         setFormData({
             name: method.name,
             nameAr: method.nameAr || '',
@@ -303,9 +386,10 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             isActive: method.isActive,
             sortOrder: method.sortOrder.toString(),
             carrierCode: normalizedCarrierCode,
-            serviceLevel: isServiceLevelAllowed(carrier, serviceLevel) ? serviceLevel : getDefaultServiceLevel(carrier),
+            serviceLevel,
             fulfillmentWarehouseId: method.fulfillmentWarehouseId || '',
             trackingUrlTemplate: method.trackingUrlTemplate || '',
+            countryScope: parseShippingMethodCountryScope(method.availableCountries),
         })
         setShowModal(true)
     }
@@ -318,15 +402,9 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             variant: 'danger',
         })
 
-        if (!confirmed) return
-
-        try {
-            await api.delete(`/shippingmethods/${id}`)
-            setSuccess(t('common.deletedSuccessfully'))
-            fetchMethods()
-        } catch (err) {
-            setError(err.response?.data?.message || t('common.deleteFailed'))
-        }
+        if (!confirmed || !mounted.current) return
+        const method = methods.find(item => item.id === id)
+        await runMutation(() => api.delete(`/shippingmethods/${id}`, ...(method?.revision ? [{ headers: { 'If-Match': method.revision } }] : [])), t('common.deletedSuccessfully'))
     }
 
     const openAddModal = () => {
@@ -335,7 +413,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
     }
 
     return (
-        <div>
+        <fieldset disabled={busy} className="min-w-0">
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-gray-900">{t('shipping.title')}</h2>
@@ -347,7 +425,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
             </div>
 
             {error && (
-                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg" role="alert">
                     {error}
                 </div>
             )}
@@ -362,6 +440,11 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                 {loading ? (
                     <div className="flex justify-center py-12">
                         <div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full"></div>
+                    </div>
+                ) : error && methods.length === 0 ? (
+                    <div className="p-6 text-center">
+                        <p>{t('common.failedToLoad')}</p>
+                        <button type="button" onClick={fetchMethods} className="btn-secondary mt-3">{t('common.retry')}</button>
                     </div>
                 ) : methods.length === 0 ? (
                     <div className="text-center py-12 text-gray-500">
@@ -378,6 +461,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.perKgRate')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.freeThreshold')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.deliveryDays')}</th>
+                                    <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{countryText('title', 'Shipping countries', 'دول الشحن')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shippingAdministration.methods.fulfillmentWarehouse')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.status')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.actions')}</th>
@@ -395,12 +479,16 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                         <td className="px-6 py-4 text-gray-900">{formatCurrency(method.baseRate)}</td>
                                         <td className="px-6 py-4 text-gray-900">{formatCurrency(method.perKgRate)}/kg</td>
                                         <td className="px-6 py-4 text-gray-900">
-                                            {method.freeShippingThreshold
+                                            {method.freeShippingThreshold != null
                                                 ? `${formatCurrency(method.freeShippingThreshold)}+`
                                                 : '-'}
                                         </td>
                                         <td className="px-6 py-4 text-gray-900">
                                             {method.estimatedDeliveryDaysMin}-{method.estimatedDeliveryDaysMax} {t('shipping.days')}
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-900">
+                                            {parseShippingMethodCountryScope(method.availableCountries)?.map((code) => countryLabelByCode.get(code)).join(', ')
+                                                ?? countryText('all', 'All countries', 'جميع الدول')}
                                         </td>
                                         <td className="px-6 py-4 text-gray-900">
                                             {method.fulfillmentWarehouseId ? (
@@ -460,6 +548,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                     <label className="label">{t('shipping.nameEn')} *</label>
                                     <input
                                         type="text"
+                                        aria-label={t('shipping.nameEn')}
                                         value={formData.name}
                                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                         className="input"
@@ -494,6 +583,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                     <input
                                         type="number"
                                         step="0.01"
+                                        aria-label={t('shipping.baseRate')}
                                         value={formData.baseRate}
                                         onChange={(e) => setFormData({ ...formData, baseRate: e.target.value })}
                                         className="input"
@@ -522,10 +612,59 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 </div>
                             </div>
 
+                            <fieldset className="rounded-lg border border-gray-200 p-4 space-y-3">
+                                <legend className="px-1 font-medium">{countryText('title', 'Shipping countries', 'دول الشحن')}</legend>
+                                <p id="shipping-country-scope-help" className="text-sm text-gray-600">
+                                    {countryText('help', 'These rates are shared by all selected countries. Country scope is separate from carrier credentials and does not configure city rates or guarantee carrier coverage.', 'تُطبق هذه الأسعار على جميع الدول المختارة. نطاق الدول منفصل عن بيانات ربط شركة الشحن، ولا يحدد أسعار المدن أو يضمن تغطية شركة الشحن.')}
+                                </p>
+                                <label className="label" htmlFor="shipping-country-scope">{countryText('scope', 'Country scope', 'نطاق الدول')}</label>
+                                <select
+                                    id="shipping-country-scope"
+                                    aria-describedby="shipping-country-scope-help"
+                                    value={formData.countryScope === null ? 'all' : 'selected'}
+                                    onChange={(e) => {
+                                        setCountryScopeError('')
+                                        setFormData({ ...formData, countryScope: e.target.value === 'all' ? null : [] })
+                                    }}
+                                    className="input"
+                                >
+                                    <option value="all">{countryText('all', 'All countries', 'جميع الدول')}</option>
+                                    <option value="selected">{countryText('selected', 'Selected countries only', 'الدول المختارة فقط')}</option>
+                                </select>
+                                {formData.countryScope !== null && (
+                                    <>
+                                        <label className="label" htmlFor="shipping-country-codes">{countryText('select', 'Select shipping countries', 'اختر دول الشحن')}</label>
+                                        <select
+                                            id="shipping-country-codes"
+                                            multiple
+                                            size={6}
+                                            value={formData.countryScope}
+                                            aria-invalid={!!countryScopeError}
+                                            aria-describedby="shipping-country-selection-help shipping-country-scope-error"
+                                            onChange={(e) => {
+                                                setCountryScopeError('')
+                                                setFormData({ ...formData, countryScope: Array.from(e.target.selectedOptions, (option) => option.value) })
+                                            }}
+                                            className="input"
+                                        >
+                                            {countryOptions.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+                                        </select>
+                                        <p id="shipping-country-selection-help" className="text-xs text-gray-600">
+                                            {countryText('selectionHelp', 'Select one or more countries. Use Ctrl/Cmd to select multiple countries on a desktop.', 'اختر دولة واحدة أو أكثر. استخدم Ctrl/Cmd لاختيار عدة دول على الكمبيوتر.')}
+                                        </p>
+                                    </>
+                                )}
+                                <div id="shipping-country-scope-error">
+                                    {countryScopeError && <p role="alert" className="text-sm text-red-700">{countryScopeError}</p>}
+                                </div>
+                            </fieldset>
+
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div>
-                                    <label className="label">{t('shipping.minDays')}</label>
+                                    <label className="label" htmlFor="shipping-min-days">{t('shipping.minDays')}</label>
                                     <input
+                                        id="shipping-min-days"
+                                        min="0"
                                         type="number"
                                         value={formData.estimatedDeliveryDaysMin}
                                         onChange={(e) => setFormData({ ...formData, estimatedDeliveryDaysMin: e.target.value })}
@@ -533,8 +672,10 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                     />
                                 </div>
                                 <div>
-                                    <label className="label">{t('shipping.maxDays')}</label>
+                                    <label className="label" htmlFor="shipping-max-days">{t('shipping.maxDays')}</label>
                                     <input
+                                        id="shipping-max-days"
+                                        min={formData.estimatedDeliveryDaysMin || '0'}
                                         type="number"
                                         value={formData.estimatedDeliveryDaysMax}
                                         onChange={(e) => setFormData({ ...formData, estimatedDeliveryDaysMax: e.target.value })}
@@ -564,6 +705,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                     ) : (
                                         <>
                                             <select
+                                                aria-label={t('shipping.closure.carrier')}
                                                 value={formData.carrierCode}
                                                 onChange={(e) => updateCarrierSelection(e.target.value)}
                                                 className="input"
@@ -574,15 +716,21 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                                         {t('shippingAdministration.methods.unsupportedLegacyCarrier', { carrierCode: unsupportedLegacyCarrierCode })}
                                                     </option>
                                                 )}
-                                                {supportedCarriers.map((carrier) => (
-                                                    <option key={carrier.carrierCode} value={carrier.carrierCode}>
-                                                        {carrier.displayName}
+                                                {supportedCarriers.map((carrier) => {
+                                                    const ready = isCarrierReadyForActiveMethod(carrier, carrierAccounts)
+                                                    return <option key={carrier.carrierCode} value={carrier.carrierCode} disabled={formData.isActive && !ready}>
+                                                        {ready ? carrier.displayName : `${carrier.displayName} — ${t('shippingAdministration.methods.carrierNotReadyShort')}`}
                                                     </option>
-                                                ))}
+                                                })}
                                             </select>
                                             {unsupportedLegacyCarrierCode && (
                                                 <p className="mt-1 text-xs text-amber-700">
                                                     {t('shippingAdministration.methods.unsupportedLegacyHelp')}
+                                                </p>
+                                            )}
+                                            {selectedCarrier && !selectedCarrierReady && (
+                                                <p className="mt-1 text-xs text-amber-700">
+                                                    {t('shippingAdministration.methods.carrierNotReady')}
                                                 </p>
                                             )}
                                         </>
@@ -604,10 +752,12 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 <label className="label">{t('shipping.serviceLevel', 'Service Level')}</label>
                                 {selectedCarrierServiceLevels.length > 0 ? (
                                     <select
+                                        aria-label={t('shipping.serviceLevel', 'Service Level')}
                                         value={formData.serviceLevel}
                                         onChange={(e) => setFormData({ ...formData, serviceLevel: e.target.value })}
                                         className="input"
                                     >
+                                        {!isServiceLevelAllowed(selectedCarrier, formData.serviceLevel) && <option value={formData.serviceLevel} disabled>{formData.serviceLevel || t('shippingAdministration.methods.selectCarrierFirst')}</option>}
                                         {selectedCarrierServiceLevels.map((level) => (
                                             <option key={level.code} value={level.code}>
                                                 {level.name} ({level.typicalDaysMin}-{level.typicalDaysMax} {t('shipping.days')})
@@ -617,7 +767,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 ) : (
                                     <div className="input flex items-center text-gray-500">
                                         {selectedCarrier
-                                            ? t('shippingAdministration.methods.standardServiceFallback')
+                                            ? t('shipping.closure.serviceUnavailable')
                                             : t('shippingAdministration.methods.selectCarrierFirst')}
                                     </div>
                                 )}
@@ -626,6 +776,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                             <div>
                                 <label className="label">{t('shippingAdministration.methods.fulfillmentWarehouse')}</label>
                                 <select
+                                    aria-label={t('shippingAdministration.methods.fulfillmentWarehouse')}
                                     value={formData.fulfillmentWarehouseId}
                                     onChange={(e) => setFormData({ ...formData, fulfillmentWarehouseId: e.target.value })}
                                     className="input"
@@ -669,7 +820,7 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={carriersLoading || !!carrierLoadError || !selectedCarrier}
+                                    disabled={carriersLoading || !!carrierLoadError || !selectedCarrier || (formData.isActive && !selectedCarrierReady) || !isServiceLevelAllowed(selectedCarrier, formData.serviceLevel)}
                                     className="flex-1 btn-primary"
                                 >
                                     {editingMethod ? t('common.update') : t('common.save')}
@@ -679,6 +830,6 @@ export default function ShippingMethodsTab({ warehouses = [] }) {
                     </div>
                 </div>
             )}
-        </div>
+        </fieldset>
     )
 }

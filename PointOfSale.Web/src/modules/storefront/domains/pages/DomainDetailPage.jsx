@@ -13,7 +13,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Globe, Archive, RotateCcw, Trash2, Save, Shield } from 'lucide-react'
+import { Globe, Archive, RotateCcw, Trash2, Shield } from 'lucide-react'
 
 import {
     AuthoringButton,
@@ -41,7 +41,7 @@ export function DomainDetailPage() {
     const [activeTab, setActiveTab] = useState('overview')
     const [dialogState, setDialogState] = useState({ isOpen: false, action: null, domain: null })
 
-    const { data, state, error, isLoading, isError, isUnauthorized, isSuccess, refetch } =
+    const { data, state, error, isLoading, isError, isUnauthorized, refetch } =
         useDomainDetail(id)
 
     const { requestNavigation } = useAuthoringGuard({
@@ -52,9 +52,7 @@ export function DomainDetailPage() {
     const {
         isMutating,
         error: mutationError,
-        errorCode: mutationErrorCode,
         isConcurrencyConflict,
-        serverVersion,
         archiveDomain,
         restoreDomain,
         deleteDomain,
@@ -63,7 +61,7 @@ export function DomainDetailPage() {
         clearError,
     } = useDomainMutations({
         mutationOptions: {
-            onSuccess: (result) => {
+            onSuccess: () => {
                 // Close dialog and refetch detail
                 setDialogState({ isOpen: false, action: null, domain: null })
                 refetch()
@@ -110,7 +108,7 @@ export function DomainDetailPage() {
                        data.lifecycleState !== 'Archived'
 
     const canPromote = data && !data.isPrimary &&
-                        (data.lifecycleState === 'SslActive' || data.lifecycleState === 'Verified')
+                         data.lifecycleState === 'SslActive'
     const canStartVerification = data && !data.isPrimary && data.lifecycleState === 'Draft'
 
     const handleStartVerification = async () => {
@@ -153,7 +151,7 @@ export function DomainDetailPage() {
                     break
             }
             // onSuccess callback in useDomainMutations will close dialog and refetch
-        } catch (err) {
+        } catch {
             // Error state is managed by the hook
         }
     }
@@ -534,13 +532,6 @@ function TabContent({ tabId, data, t, onNavigate }) {
             )
         case 'ssl':
             return <SslSummaryPanel data={data} t={t} onNavigate={onNavigate} />
-            return (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-700/50">
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                        {t('storefront.domains.sslNavigate', 'SSL management — navigate to /ssl for full details.')}
-                    </p>
-                </div>
-            )
         case 'redirects':
             return (
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-700/50">

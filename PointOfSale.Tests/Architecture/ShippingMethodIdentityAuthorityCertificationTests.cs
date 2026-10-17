@@ -13,8 +13,9 @@ public sealed class ShippingMethodIdentityAuthorityCertificationTests
         Assert.Contains("TenantId = tenantId", controller, StringComparison.Ordinal);
         Assert.Contains("method.Id == shippingMethodId &&", checkout, StringComparison.Ordinal);
         Assert.Contains("method.TenantId == tenantId", checkout, StringComparison.Ordinal);
-        Assert.Contains("sm.Id == shippingMethodId", shipment, StringComparison.Ordinal);
-        Assert.Contains("sm.TenantId == tenantId", shipment, StringComparison.Ordinal);
+        Assert.Contains("LoadOrderForShipmentMutationAsync(tenantId, orderId", shipment, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
+        Assert.Contains("TenantId = tenantId", shipment, StringComparison.Ordinal);
     }
 
     [Fact]

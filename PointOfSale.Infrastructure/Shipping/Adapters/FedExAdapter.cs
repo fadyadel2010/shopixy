@@ -3,12 +3,14 @@ using PointOfSale.Core.DTOs.Shipping;
 using PointOfSale.Core.Enums;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace PointOfSale.Infrastructure.Shipping.Adapters;
 
 /// <summary>
 /// FedEx runtime foundation adapter.
-/// This class registers FedEx as a first-class provider but intentionally performs no carrier behavior.
+/// Selected REST operations are implemented; canonical activation remains NotCertified.
 /// </summary>
 public sealed class FedExAdapter(
     IFedExOAuthClient oauthClient,
@@ -22,7 +24,7 @@ public sealed class FedExAdapter(
     public const string RequestMappingUnavailableErrorCode = "FEDEX_REQUEST_MAPPING_UNAVAILABLE";
     public const string AdmissionRejectedErrorCode = "FEDEX_ADMISSION_REJECTED";
     public const string NotYetCertifiedMessage =
-        "FedEx runtime foundation is registered, but this operation is not yet certified and no FedEx HTTP execution is enabled.";
+        "This FedEx operation is unavailable or not yet certified; account and production readiness are not established.";
 
     public string CarrierCode => CarrierCodes.FedEx;
     public string DisplayName => "FedEx";
@@ -74,6 +76,7 @@ public sealed class FedExAdapter(
         return Task.FromResult(new CancelShipmentResult
         {
             Success = false,
+            Disposition = CarrierCancellationDisposition.Unsupported,
             ErrorCode = NotYetCertifiedErrorCode,
             ErrorMessage = NotYetCertifiedMessage
         });
@@ -92,19 +95,36 @@ public sealed class FedExAdapter(
         return GetTrackingCoreAsync(trackingNumber, credentials, cancellationToken);
     }
 
-    public Task<CarrierValidationResult> ValidateCredentialsAsync(
+    public async Task<CarrierValidationResult> ValidateCredentialsAsync(
         CarrierCredentials credentials,
         CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(new CarrierValidationResult
+        cancellationToken.ThrowIfCancellationRequested();
+        try
         {
-            Success = false,
-            ErrorCode = NotYetCertifiedErrorCode,
-            ErrorMessage = NotYetCertifiedMessage
-        });
+            var authorization = await OAuthClient.GetAuthorizationHeaderAsync(BuildOAuthRequest(credentials), credentials.UseSandbox, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            // OAuth success is a usable project token, not account/route/service
+            // certification. A success-shaped but incomplete/expired result must
+            // not be persisted as successful account validation by administration.
+            var usableProjectToken = authorization.Success &&
+                string.Equals(authorization.AuthorizationHeader?.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(authorization.AuthorizationHeader?.Parameter) &&
+                !authorization.AuthorizationHeader.Parameter.Any(value => char.IsWhiteSpace(value) || char.IsControl(value)) &&
+                authorization.ExpiresAtUtc.HasValue && authorization.ExpiresAtUtc.Value > DateTimeOffset.UtcNow;
+            return new CarrierValidationResult
+            {
+                Success = usableProjectToken,
+                ErrorCode = usableProjectToken ? null : authorization.ErrorCode ?? "FEDEX_OAUTH_AUTHORIZATION_FAILED",
+                ErrorMessage = usableProjectToken ? null : "FedEx OAuth project authorization failed; no shipment entitlement was established.",
+                AccountName = usableProjectToken ? "FedEx OAuth project (route/service qualification separate)" : null
+            };
+        }
+        catch (InvalidOperationException) { return new() { ErrorCode = "FEDEX_CREDENTIALS_INVALID", ErrorMessage = "FedEx project ID, secret and account number are required." }; }
     }
 
-    public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels() => Array.Empty<ServiceLevelInfo>();
+    public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels() =>
+        [new ServiceLevelInfo { Code = "fedex_ground", Name = "FedEx Ground", Description = "Candidate US-to-US or Canada-to-Canada prepaid single-piece service; account and route qualification required." }];
 
     public WebhookParseResult? ParseWebhook(
         string payload,
@@ -316,7 +336,7 @@ public sealed class FedExAdapter(
                     transport.Error?.ErrorMessage ?? "FedEx create shipment transport failed.");
             }
 
-            var admission = FedExResponseAdmission.AdmitShipment(transport.Response!.RawJson);
+            var admission = FedExResponseAdmission.AdmitShipment(transport.Response!.RawJson, officialRequest.RequestedShipment.ServiceType);
             LogEndpoint(endpoint, correlationId, started, transport.Response.StatusCode, admission.Success ? "Accepted" : admission.ErrorCode);
             if (!admission.Success || admission.Dto is null)
             {
@@ -326,17 +346,19 @@ public sealed class FedExAdapter(
             }
 
             var label = admission.Dto.Labels.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(label?.EncodedPayload))
+                return FailShipment(AdmissionRejectedErrorCode, "FedEx LABEL response must contain encoded PDF label evidence.");
             return new CreateShipmentResult
             {
                 Success = true,
                 ExternalReferenceId = admission.Dto.ShipmentIdentifier,
                 TrackingNumber = admission.Dto.TrackingNumber,
                 AwbNumber = admission.Dto.TrackingNumber,
-                InitialStatus = ShipmentStatus.Pending,
+                InitialStatus = ShipmentStatus.ReadyForPickup,
                 LabelUrl = label?.Url?.ToString(),
                 LabelData = label?.EncodedPayload,
-                LabelFormat = label?.MediaType,
-                CarrierMetadata = FedExContractSerializer.SerializeJson(admission.Dto.ProviderReferences)
+                LabelFormat = "pdf",
+                CarrierMetadata = JsonSerializer.Serialize(new { references = admission.Dto.ProviderReferences })
             };
         }
         catch (FedExContractValidationException ex)
@@ -381,7 +403,7 @@ public sealed class FedExAdapter(
                     transport.Error?.ErrorMessage ?? "FedEx tracking transport failed.");
             }
 
-            var admission = FedExResponseAdmission.AdmitTracking(transport.Response!.RawJson);
+            var admission = FedExResponseAdmission.AdmitTracking(transport.Response!.RawJson, trackingNumber);
             LogEndpoint(endpoint, correlationId, started, transport.Response.StatusCode, admission.Success ? "Accepted" : admission.ErrorCode);
             if (!admission.Success || admission.Dto is null)
             {
@@ -397,12 +419,25 @@ public sealed class FedExAdapter(
             LogEndpoint(endpoint, correlationId, started, null, RequestMappingUnavailableErrorCode);
             return FailTracking(RequestMappingUnavailableErrorCode, string.Join(" ", ex.Errors));
         }
+        catch (InvalidOperationException)
+        {
+            return FailTracking(RequestMappingUnavailableErrorCode, "FedEx tracking requires valid project credentials and account configuration.");
+        }
     }
 
-    private static FedExShipmentRequest BuildCreateShipmentRequest(
+    internal static FedExShipmentRequest BuildCreateShipmentRequest(
         CreateShipmentRequest request,
         CarrierCredentials credentials)
     {
+        if (request.PackageCount != 1 || request.IsCashOnDelivery || request.CodAmount is not (null or 0) || request.InsuranceAmount is not (null or 0) ||
+            request.Customs != null || !string.Equals(request.OriginCountry, request.RecipientCountry, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("FedEx creation supports only a single domestic prepaid parcel; customs, regulatory and COD mapping are unavailable.");
+        if (request.OriginCountry is not ("US" or "CA"))
+            throw new InvalidOperationException("FedEx domestic creation outside US/CA remains blocked until country-specific regulatory request requirements are mapped.");
+        _ = Required(request.CarrierRequestId, "A durable carrier request identity is required before FedEx creation.");
+        var pickupType = credentials.ExtraConfig?.GetValueOrDefault("pickupType");
+        if (pickupType == null || !new[] { "USE_SCHEDULED_PICKUP", "DROPOFF_AT_FEDEX_LOCATION", "CONTACT_FEDEX_TO_SCHEDULE" }.Contains(pickupType))
+            throw new InvalidOperationException("FedEx requires an explicit pickupType in carrier configuration; label creation does not schedule pickup.");
         var accountNumber = Required(credentials.AccountId, "FedEx account id is required.");
         var serviceType = ResolveServiceType(request.ServiceLevel);
         var requestedShipment = new FedExRequestedShipment(
@@ -430,7 +465,7 @@ public sealed class FedExAdapter(
                         Required(request.RecipientCountry, "Recipient country is required."),
                         request.RecipientStateOrProvinceCode))
             ],
-            PickupType: "USE_SCHEDULED_PICKUP",
+            PickupType: pickupType,
             ServiceType: serviceType,
             PackagingType: "YOUR_PACKAGING",
             ShippingChargesPayment: new FedExShippingChargesPayment("SENDER"),
@@ -466,9 +501,11 @@ public sealed class FedExAdapter(
     private static FedExServiceAvailabilityRequest BuildServiceAvailabilityRequest(
         CarrierNeutralServiceAvailabilityRequest request)
     {
+        if (request.Origin.CountryIso2 != request.Destination.CountryIso2)
+            throw new InvalidOperationException("FedEx international availability requires customs/commodity evidence that this endpoint contract does not provide.");
         var requestedShipment = new FedExServiceAvailabilityShipment(
             Shipper: new FedExAddressOnlyParty(BuildFedExAddress(request.Origin, "Origin")),
-            Recipient: new FedExAddressOnlyParty(BuildFedExAddress(request.Destination, "Destination")),
+            Recipients: [new FedExAddressOnlyParty(BuildFedExAddress(request.Destination, "Destination"))],
             PickupType: "DROPOFF_AT_FEDEX_LOCATION",
             RequestedPackageLineItems: [BuildServiceAvailabilityPackageLineItem(request.ShipmentCharacteristics)]);
 
@@ -477,19 +514,9 @@ public sealed class FedExAdapter(
             requestedShipment);
     }
 
-    private static FedExAddress BuildFedExAddress(CarrierNeutralAddressSnapshot snapshot, string label)
+    private static FedExTransitAddress BuildFedExAddress(CarrierNeutralAddressSnapshot snapshot, string label)
     {
-        var streetLines = new List<string>
-        {
-            Required(snapshot.StreetLine1, $"{label} street line 1 is required.")
-        };
-        if (!string.IsNullOrWhiteSpace(snapshot.StreetLine2))
-        {
-            streetLines.Add(snapshot.StreetLine2.Trim());
-        }
-
-        return new FedExAddress(
-            streetLines,
+        return new FedExTransitAddress(
             Required(snapshot.City, $"{label} city is required."),
             Required(snapshot.PostalCode, $"{label} postal code is required."),
             Required(snapshot.CountryIso2, $"{label} country code is required."),
@@ -499,18 +526,21 @@ public sealed class FedExAdapter(
     private static FedExPackageLineItem BuildServiceAvailabilityPackageLineItem(
         CarrierNeutralShipmentCharacteristics characteristics)
     {
+        if (characteristics.PackageCount != 1)
+            throw new InvalidOperationException("FedEx availability supports one actual parcel.");
         var dimensions = characteristics.Dimensions is null
             ? null
             : new FedExDimensions(
-                Math.Max(1, (int)Math.Ceiling(characteristics.Dimensions.Length)),
-                Math.Max(1, (int)Math.Ceiling(characteristics.Dimensions.Width)),
-                Math.Max(1, (int)Math.Ceiling(characteristics.Dimensions.Height)),
+                Dimension(characteristics.Dimensions.Length),
+                Dimension(characteristics.Dimensions.Width),
+                Dimension(characteristics.Dimensions.Height),
                 MapDimensionUnit(characteristics.Dimensions.Unit));
 
         return new FedExPackageLineItem(
             new FedExWeight(MapWeightUnit(characteristics.WeightUnit), characteristics.Weight),
-            SequenceNumber: 1,
-            Dimensions: dimensions);
+            Dimensions: dimensions,
+            DeclaredValue: characteristics.DeclaredValue.HasValue
+                ? new FedExMoney(characteristics.DeclaredValue.Value, characteristics.DeclaredValueCurrency!.Value.ToString()) : null);
     }
 
     private static CarrierNeutralAddressValidationResponse MapAddressValidationResponse(
@@ -539,13 +569,16 @@ public sealed class FedExAdapter(
                 }),
             ObservedAtUtc: DateTime.UtcNow);
 
-        var result = AddressMatches(request.Destination, normalized)
-            ? AddressValidationResultKind.Valid
-            : AddressValidationResultKind.Corrected;
+        if (!string.Equals(request.Destination.CountryIso2, resolved.CountryCode, StringComparison.Ordinal))
+            throw new InvalidOperationException("FedEx resolved address country does not match the requested address.");
+        var result = resolved.Result == AddressValidationResultKind.Valid && !AddressMatches(request.Destination, normalized)
+            ? AddressValidationResultKind.Corrected : resolved.Result;
+        if (result == AddressValidationResultKind.Unknown)
+            throw new InvalidOperationException("FedEx did not establish address validity; the provider result remains unresolved.");
 
         return new CarrierNeutralAddressValidationResponse(
             Result: result,
-            Warnings: [],
+            Warnings: [new("FEDEX_ADDRESS_SUGGESTION_ONLY", "FedEx address resolution does not establish deliverability or service availability.", providerEvidence)],
             NormalizedAddress: normalized,
             ProviderEvidence: [providerEvidence],
             Confidence: null);
@@ -666,23 +699,26 @@ public sealed class FedExAdapter(
 
     private static FedExPackageLineItem BuildPackageLineItem(CreateShipmentRequest request)
     {
-        var dimensions = request.LengthCm.HasValue && request.WidthCm.HasValue && request.HeightCm.HasValue
-            ? new FedExDimensions(
-                Math.Max(1, (int)Math.Ceiling(request.LengthCm.Value)),
-                Math.Max(1, (int)Math.Ceiling(request.WidthCm.Value)),
-                Math.Max(1, (int)Math.Ceiling(request.HeightCm.Value)),
-                "CM")
-            : null;
+        var dimensions = new FedExDimensions(Dimension(request.LengthCm), Dimension(request.WidthCm), Dimension(request.HeightCm), "CM");
 
         return new FedExPackageLineItem(
             new FedExWeight("KG", request.WeightKg),
             SequenceNumber: 1,
             Dimensions: dimensions,
+            DeclaredValue: request.DeclaredValue.HasValue ? new FedExMoney(request.DeclaredValue.Value, request.Currency) : null,
             CustomerReferences:
             [
-                new FedExCustomerReference("CUSTOMER_REFERENCE", Required(request.InternalShipmentId, "Internal shipment id is required.")),
+                // Stable bounded correlation only; FedEx does not promise deduplication by reference.
+                new FedExCustomerReference("CUSTOMER_REFERENCE", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.CarrierRequestId!)))[..30]),
                 new FedExCustomerReference("INVOICE_NUMBER", Required(request.OrderNumber, "Order number is required."))
             ]);
+    }
+
+    private static int Dimension(decimal? value)
+    {
+        if (value is null or <= 0 or > 999 || decimal.Truncate(value.Value) != value.Value)
+            throw new InvalidOperationException("Actual FedEx package dimensions must be positive whole units at most 999; no rounding policy is inferred.");
+        return (int)value.Value;
     }
 
     private static IReadOnlyList<string> AddressLines(CreateShipmentRequest request)
@@ -698,7 +734,7 @@ public sealed class FedExAdapter(
 
     private static string ResolveServiceType(string? serviceLevel)
     {
-        var value = Required(serviceLevel, "FedEx official service level is required.");
+        var value = Required(serviceLevel, "FedEx official service level is required.").ToUpperInvariant();
         if (!FedExContractEnums.ServiceTypes.Contains(value))
         {
             throw new InvalidOperationException("FedEx shipment creation requires an official FedEx service type.");
@@ -760,7 +796,8 @@ public sealed class FedExAdapter(
     }
 
     private static string CorrelationId(string? seed) =>
-        string.IsNullOrWhiteSpace(seed) ? Guid.NewGuid().ToString("N") : seed.Trim();
+        string.IsNullOrWhiteSpace(seed) || seed.Length > 128 || seed.Any(char.IsControl)
+            ? Guid.NewGuid().ToString("N") : seed.Trim();
 
     private static CreateShipmentResult FailShipment(string errorCode, string errorMessage) =>
         new()

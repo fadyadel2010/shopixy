@@ -172,6 +172,25 @@ public sealed class T10SettlementContainmentTests
     }
 
     [Fact]
+    public async Task DuplicateAndConcurrentCodSettlementSubmissions_NeverReachAccountingAuthority()
+    {
+        var lifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
+        var payload = new CodSettlementApiRequest
+        {
+            SettlementId = "disposable-duplicate-remittance",
+            GrossAmount = 1m,
+            Currency = "EGP",
+            ShippingCompany = "disposable-carrier",
+            OrderIds = new List<Guid> { Guid.NewGuid() }
+        };
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => CreateController(lifecycle).RecordCodSettlement(payload)));
+        foreach (var response in responses) AssertConflictWithCode(response, ExpectedCode);
+        AssertConflictWithCode(await CreateController(lifecycle).RecordCodSettlement(payload), ExpectedCode);
+        lifecycle.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public void SettlementControllerSource_MustContainWithoutInvokingLifecycleSettlement()
     {
         var source = ReadRepoFile("PointOfSale.API/Controllers/PaymentLifecycleController.cs");

@@ -3,6 +3,7 @@ import {
     buildAnalyticsEvent,
     markSessionActivity,
     sendAnalyticsEvent,
+    enqueueAnalyticsEvent,
 } from '@/analytics';
 
 /**
@@ -101,9 +102,9 @@ export function emitTrackingTokenRemovedFromUrl(source: TrackingTokenUrlSource):
             extra: { source },
         });
 
-        void sendAnalyticsEvent(event).catch(() => {
-            // Best-effort security telemetry only.
-        });
+        // URL scrubbing can run before the CSRF cookie is established. Use the normal
+        // buffered ingestion path instead of a permanently rejected eager request.
+        enqueueAnalyticsEvent(event);
     } catch {
         // Telemetry must never block token removal.
     }

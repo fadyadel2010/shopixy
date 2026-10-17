@@ -40,7 +40,7 @@ const hasBackendEventIdentity = (
   event: RequestAuditTimelineEventPresentation,
   requestId: string,
 ) => {
-  const requestIdentity = requestId.replaceAll('-', '')
+  const requestIdentity = requestId.replace(/-/g, '')
   return new RegExp(`^${requestIdentity}:${event.eventType}:\\d+$`, 'i').test(event.eventId)
 }
 

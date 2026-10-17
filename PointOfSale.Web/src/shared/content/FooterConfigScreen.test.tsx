@@ -49,7 +49,7 @@ function configuration(revision = firstRevision, title = 'Company') {
                 isActive: true,
             }],
         }],
-        socialLinks: [],
+        socialLinks: [] as (import('./footerAuthoringContract').FooterRequest['socialLinks'][number] & { id?: string })[],
     }
 }
 
@@ -67,6 +67,26 @@ function renderEditor() {
 }
 
 describe('FooterConfigScreen', () => {
+    it('keeps newer edits dirty after a live save and forwards the accepted revision next time', async () => {
+        let accept!: (value: ReturnType<typeof configuration>) => void
+        service.saveFooterConfiguration.mockImplementationOnce(() => new Promise(resolve => { accept = resolve }))
+        renderEditor()
+        await screen.findByText('Live')
+        fireEvent.change(screen.getByPlaceholderText('Section title'), { target: { value: 'Submitted' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Footer' }))
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save live Footer' }))
+        await waitFor(() => expect(service.saveFooterConfiguration).toHaveBeenCalledTimes(1))
+        fireEvent.change(screen.getByPlaceholderText('Section title'), { target: { value: 'Newer local edit' } })
+        accept(configuration(savedRevision, 'Submitted'))
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        expect(screen.getByPlaceholderText('Section title')).toHaveValue('Newer local edit')
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Footer' }))
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save live Footer' }))
+        await waitFor(() => expect(service.saveFooterConfiguration).toHaveBeenLastCalledWith('Tenant',
+            expect.objectContaining({ expectedRevision: savedRevision, sections: [expect.objectContaining({ title: 'Newer local edit' })] })))
+    })
+
     beforeEach(() => {
         service.loadFooterConfiguration.mockReset()
         service.saveFooterConfiguration.mockReset()

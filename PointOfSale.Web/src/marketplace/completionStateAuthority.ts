@@ -66,7 +66,7 @@ export function deriveServiceRequestCompletionStatePresentation(
   }
 
   const completionEvidence = deriveCompletionEvidencePresentation(
-    request,
+    { ...request, providerUserId, buyerUserId },
     lifecycle,
     actorUserId,
   )

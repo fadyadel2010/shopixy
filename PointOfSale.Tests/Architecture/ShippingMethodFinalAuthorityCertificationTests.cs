@@ -14,10 +14,11 @@ public sealed class ShippingMethodFinalAuthorityCertificationTests
         Assert.Contains("TenantId => _tenantContext.RequiredTenantId", controller, StringComparison.Ordinal);
         Assert.Contains("Id = Guid.NewGuid()", controller, StringComparison.Ordinal);
         Assert.Contains("FirstOrDefaultAsync(s => s.Id == id && s.TenantId == tenantId && !s.IsDeleted)", controller, StringComparison.Ordinal);
-        Assert.Contains("TryValidateCachedTenantScope(tenantId, cached", storefront, StringComparison.Ordinal);
+        Assert.Contains("TryValidateCachedTenantScope(tenantId, documents", storefront, StringComparison.Ordinal);
+        Assert.Contains("throw new StorefrontConfigOutOfSyncException", storefront, StringComparison.Ordinal);
         Assert.Contains("method.TenantId == tenantId", storefront, StringComparison.Ordinal);
         Assert.Contains("!method.IsDeleted && method.IsActive && method.TenantId == storeId", commerceHubShipping, StringComparison.Ordinal);
-        Assert.Contains("configuration.TenantId == method.TenantId", commerceHubShipping, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetIntegrationReadinessAsync(\n                    method.TenantId,", commerceHubShipping.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains("OrderBy(candidate => candidate.EffectivePrice)", commerceHubShipping, StringComparison.Ordinal);
         Assert.Contains("bypassCache: true", commerceHubCheckout, StringComparison.Ordinal);
         Assert.Contains("requestedStoreSelection.ShippingOptionId != storeSelection.ShippingOptionId", commerceHubCheckout, StringComparison.Ordinal);
@@ -43,8 +44,9 @@ public sealed class ShippingMethodFinalAuthorityCertificationTests
         Assert.Contains("IsShippingAssignmentAuthorized", dbContext, StringComparison.Ordinal);
         Assert.Contains("nameof(CommerceHubSubOrder.ShippingMethodId)", dbContext, StringComparison.Ordinal);
         Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
-        Assert.Contains("configuration.TenantId == tenantId", shipment, StringComparison.Ordinal);
-        Assert.Contains("method.Id == order.ShippingMethodId.Value", carrier, StringComparison.Ordinal);
+        Assert.Contains("LoadOrderForShipmentMutationAsync(tenantId, orderId", shipment, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
+        Assert.Contains("ShippingMethodId = order.ShippingMethodId.Value", carrier, StringComparison.Ordinal);
         Assert.Contains("ORDER_SHIPPING_METHOD_CARRIER_MISMATCH", carrier, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", projection, StringComparison.Ordinal);
         Assert.Contains("TombstoneIfFreshAsync", projection, StringComparison.Ordinal);
@@ -77,21 +79,12 @@ public sealed class ShippingMethodFinalAuthorityCertificationTests
     public void FinalCertificationRecord_MustFreezeShippingMethodAuthorityProductionCertification()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/shipping-method-final-authority-certification-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = CertificationSource.ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = CertificationSource.ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         Assert.Contains("PASS M8-H Shipping Method Final Authority Certification", findings, StringComparison.Ordinal);
         Assert.Contains("Runtime Hardening Performed", findings, StringComparison.Ordinal);
         Assert.Contains("None. Final runtime reinspection found no new Shipping Method Authority gap", findings, StringComparison.Ordinal);
         Assert.Contains("Can frontend fabricate shipping-method authority? No.", findings, StringComparison.Ordinal);
         Assert.Contains("Is Shipping Method Authority production-certifiable? Yes.", findings, StringComparison.Ordinal);
-        Assert.Contains("PASS M8-H Shipping Method Final Authority Certification", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS M8-H Shipping Method Final Authority Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS M8-H shipping method final runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS M8-H Shipping Method Final Authority Certification", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS M8-H Shipping Method Final Authority Freeze", codexRules, StringComparison.Ordinal);
+        HistoricalShippingCertificationBoundary.AssertPriorClosureConditional();
     }
 }

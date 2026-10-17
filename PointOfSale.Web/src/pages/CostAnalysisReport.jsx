@@ -10,7 +10,6 @@ import {
     TrendingDown,
     Minus,
     ChevronDown,
-    ChevronUp,
     Package,
     DollarSign,
     BarChart3,
@@ -23,13 +22,11 @@ import { createPdfDocument, loadExcelModule } from '../utils/reportExports'
 import { fetchAllPagedArray } from '../services/pagedArrayLoader'
 
 const CostAnalysisReport = () => {
-    const { t, i18n } = useTranslation()
+    const { t } = useTranslation()
     const { formatCurrency } = useSettings()
-    const isRTL = i18n.language === 'ar'
 
     const [loading, setLoading] = useState(false)
     const [data, setData] = useState(null)
-    const [expandedProduct, setExpandedProduct] = useState(null)
     const [showDrillDown, setShowDrillDown] = useState(false)
     const [selectedProduct, setSelectedProduct] = useState(null)
 

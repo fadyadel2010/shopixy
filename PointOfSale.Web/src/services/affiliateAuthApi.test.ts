@@ -10,14 +10,10 @@ const instanceMock = vi.hoisted(() => vi.fn())
 vi.mock('axios', () => ({
     default: {
         create: vi.fn(() => {
-            instanceMock.post = postMock
-            instanceMock.get = getMock
-            instanceMock.put = putMock
-            instanceMock.interceptors = {
+            return Object.assign(instanceMock, { post: postMock, get: getMock, put: putMock, interceptors: {
                 request: { use: requestUseMock },
                 response: { use: responseUseMock },
-            }
-            return instanceMock
+            } })
         }),
         post: postMock,
     },
@@ -227,7 +223,7 @@ describe('affiliate interceptor auth-failure policy', () => {
             ),
         )
 
-        expect(response.data.affiliateAccountId).toBe('account-refreshed')
+        expect(response).toMatchObject({ data: { affiliateAccountId: 'account-refreshed' } })
         expect(localStorage.getItem(affiliateAuthApi.STORAGE_KEYS.ACCOUNT_ID)).toBe('account-refreshed')
         expect(postMock).toHaveBeenCalledTimes(1)
         expect(instanceMock).toHaveBeenCalledWith(

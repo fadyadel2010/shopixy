@@ -34,11 +34,12 @@ export function ToastProvider({ children }) {
     }, [removeToast])
 
     useEffect(() => {
+        const timeouts = timeoutsRef.current
         return () => {
-            timeoutsRef.current.forEach((timeoutId) => {
+            timeouts.forEach((timeoutId) => {
                 clearTimeout(timeoutId)
             })
-            timeoutsRef.current.clear()
+            timeouts.clear()
         }
     }, [])
 

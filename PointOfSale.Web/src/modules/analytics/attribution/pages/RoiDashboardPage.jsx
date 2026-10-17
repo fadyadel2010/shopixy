@@ -57,7 +57,7 @@ export default function RoiDashboardPage() {
                     <ArrowLeft size={16} />
                     {t('roi.backToAttribution', 'Back to Attribution')}
                 </Link>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap gap-4 items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">
                             {t('roi.title', 'Marketing ROI')}
@@ -77,8 +77,8 @@ export default function RoiDashboardPage() {
             </div>
 
             {/* Controls */}
-            <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-4">
+            <div className="flex flex-wrap gap-3 items-center justify-between mb-6">
+                <div className="flex flex-wrap items-center gap-4">
                     <select
                         value={period}
                         onChange={(e) => setPeriod(e.target.value)}

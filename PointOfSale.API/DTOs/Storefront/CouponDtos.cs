@@ -72,7 +72,9 @@ public class ApplyCouponRequest
     /// <summary>
     /// Coupon code to apply (will be normalized: trimmed + uppercased)
     /// </summary>
-    public string Code { get; set; } = string.Empty;
+    // Conditionally required by Validate(): protected-token redemption deliberately
+    // omits a raw code. Non-nullability made the global normalizer require both.
+    public string? Code { get; set; }
 
     /// <summary>
     /// Short-lived server-issued smart-offer redemption token.

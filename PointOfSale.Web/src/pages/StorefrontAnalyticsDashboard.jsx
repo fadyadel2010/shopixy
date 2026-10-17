@@ -107,7 +107,7 @@ export default function StorefrontAnalyticsDashboard() {
     }, [fetchDashboard])
 
     const topProducts = dashboard?.topSellingProducts || []
-    const funnel = dashboard?.funnel || {}
+    const funnel = useMemo(() => dashboard?.funnel || {}, [dashboard?.funnel])
     const funnelSteps = useMemo(() => ([
         { key: 'pageView', label: t('storefrontAnalytics.pageView', 'Page View'), count: funnel.pageView || 0 },
         { key: 'viewProduct', label: t('storefrontAnalytics.viewProduct', 'View Product'), count: funnel.viewProduct || 0 },

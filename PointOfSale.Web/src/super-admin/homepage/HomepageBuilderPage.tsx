@@ -404,8 +404,8 @@ export default function HomepageBuilderPage() {
         enabled: canLoadScopedSections,
     })
 
-    const schemas = schemasQuery.data ?? []
-    const tenants = tenantsQuery.data ?? []
+    const schemas = useMemo(() => schemasQuery.data ?? [], [schemasQuery.data])
+    const tenants = useMemo(() => tenantsQuery.data ?? [], [tenantsQuery.data])
     const selectedTenant = scopeMode === 'tenant'
         ? tenants.find((tenant) => tenant.id === selectedTenantId) ?? null
         : null

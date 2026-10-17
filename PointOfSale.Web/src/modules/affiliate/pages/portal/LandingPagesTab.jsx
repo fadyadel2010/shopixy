@@ -19,8 +19,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { affiliateAxios } from '../../../../services/affiliateAuthApi'
-import { Copy, Check, ExternalLink, Image, AlertCircle, Loader2, Globe, Palette } from 'lucide-react'
-import { useLanguage } from '../../i18n/LanguageContext'
+import { Copy, Check, ExternalLink, Image, AlertCircle, Globe, Palette } from 'lucide-react'
 
 const TEMPLATE_OPTIONS = [
     { value: 'Classic:v1', label: 'Classic', description: 'Standard product layout' },
@@ -29,7 +28,6 @@ const TEMPLATE_OPTIONS = [
 ]
 
 export default function LandingPagesTab({ formatCurrency }) {
-    const { t } = useLanguage()
     const [pages, setPages] = useState([])
     const [affiliateCode, setAffiliateCode] = useState('')
     const [loading, setLoading] = useState(true)

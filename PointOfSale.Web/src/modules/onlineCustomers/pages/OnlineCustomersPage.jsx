@@ -47,6 +47,7 @@ export function OnlineCustomersPage() {
     const { t, i18n } = useTranslation()
     const [customers, setCustomers] = useState([])
     const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState(false)
     const [totalCount, setTotalCount] = useState(0)
     const [page, setPage] = useState(1)
     const [totalPages, setTotalPages] = useState(1)
@@ -67,7 +68,7 @@ export function OnlineCustomersPage() {
     const debouncedSearch = useDebounce(search, 300)
     const isSearchSettled = debouncedSearch === search
 
-    const { showSuccess, showError } = useToast()
+    const { showError } = useToast()
 
     // Dynamic Options inside component to use translation hook
     const STATUS_OPTIONS = [
@@ -105,6 +106,7 @@ export function OnlineCustomersPage() {
 
         const requestId = ++requestIdRef.current
         setLoading(true)
+        setLoadError(false)
         try {
             const params = {
                 page: pageNumber,
@@ -124,19 +126,19 @@ export function OnlineCustomersPage() {
             setCustomers(data.items || [])
             setTotalCount(data.totalCount || 0)
             setTotalPages(data.totalPages || 1)
-        } catch (error) {
+        } catch {
             if (requestId !== requestIdRef.current) {
                 return
             }
 
-            console.error('Failed to fetch online customers:', error)
-            showError('Failed to load online customers')
+            setLoadError(true)
+            showError(t('common.failedToLoad'))
         } finally {
             if (requestId === requestIdRef.current) {
                 setLoading(false)
             }
         }
-    }, [providerFilter, showError, statusFilter, verifiedFilter])
+    }, [providerFilter, showError, statusFilter, verifiedFilter, t])
 
     useEffect(() => {
         if (!isSearchSettled) {
@@ -205,7 +207,7 @@ export function OnlineCustomersPage() {
                         {t('onlineCustomers.title')}
                     </h1>
                     <p className="text-sm text-gray-500 mt-1">
-                        Manage customers registered via the Storefront ({totalCount})
+                        {t('onlineCustomers.registeredDescription', 'Manage customers registered via the Storefront. Session counts are sign-ins, not live presence.')} ({loadError ? '—' : totalCount})
                     </p>
                 </div>
                 <button
@@ -305,6 +307,7 @@ export function OnlineCustomersPage() {
             </div>
 
             {/* Customers Table */}
+            {loadError && <div role="alert" className="mb-4 rounded border border-red-200 bg-red-50 p-4 text-red-700">{t('common.failedToLoad')}</div>}
             <div className="bg-white rounded-lg shadow flex-1 overflow-hidden flex flex-col">
                 {loading && customers.length > 0 && (
                     <div className="border-b border-gray-200 bg-gray-50 px-6 py-2 text-xs text-gray-500">
@@ -346,7 +349,7 @@ export function OnlineCustomersPage() {
                                         <p className="mt-2 text-gray-500">{t('common.loading')}</p>
                                     </td>
                                 </tr>
-                            ) : customers.length === 0 ? (
+                            ) : customers.length === 0 && !loadError ? (
                                 <tr>
                                     <td colSpan="7" className="px-6 py-12 text-center text-gray-500">
                                         <Users className="w-12 h-12 mx-auto mb-3 text-gray-300" />

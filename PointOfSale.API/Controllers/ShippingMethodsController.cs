@@ -10,6 +10,8 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.API.Infrastructure.Http;
+using PointOfSale.Core.Helpers;
+using System.Text.Json;
 
 namespace PointOfSale.API.Controllers;
 
@@ -30,6 +32,7 @@ public class ShippingMethodsController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly IEventPublisher _eventPublisher;
     private readonly IShippingCarrierRegistry _carrierRegistry;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly IShippingCalculationService _shippingCalculationService;
     private readonly CommerceReliabilityTelemetry _telemetry;
     private readonly ILogger<ShippingMethodsController> _logger;
@@ -40,6 +43,7 @@ public class ShippingMethodsController : ControllerBase
         ITenantContext tenantContext,
         IEventPublisher eventPublisher,
         IShippingCarrierRegistry carrierRegistry,
+        ICarrierIntegrationAuthority carrierIntegrationAuthority,
         IShippingCalculationService shippingCalculationService,
         CommerceReliabilityTelemetry telemetry,
         ILogger<ShippingMethodsController> logger)
@@ -48,6 +52,7 @@ public class ShippingMethodsController : ControllerBase
         _tenantContext = tenantContext;
         _eventPublisher = eventPublisher;
         _carrierRegistry = carrierRegistry;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority;
         _shippingCalculationService = shippingCalculationService;
         _telemetry = telemetry;
         _logger = logger;
@@ -58,7 +63,9 @@ public class ShippingMethodsController : ControllerBase
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ShippingMethodDto>>> GetShippingMethods(
-        [FromQuery] bool? activeOnly = true)
+        [FromQuery] bool? activeOnly = true,
+        [FromQuery] string? carrierCode = null,
+        [FromQuery] Guid? warehouseId = null)
     {
         SetNoStoreHeaders();
         var tenantId = TenantId;
@@ -68,6 +75,23 @@ public class ShippingMethodsController : ControllerBase
         if (activeOnly == true)
         {
             query = query.Where(s => s.IsActive);
+        }
+
+        if (carrierCode != null)
+        {
+            var error = ValidateCarrierCode(carrierCode);
+            if (error != null) return BadRequest(new { message = error });
+            var normalized = CarrierCodes.Normalize(carrierCode);
+            query = normalized == CarrierCodes.Manual
+                ? query.Where(s => s.CarrierCode == null || s.CarrierCode == "" || s.CarrierCode.ToLower() == normalized)
+                : query.Where(s => s.CarrierCode != null && s.CarrierCode.ToLower() == normalized);
+        }
+
+        if (warehouseId.HasValue)
+        {
+            var error = await ValidateFulfillmentWarehouseAsync(tenantId, warehouseId);
+            if (error != null) return BadRequest(new { message = error });
+            query = query.Where(s => s.FulfillmentWarehouseId == warehouseId.Value);
         }
         
         var methods = await query
@@ -135,6 +159,16 @@ public class ShippingMethodsController : ControllerBase
         if (warehouseValidationError != null)
         {
             return BadRequest(new { message = warehouseValidationError });
+        }
+
+        var carrierReadinessError = await ValidateActiveCarrierReadinessAsync(
+            tenantId,
+            normalizedCarrierCode,
+            dto.FulfillmentWarehouseId,
+            dto.IsActive);
+        if (carrierReadinessError != null)
+        {
+            return BadRequest(new { message = carrierReadinessError });
         }
         
         var method = new ShippingMethod
@@ -217,6 +251,16 @@ public class ShippingMethodsController : ControllerBase
         {
             return BadRequest(new { message = warehouseValidationError });
         }
+
+        var carrierReadinessError = await ValidateActiveCarrierReadinessAsync(
+            tenantId,
+            normalizedCarrierCode,
+            dto.FulfillmentWarehouseId,
+            dto.IsActive);
+        if (carrierReadinessError != null)
+        {
+            return BadRequest(new { message = carrierReadinessError });
+        }
         
         var method = await _context.ShippingMethods
             .FirstOrDefaultAsync(s => s.Id == id && s.TenantId == tenantId && !s.IsDeleted);
@@ -225,7 +269,9 @@ public class ShippingMethodsController : ControllerBase
         {
             return NotFound(new { message = "Shipping method not found" });
         }
-        
+
+        if (CheckReviewedRevision(method) is { } revisionError) return revisionError;
+
         method.Name = dto.Name;
         method.NameAr = dto.NameAr;
         method.Description = dto.Description;
@@ -273,6 +319,7 @@ public class ShippingMethodsController : ControllerBase
         }
         
         // Soft delete
+        if (CheckReviewedRevision(method) is { } revisionError) return revisionError;
         method.IsDeleted = true;
         method.UpdatedAt = NextShippingMethodMutationTimestamp(method);
         
@@ -447,7 +494,16 @@ public class ShippingMethodsController : ControllerBase
     {
         var now = DateTime.UtcNow;
         var current = method.UpdatedAt ?? method.CreatedAt;
-        return current >= now ? current.AddTicks(1) : now;
+        return current >= now ? current.AddTicks(10) : now;
+    }
+
+    private IActionResult? CheckReviewedRevision(ShippingMethod method)
+    {
+        if (!Request.Headers.TryGetValue("If-Match", out var header)) return null;
+        var expected = header.ToString().Trim('"');
+        return expected == (method.UpdatedAt ?? method.CreatedAt).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            ? null
+            : Conflict(new { error = "SHIPPING_METHOD_CONFLICT", message = "Shipping method changed. Reload before saving." });
     }
 
     /// <summary>
@@ -468,7 +524,7 @@ public class ShippingMethodsController : ControllerBase
             return null; // Valid
         }
         
-        var normalized = carrierCode.ToLowerInvariant();
+        var normalized = carrierCode.Trim().ToLowerInvariant();
         
         // Check if it's the manual carrier
         if (normalized == CarrierCodes.Manual)
@@ -498,6 +554,9 @@ public class ShippingMethodsController : ControllerBase
         var requestedServiceLevel = normalizedServiceLevel;
         if (supportedLevels.Count == 0)
         {
+            if (carrierCode == CarrierCodes.Mylerz)
+                return "Mylerz has no supported service levels pending an applicable official merchant contract.";
+
             return requestedServiceLevel == "standard"
                 ? null
                 : $"ServiceLevel '{serviceLevel}' is not supported for carrier '{carrierCode}'. Valid options: standard.";
@@ -529,6 +588,7 @@ public class ShippingMethodsController : ControllerBase
         return new ShippingMethodDto
         {
             Id = method.Id,
+            Revision = (method.UpdatedAt ?? method.CreatedAt).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Name = method.Name,
             NameAr = method.NameAr,
             Description = method.Description,
@@ -580,6 +640,30 @@ public class ShippingMethodsController : ControllerBase
         return null;
     }
 
+    private async Task<string?> ValidateActiveCarrierReadinessAsync(
+        Guid tenantId,
+        string carrierCode,
+        Guid? fulfillmentWarehouseId,
+        bool isActive)
+    {
+        // Drafts and deactivation are allowed. Every external activation must
+        // independently pass backend authority, including direct API callers.
+        if (!isActive || CarrierCodes.IsManual(carrierCode))
+        {
+            return null;
+        }
+
+        var readiness = await _carrierIntegrationAuthority.GetIntegrationReadinessAsync(
+            tenantId,
+            carrierCode,
+            warehouseId: fulfillmentWarehouseId,
+            purpose: CarrierIntegrationPurpose.StorefrontAdmission,
+            cancellationToken: HttpContext.RequestAborted);
+        return readiness.CanExecute
+            ? null
+            : $"{readiness.DisplayName} shipping method cannot be activated: {readiness.Blockers.FirstOrDefault() ?? "CARRIER_NOT_READY"}.";
+    }
+
     private void SetNoStoreHeaders()
     {
         Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
@@ -594,6 +678,7 @@ public class ShippingMethodsController : ControllerBase
 
 public class ShippingMethodDto
 {
+    public string Revision { get; set; } = string.Empty;
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? NameAr { get; set; }
@@ -642,6 +727,9 @@ public class CreateShippingMethodDto
 
     public virtual string? Validate()
     {
+        if (!ShipmentTrackingUrl.IsValidTemplate(TrackingUrlTemplate))
+            return "Tracking URL template must be an absolute HTTP(S) URL without credentials or host placeholders.";
+
         if (string.IsNullOrWhiteSpace(Name))
         {
             return "Shipping method name is required.";
@@ -680,6 +768,38 @@ public class CreateShippingMethodDto
         if (SortOrder < 0)
         {
             return "Sort order cannot be negative.";
+        }
+
+        return ValidateAvailableCountries();
+    }
+
+    private string? ValidateAvailableCountries()
+    {
+        // Null is the existing unrestricted scope. Empty/malformed input must
+        // never be admitted as all countries, including for direct API callers.
+        if (AvailableCountries == null) return null;
+        const string error = "AvailableCountries must be null (all countries) or a non-empty JSON array of unique assigned ISO 3166-1 alpha-2 country codes in uppercase.";
+        try
+        {
+            using var document = JsonDocument.Parse(AvailableCountries);
+            if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() == 0)
+                return error;
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) return error;
+                var code = item.GetString();
+                if (code == null || code.Length != 2
+                    || !CountryCodeHelper.TryNormalizeCountryCode(code, out var normalized)
+                    || !string.Equals(code, normalized, StringComparison.Ordinal)
+                    || !seen.Add(code))
+                    return error;
+            }
+        }
+        catch (JsonException)
+        {
+            return error;
         }
 
         return null;

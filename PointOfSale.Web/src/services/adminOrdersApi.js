@@ -1,4 +1,5 @@
 import api, { getSafeApiErrorMessage } from './api'
+import { requestShipmentCancellation } from '../modules/shipping/cancellationOutcome'
 import { useAuthStore } from '../store/authStore'
 import {
     requireMarketplaceOrderLifecycleAuthority,
@@ -369,12 +370,7 @@ export async function cancelAdminShipment(shipmentId, reason) {
     }
 
     try {
-        const response = await api.post(
-            `/admin/shipments/${shipmentId}/cancel`,
-            { reason: reason.trim() },
-            { headers: buildTenantHeaders() },
-        )
-        return response.data
+        return await requestShipmentCancellation(api, shipmentId, reason, { headers: buildTenantHeaders() })
     } catch (error) {
         throw mapAdminOrdersError(error, 'Unable to cancel this shipment right now.')
     }

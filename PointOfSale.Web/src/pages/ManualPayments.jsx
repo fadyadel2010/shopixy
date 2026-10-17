@@ -2,57 +2,26 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { Check, Eye, Image as ImageIcon, X } from 'lucide-react'
-import api, { isRequestCanceled, isRequestTimeout } from '../services/api'
+import api, { isRequestCanceled } from '../services/api'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useToast } from '../components/Toast'
 import { useRTL } from '../hooks/useRTL'
 import { formatDateTime } from '../utils/dateFormat'
 import { buildIdempotencyHeaders } from '../utils/requestSafety'
-
-export const MANUAL_PAYMENT_REJECTION_REASON_MIN_LENGTH = 3
-export const MANUAL_PAYMENT_REJECTION_REASON_MAX_LENGTH = 500
+import {
+    MANUAL_PAYMENT_REJECTION_REASON_MIN_LENGTH,
+    MANUAL_PAYMENT_REJECTION_REASON_MAX_LENGTH,
+    getManualPaymentActionErrorMessage,
+    getRejectionReasonValidationMessage,
+    isManualPaymentConfigurationError,
+} from './manualPaymentValidation'
 
 function getApiErrorMessage(error, fallback) {
     return error?.response?.data?.message || fallback
 }
 
-export function isManualPaymentConfigurationError(error) {
-    const code = error?.response?.data?.code || error?.response?.data?.error
-    return code === 'MANUAL_PAYMENT_CONFIGURATION_INVALID'
-        || code === 'MANUAL_PAYMENT_CONFIGURATION_MISSING'
-        || code === 'MANUAL_PAYMENT_PROVIDER_DISABLED'
-}
-
 function buildManualPaymentActionId(action, paymentIntentId) {
     return `manual-payment-${action}-${paymentIntentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-}
-
-export function getManualPaymentActionErrorMessage(error, fallback, timeoutFallback) {
-    if (isRequestTimeout(error)) {
-        return timeoutFallback
-    }
-
-    return getApiErrorMessage(error, fallback)
-}
-
-export function getRejectionReasonValidationMessage(reason, t) {
-    const trimmedReason = reason.trim()
-
-    if (trimmedReason.length < MANUAL_PAYMENT_REJECTION_REASON_MIN_LENGTH) {
-        return t(
-            'ManualPayments.messages.rejectionReasonTooShort',
-            'Rejection reason must be at least 3 characters.',
-        )
-    }
-
-    if (trimmedReason.length > MANUAL_PAYMENT_REJECTION_REASON_MAX_LENGTH) {
-        return t(
-            'ManualPayments.messages.rejectionReasonTooLong',
-            'Rejection reason must be 500 characters or fewer.',
-        )
-    }
-
-    return ''
 }
 
 export default function ManualPayments() {
@@ -82,6 +51,7 @@ export default function ManualPayments() {
     })
 
     const pendingPaymentIdRef = useRef(null)
+    const confirmingRef = useRef(false)
     const isMountedRef = useRef(true)
     const paymentsAbortCtrlRef = useRef(null)
     const selectedPaymentIdRef = useRef(null)
@@ -136,7 +106,7 @@ export default function ManualPayments() {
             })
 
             if (signal?.aborted) {
-                return
+                return false
             }
 
             // Clamp page to valid range to prevent empty page after deletions
@@ -151,13 +121,14 @@ export default function ManualPayments() {
                 totalPages: totalPages,
                 hasMore: Boolean(response.data.hasMore),
             })
+            return true
 
             // Note: If clampedPage differs from the requested page, setPagination above
             // will trigger the useEffect to refetch with the correct page automatically.
             // No need for a recursive fetch here to avoid race conditions.
         } catch (error) {
             if (isRequestCanceled(error)) {
-                return
+                return false
             }
 
             console.error('Error fetching payments:', error)
@@ -169,6 +140,7 @@ export default function ManualPayments() {
             setListError(message)
             setListErrorType(configurationError ? 'configuration' : 'failure')
             showError(message)
+            return false
         } finally {
             if (!signal?.aborted) {
                 setLoading(false)
@@ -272,28 +244,32 @@ export default function ManualPayments() {
     const refreshPayments = async () => {
         const controller = resetPaymentsAbortController()
         if (controller) {
-            await fetchPayments(controller.signal, pagination.page, pagination.pageSize)
+            return await fetchPayments(controller.signal, pagination.page, pagination.pageSize)
         }
+        return false
     }
 
     const handleApprove = async (paymentIntentId) => {
-        if (pendingPaymentIdRef.current) {
+        if (pendingPaymentIdRef.current || confirmingRef.current || !isMountedRef.current) {
             return
         }
 
-        const confirmed = await confirm({
+        confirmingRef.current = true
+        let confirmed
+        try { confirmed = await confirm({
             confirmLabel: t('common.confirm'),
             description: t('ManualPayments.messages.approveConfirm'),
             title: t('common.confirm'),
             variant: 'warning',
-        })
+        }) } finally { confirmingRef.current = false }
 
-        if (!confirmed || pendingPaymentIdRef.current) {
+        if (!confirmed || pendingPaymentIdRef.current || !isMountedRef.current) {
             return
         }
 
         pendingPaymentIdRef.current = paymentIntentId
         setPendingPaymentId(paymentIntentId)
+        let accepted = false
 
         try {
             await api.post(
@@ -304,7 +280,7 @@ export default function ManualPayments() {
                 },
             )
             clearManualPaymentActionHeaders('confirm', paymentIntentId)
-            showSuccess(t('ManualPayments.messages.approveSuccess'))
+            accepted = true
         } catch (error) {
             console.error('Error approving payment:', error)
             if (error?.response) {
@@ -319,7 +295,11 @@ export default function ManualPayments() {
                 ),
             ))
         } finally {
-            await refreshPayments()
+            const reloaded = await refreshPayments()
+            if (accepted && isMountedRef.current) {
+                if (reloaded) showSuccess(t('ManualPayments.messages.approveSuccess'))
+                else showError(t('phase5.savedReloadFailed', 'Saved, but fresh data could not be reloaded. Retry the read before making another change.'))
+            }
             pendingPaymentIdRef.current = null
             setPendingPaymentId(null)
         }
@@ -345,6 +325,7 @@ export default function ManualPayments() {
 
         pendingPaymentIdRef.current = originPaymentId
         setPendingPaymentId(originPaymentId)
+        let accepted = false
 
         try {
             await api.post(
@@ -357,7 +338,7 @@ export default function ManualPayments() {
                 },
             )
             clearManualPaymentActionHeaders('reject', originPaymentId)
-            showSuccess(t('ManualPayments.messages.rejectSuccess'))
+            accepted = true
             setShowRejectModal(false)
             setRejectionReason('')
         } catch (error) {
@@ -374,7 +355,11 @@ export default function ManualPayments() {
                 ),
             ))
         } finally {
-            await refreshPayments()
+            const reloaded = await refreshPayments()
+            if (accepted && isMountedRef.current) {
+                if (reloaded) showSuccess(t('ManualPayments.messages.rejectSuccess'))
+                else showError(t('phase5.savedReloadFailed', 'Saved, but fresh data could not be reloaded. Retry the read before making another change.'))
+            }
             pendingPaymentIdRef.current = null
             setPendingPaymentId(null)
         }
@@ -476,7 +461,7 @@ export default function ManualPayments() {
                                         </td>
                                         <td className="p-4 text-gray-700">{payment.customerName}</td>
                                         <td className="p-4 font-medium text-gray-900">
-                                            {new Intl.NumberFormat('en-US', { style: 'currency', currency: payment.currency }).format(payment.amount)}
+                                            {new Intl.NumberFormat(locale, { style: 'currency', currency: payment.currency }).format(payment.amount)}
                                         </td>
                                         <td className="p-4 text-sm">
                                             <div className="font-medium text-gray-800">{payment.walletType || t('ManualPayments.notAvailable')}</div>

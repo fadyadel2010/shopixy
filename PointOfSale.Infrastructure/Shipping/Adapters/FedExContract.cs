@@ -151,6 +151,9 @@ public static class FedExContractValidator
         foreach (var item in request.TrackingInfo)
         {
             RequireText(item.TrackingNumberInfo?.TrackingNumber, "trackingInfo.trackingNumberInfo.trackingNumber", errors);
+            var number = item.TrackingNumberInfo?.TrackingNumber;
+            if (number is not null && (number.Length > 40 || number.Any(c => !char.IsAsciiLetterOrDigit(c))))
+                errors.Add("trackingNumber must be a single alphanumeric identifier (local maximum 40).");
         }
     }
 
@@ -186,6 +189,7 @@ public static class FedExContractValidator
             errors.Add("addressesToValidate is required.");
             return;
         }
+        if (request.AddressesToValidate.Count > 100) errors.Add("addressesToValidate cannot exceed 100 addresses.");
 
         foreach (var address in request.AddressesToValidate)
         {
@@ -195,15 +199,19 @@ public static class FedExContractValidator
 
     private static void ValidateServiceAvailabilityRequest(FedExServiceAvailabilityRequest request, List<string> errors)
     {
-        RequireAllowed(request.CarrierCode, "carrierCode", FedExContractEnums.CarrierCodes, errors);
+        if (request.CarrierCodes.Count != 1) errors.Add("carrierCodes requires one carrier code in this integration.");
+        foreach (var code in request.CarrierCodes) RequireAllowed(code, "carrierCodes", FedExContractEnums.CarrierCodes, errors);
         if (request.RequestedShipment is null)
         {
             errors.Add("requestedShipment is required.");
             return;
         }
 
-        ValidateAddress(request.RequestedShipment.Shipper?.Address, "requestedShipment.shipper.address", errors);
-        ValidateAddress(request.RequestedShipment.Recipient?.Address, "requestedShipment.recipient.address", errors);
+        ValidateTransitAddress(request.RequestedShipment.Shipper?.Address, "requestedShipment.shipper.address", errors);
+        if (request.RequestedShipment.Recipients.Count != 1) errors.Add("recipients requires one recipient in this integration.");
+        foreach (var recipient in request.RequestedShipment.Recipients)
+            ValidateTransitAddress(recipient.Address, "requestedShipment.recipients.address", errors);
+        RequireAllowed(request.RequestedShipment.PackagingType, "requestedShipment.packagingType", FedExContractEnums.PackagingTypes, errors);
         RequireAllowed(request.RequestedShipment.PickupType, "requestedShipment.pickupType", FedExContractEnums.PickupTypes, errors);
         if (request.RequestedShipment.RequestedPackageLineItems is null ||
             request.RequestedShipment.RequestedPackageLineItems.Count == 0)
@@ -214,15 +222,18 @@ public static class FedExContractValidator
         {
             foreach (var item in request.RequestedShipment.RequestedPackageLineItems)
             {
+                if (item.SequenceNumber != null || item.CustomerReferences != null)
+                    errors.Add("Transit-time package items do not support shipment sequence or customer reference fields.");
                 RequireAllowed(item.Weight?.Units, "requestedShipment.requestedPackageLineItems.weight.units", FedExContractEnums.WeightUnits, errors);
                 if (item.Weight?.Value is null or <= 0)
                 {
                     errors.Add("requestedShipment.requestedPackageLineItems.weight.value must be greater than zero.");
                 }
+                ValidatePrecision(item, errors);
 
                 if (item.Dimensions is not null)
                 {
-                    if (item.Dimensions.Length <= 0 || item.Dimensions.Width <= 0 || item.Dimensions.Height <= 0)
+                    if (item.Dimensions.Length is <= 0 or > 999 || item.Dimensions.Width is <= 0 or > 999 || item.Dimensions.Height is <= 0 or > 999)
                     {
                         errors.Add("requestedShipment.requestedPackageLineItems.dimensions values must be positive integers.");
                     }
@@ -280,15 +291,25 @@ public static class FedExContractValidator
                 {
                     errors.Add("requestedShipment.requestedPackageLineItems.weight.value must be greater than zero.");
                 }
+                ValidatePrecision(item, errors);
 
                 if (item.Dimensions is not null)
                 {
-                    if (item.Dimensions.Length <= 0 || item.Dimensions.Width <= 0 || item.Dimensions.Height <= 0)
+                    if (item.Dimensions.Length is <= 0 or > 999 || item.Dimensions.Width is <= 0 or > 999 || item.Dimensions.Height is <= 0 or > 999)
                     {
                         errors.Add("requestedShipment.requestedPackageLineItems.dimensions values must be positive integers.");
                     }
 
                     RequireAllowed(item.Dimensions.Units, "requestedShipment.requestedPackageLineItems.dimensions.units", FedExContractEnums.LinearUnits, errors);
+                }
+                else if (shipment.PackagingType == "YOUR_PACKAGING") errors.Add("Dimensions are required for YOUR_PACKAGING.");
+                foreach (var reference in item.CustomerReferences ?? [])
+                {
+                    var maximum = reference.CustomerReferenceType == "CUSTOMER_REFERENCE" &&
+                        shipment.ServiceType != "FEDEX_GROUND" && shipment.ServiceType != "GROUND_HOME_DELIVERY" ? 40 : 30;
+                    if (string.IsNullOrWhiteSpace(reference.Value) || reference.Value.Length > maximum ||
+                        reference.Value.Any(c => c < 32 || c > 126))
+                        errors.Add("Customer reference exceeds the supported ASCII length.");
                 }
             }
         }
@@ -307,6 +328,11 @@ public static class FedExContractValidator
 
         ValidateContact(party.Contact, $"{path}.contact", errors);
         ValidateAddress(party.Address, $"{path}.address", errors);
+        var text = new[] { party.Contact?.PersonName, party.Contact?.CompanyName, party.Contact?.PhoneNumber, party.Contact?.EmailAddress,
+            party.Address?.City, party.Address?.StateOrProvinceCode, party.Address?.PostalCode }
+            .Concat(party.Address?.StreetLines ?? []);
+        if (text.Any(value => value != null && value.Any(c => c < 32 || c > 126)))
+            errors.Add($"{path} shipment text must be printable ASCII; no automatic transliteration is performed.");
     }
 
     private static void ValidateContact(FedExContact? contact, string path, List<string> errors)
@@ -317,7 +343,8 @@ public static class FedExContractValidator
             return;
         }
 
-        RequireText(contact.PersonName, $"{path}.personName", errors);
+        if (string.IsNullOrWhiteSpace(contact.PersonName) && string.IsNullOrWhiteSpace(contact.CompanyName))
+            errors.Add($"{path} requires personName or companyName.");
         RequireText(contact.PhoneNumber, $"{path}.phoneNumber", errors);
     }
 
@@ -337,6 +364,10 @@ public static class FedExContractValidator
         RequireText(address.City, $"{path}.city", errors);
         RequireText(address.PostalCode, $"{path}.postalCode", errors);
         RequireText(address.CountryCode, $"{path}.countryCode", errors);
+        if (address.CountryCode.Length != 2 || address.CountryCode.Any(c => c is < 'A' or > 'Z'))
+            errors.Add($"{path}.countryCode must be ISO alpha-2 uppercase.");
+        if (address.CountryCode is "US" or "CA" or "PR" && string.IsNullOrWhiteSpace(address.StateOrProvinceCode))
+            errors.Add($"{path}.stateOrProvinceCode is required for US/CA/PR.");
     }
 
     private static void ValidateAddressValidationEvidenceAddress(FedExAddress? address, string path, List<string> errors)
@@ -355,9 +386,20 @@ public static class FedExContractValidator
         RequireText(address.CountryCode, $"{path}.countryCode", errors);
     }
 
+    private static void ValidateTransitAddress(FedExTransitAddress? address, string path, List<string> errors)
+    {
+        if (address == null) { errors.Add($"{path} is required."); return; }
+        RequireText(address.CountryCode, $"{path}.countryCode", errors);
+        RequireText(address.PostalCode, $"{path}.postalCode", errors);
+        if (address.CountryCode is "US" or "CA" or "PR" && string.IsNullOrWhiteSpace(address.StateOrProvinceCode))
+            errors.Add($"{path}.stateOrProvinceCode is required for US/CA/PR.");
+    }
+
     private static void ValidateAccountNumber(FedExAccountNumber? accountNumber, string path, List<string> errors)
     {
         RequireText(accountNumber?.Value, $"{path}.value", errors);
+        if (accountNumber?.Value is { } value && (value.Length != 9 || value.Any(c => c is < '0' or > '9')))
+            errors.Add($"{path}.value must be a nine-digit FedEx shipping account number.");
     }
 
     private static void RequireAllowed(string? value, string path, IReadOnlySet<string> allowed, List<string> errors)
@@ -376,16 +418,25 @@ public static class FedExContractValidator
             errors.Add($"{path} is required.");
         }
     }
+
+    private static void ValidatePrecision(FedExPackageLineItem item, List<string> errors)
+    {
+        if (item.Weight != null && decimal.Round(item.Weight.Value, 2) != item.Weight.Value)
+            errors.Add("FedEx package weight supports at most two explicit decimal places.");
+        if (item.DeclaredValue is { } money && (money.Amount <= 0 || decimal.Round(money.Amount, 2) != money.Amount ||
+            money.Currency.Length != 3 || money.Currency.Any(c => c is < 'A' or > 'Z')))
+            errors.Add("FedEx declared value requires a positive two-decimal amount and ISO currency code.");
+    }
 }
 
 public static class FedExContractEnums
 {
     public static readonly IReadOnlySet<string> OAuthGrantTypes = Set("client_credentials", "csp_credentials", "client_pc_credentials");
     public static readonly IReadOnlySet<string> CarrierCodes = Set("FDXE", "FDXG");
-    public static readonly IReadOnlySet<string> LabelResponseOptions = Set("URL_ONLY", "LABEL", "LABEL_DATA_ONLY");
+    public static readonly IReadOnlySet<string> LabelResponseOptions = Set("URL_ONLY", "LABEL");
     public static readonly IReadOnlySet<string> LabelImageTypes = Set("PDF", "PNG", "ZPLII", "EPL2");
-    public static readonly IReadOnlySet<string> PaymentTypes = Set("SENDER", "RECIPIENT", "THIRD_PARTY", "ACCOUNT");
-    public static readonly IReadOnlySet<string> PickupTypes = Set("CONTACT_FEDEX_TO_SCHEDULE", "DROPOFF_AT_FEDEX_LOCATION", "USE_SCHEDULED_PICKUP", "ON_CALL", "REGULAR_STOP", "PACKAGE_RETURN_PROGRAM");
+    public static readonly IReadOnlySet<string> PaymentTypes = Set("SENDER", "RECIPIENT", "THIRD_PARTY", "COLLECT");
+    public static readonly IReadOnlySet<string> PickupTypes = Set("CONTACT_FEDEX_TO_SCHEDULE", "DROPOFF_AT_FEDEX_LOCATION", "USE_SCHEDULED_PICKUP");
     public static readonly IReadOnlySet<string> PackagingTypes = Set("FEDEX_10KG_BOX", "FEDEX_25KG_BOX", "FEDEX_BOX", "FEDEX_ENVELOPE", "FEDEX_EXTRA_LARGE_BOX", "FEDEX_LARGE_BOX", "FEDEX_MEDIUM_BOX", "FEDEX_PAK", "FEDEX_SMALL_BOX", "FEDEX_TUBE", "YOUR_PACKAGING");
     public static readonly IReadOnlySet<string> WeightUnits = Set("KG", "LB");
     public static readonly IReadOnlySet<string> LinearUnits = Set("CM", "IN");
@@ -446,7 +497,8 @@ public static class FedExRequestBuilders
     public static FedExAddressValidationRequest ValidateAddresses(IEnumerable<FedExAddress> addresses)
     {
         var request = new FedExAddressValidationRequest(
-            AddressesToValidate: addresses.Select(address => new FedExAddressToValidate(address)).ToList());
+            AddressesToValidate: addresses.Select(address => new FedExAddressToValidate(address)).ToList(),
+            ValidateAddressControlParameters: new FedExAddressResolutionControlParameters(true));
         ThrowIfInvalid(request);
         return request;
     }
@@ -455,7 +507,7 @@ public static class FedExRequestBuilders
         string carrierCode,
         FedExServiceAvailabilityShipment requestedShipment)
     {
-        var request = new FedExServiceAvailabilityRequest(carrierCode, requestedShipment);
+        var request = new FedExServiceAvailabilityRequest([carrierCode], requestedShipment);
         ThrowIfInvalid(request);
         return request;
     }
@@ -533,7 +585,12 @@ public sealed record FedExPackageLineItem(
     [property: JsonPropertyName("weight")] FedExWeight Weight,
     [property: JsonPropertyName("sequenceNumber")] int? SequenceNumber = null,
     [property: JsonPropertyName("dimensions")] FedExDimensions? Dimensions = null,
-    [property: JsonPropertyName("customerReferences")] IReadOnlyList<FedExCustomerReference>? CustomerReferences = null);
+    [property: JsonPropertyName("customerReferences")] IReadOnlyList<FedExCustomerReference>? CustomerReferences = null,
+    [property: JsonPropertyName("declaredValue")] FedExMoney? DeclaredValue = null);
+
+public sealed record FedExMoney(
+    [property: JsonPropertyName("amount")] decimal Amount,
+    [property: JsonPropertyName("currency")] string Currency);
 
 public sealed record FedExWeight(
     [property: JsonPropertyName("units")] string Units,
@@ -579,22 +636,37 @@ public sealed record FedExPickupLocation(
     [property: JsonPropertyName("address")] FedExAddress Address);
 
 public sealed record FedExAddressValidationRequest(
-    [property: JsonPropertyName("addressesToValidate")] IReadOnlyList<FedExAddressToValidate> AddressesToValidate);
+    [property: JsonPropertyName("addressesToValidate")] IReadOnlyList<FedExAddressToValidate> AddressesToValidate,
+    [property: JsonPropertyName("validateAddressControlParameters")] FedExAddressResolutionControlParameters? ValidateAddressControlParameters = null);
+
+public sealed record FedExAddressResolutionControlParameters(
+    [property: JsonPropertyName("includeResolutionTokens")] bool IncludeResolutionTokens);
 
 public sealed record FedExAddressToValidate([property: JsonPropertyName("address")] FedExAddress Address);
 
 public sealed record FedExServiceAvailabilityRequest(
-    [property: JsonPropertyName("carrierCode")] string CarrierCode,
+    [property: JsonPropertyName("carrierCodes")] IReadOnlyList<string> CarrierCodes,
     [property: JsonPropertyName("requestedShipment")] FedExServiceAvailabilityShipment RequestedShipment);
 
 public sealed record FedExServiceAvailabilityShipment(
     [property: JsonPropertyName("shipper")] FedExAddressOnlyParty Shipper,
-    [property: JsonPropertyName("recipient")] FedExAddressOnlyParty Recipient,
+    [property: JsonPropertyName("recipients")] IReadOnlyList<FedExAddressOnlyParty> Recipients,
     [property: JsonPropertyName("pickupType")] string PickupType,
-    [property: JsonPropertyName("shipDateStamp")] string? ShipDateStamp = null,
-    [property: JsonPropertyName("requestedPackageLineItems")] IReadOnlyList<FedExPackageLineItem>? RequestedPackageLineItems = null);
+    [property: JsonPropertyName("shipDatestamp")] string? ShipDateStamp = null,
+    [property: JsonPropertyName("requestedPackageLineItems")] IReadOnlyList<FedExPackageLineItem>? RequestedPackageLineItems = null,
+    [property: JsonPropertyName("packagingType")] string PackagingType = "YOUR_PACKAGING");
 
-public sealed record FedExAddressOnlyParty([property: JsonPropertyName("address")] FedExAddress Address);
+public sealed record FedExAddressOnlyParty([property: JsonPropertyName("address")] FedExTransitAddress Address)
+{
+    public FedExAddressOnlyParty(FedExAddress address)
+        : this(new FedExTransitAddress(address.City, address.PostalCode, address.CountryCode, address.StateOrProvinceCode)) { }
+}
+
+public sealed record FedExTransitAddress(
+    [property: JsonPropertyName("city")] string? City,
+    [property: JsonPropertyName("postalCode")] string? PostalCode,
+    [property: JsonPropertyName("countryCode")] string CountryCode,
+    [property: JsonPropertyName("stateOrProvinceCode")] string? StateOrProvinceCode = null);
 
 public sealed record FedExErrorResponse(
     [property: JsonPropertyName("transactionId")] string? TransactionId,

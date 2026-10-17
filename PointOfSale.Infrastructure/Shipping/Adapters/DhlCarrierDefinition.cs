@@ -9,9 +9,8 @@ namespace PointOfSale.Infrastructure.Shipping.Adapters;
 /// KEY CAPABILITIES:
 /// - International Express Shipping
 /// - Domestic Express
-/// - Real-time Tracking
-/// - Scheduled Pickups
-/// - Webhook Notifications
+/// - Polling-based Tracking
+/// - Embedded Shipping Labels
 /// 
 /// API Documentation: https://developer.dhl.com/
 /// 
@@ -19,7 +18,7 @@ namespace PointOfSale.Infrastructure.Shipping.Adapters;
 /// - No DHL-specific concepts leak to core domain
 /// - This definition describes capabilities for the POS shipping module
 /// 
-/// NOTE: DHL typically operates as prepaid only (no COD in most markets)
+/// NOTE: this integration is prepaid-only; account-specific COD is not implemented.
 /// </summary>
 public sealed class DhlCarrierDefinition : ShippingCarrierDefinition
 {
@@ -59,7 +58,7 @@ public sealed class DhlCarrierDefinition : ShippingCarrierDefinition
     public override bool SupportsLabels => true;
     
     /// <summary>
-    /// MyDHL REST v3.3.1 does not publish shipment cancellation.
+    /// MyDHL REST v3.3.4 does not publish shipment cancellation.
     /// </summary>
     public override bool SupportsCancellation => false;
     

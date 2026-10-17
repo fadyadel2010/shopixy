@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getMock = vi.hoisted(() => vi.fn())
 
-vi.mock('axios', () => ({
-    default: {
+vi.mock('../../../core/publicJsonClient', () => ({
+    publicJsonClient: {
         get: getMock,
     },
 }))
@@ -30,7 +30,7 @@ describe('AF-39 anonymous public discovery clients', () => {
             search: 'nokia',
             sort: 'newest',
         })
-        // The bare axios package carries no interceptors; the config itself must never grow an Authorization header.
+        // The anonymous transport carries no auth interceptors; the service must not add auth headers.
         expect(config).not.toHaveProperty('headers')
         expect(config.signal).toBeUndefined()
     })
@@ -57,11 +57,12 @@ describe('AF-39 anonymous public discovery clients', () => {
     it('resolves the canonical anonymous detail route with an encoded slug', async () => {
         const { discoverPublicProductDetail } = await import('./publicDiscoverApi')
 
-        await discoverPublicProductDetail('11111111-1111-1111-1111-111111111111', { signal: 'signal-token' })
+        const signal = new AbortController().signal
+        await discoverPublicProductDetail('11111111-1111-1111-1111-111111111111', { signal })
 
         const [url, config] = getMock.mock.calls[0]
         expect(url).toBe('/api/affiliate/discover/public-products/11111111-1111-1111-1111-111111111111')
-        expect(config).toEqual({ signal: 'signal-token', timeout: 15_000 })
+        expect(config).toEqual({ signal, timeout: 15_000 })
     })
 
     it('propagates a live 401 contract without retrying or attaching an Affiliate Authorization header', async () => {

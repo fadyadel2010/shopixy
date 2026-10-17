@@ -36,7 +36,7 @@ describe('AcceptInvitationPage', () => {
             isAuthenticated: true,
             hasHydrated: true,
         })
-        vi.mocked(acceptPosUserInvitation).mockResolvedValue({})
+        vi.mocked(acceptPosUserInvitation).mockResolvedValue({ data: null, status: 200, statusText: 'OK', headers: {}, config: { headers: {} } })
         vi.mocked(api.post).mockResolvedValue({})
     })
 

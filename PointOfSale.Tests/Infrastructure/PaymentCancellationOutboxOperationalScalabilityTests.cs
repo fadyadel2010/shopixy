@@ -252,6 +252,12 @@ public sealed class PaymentCancellationOutboxOperationalScalabilityTests : IDisp
 
     private sealed class RecordingPaymentLifecycleService : IPaymentLifecycleService
     {
+        public Task<CarrierRemittanceSelection> SelectCarrierRemittanceAsync(Guid tenantId, Guid actorId, int page = 1, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<CarrierRemittanceResult?> GetCarrierRemittanceAsync(Guid tenantId, Guid actorId, Guid operationId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<CarrierRemittanceResult> RecordCarrierRemittanceAsync(Guid tenantId, Guid actorId, CarrierRemittanceRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ManualCodSettlementResult> RecordManualCodSettlementAsync(Guid tenantId, Guid actorUserId, ManualCodSettlementRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ManualCodSettlementSelection> GetManualCodSettlementSelectionAsync(Guid tenantId, int page = 1, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ManualCodSettlementResult?> GetManualCodSettlementAsync(Guid tenantId, Guid settlementId, CancellationToken ct = default) => throw new NotSupportedException();
         public int HandlePaymentResultCalls { get; private set; }
         public PaymentTransitionResult NextResult { get; set; } = PaymentTransitionResult.Succeeded(PaymentStatus.Failed);
 
@@ -277,6 +283,9 @@ public sealed class PaymentCancellationOutboxOperationalScalabilityTests : IDisp
             throw new NotSupportedException();
 
         public Task<PaymentTransitionResult> RecordOfflineSettlementAsync(OfflineSettlementRequest request, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
+        public Task<PaymentTransitionResult> RecordCarrierCodCollectionAsync(Guid tenantId, Guid orderId, Guid shipmentId, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
         public Task<PaymentTransitionResult> CaptureOnlinePaymentAsync(Guid orderId, string gateway, string paymentIntentId, decimal providerAmount, string providerCurrency, CancellationToken ct = default) =>

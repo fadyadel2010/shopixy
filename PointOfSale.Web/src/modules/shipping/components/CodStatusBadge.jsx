@@ -6,21 +6,23 @@
  * Shows amount and collection status.
  */
 
-import { Banknote, CheckCircle2, Clock } from 'lucide-react'
+import { Banknote, CheckCircle2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 export default function CodStatusBadge({
     isCod,
     codAmount,
     codCollected,
-    currency = 'EGP',
+    currency,
     showAmount = true,
     size = 'md'
 }) {
+    const { t } = useTranslation()
     // Not COD - don't show anything
     if (!isCod) {
         return (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs text-gray-500 bg-gray-50 rounded-full">
-                Prepaid
+                {t('shipping.closure.prepaid')}
             </span>
         )
     }
@@ -38,7 +40,7 @@ export default function CodStatusBadge({
         return (
             <span className={`inline-flex items-center gap-1.5 rounded-full font-medium bg-green-100 text-green-700 ${sizeClasses[size]}`}>
                 <CheckCircle2 size={iconSize} />
-                <span>COD Collected</span>
+                <span>{t('shipping.closure.collected')}</span>
                 {showAmount && codAmount > 0 && (
                     <span className="font-bold">
                         {codAmount.toLocaleString()} {currency}
@@ -52,7 +54,7 @@ export default function CodStatusBadge({
     return (
         <span className={`inline-flex items-center gap-1.5 rounded-full font-medium bg-amber-100 text-amber-700 ${sizeClasses[size]}`}>
             <Banknote size={iconSize} />
-            <span>COD</span>
+            <span>{t('shipping.closure.collectionPending')}</span>
             {showAmount && codAmount > 0 && (
                 <span className="font-bold">
                     {codAmount.toLocaleString()} {currency}

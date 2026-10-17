@@ -13,6 +13,8 @@ import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useSettings } from '../contexts/SettingsContext'
 import { useRTL } from '../hooks/useRTL'
 import { formatDate } from '../utils/dateFormat'
+import { useOfferOperations } from '../hooks/useOfferOperations'
+import { offerDateInput, offerDatePayload } from '../utils/offerSchedule'
 
 export default function Coupons() {
     const { t } = useTranslation()
@@ -20,6 +22,7 @@ export default function Coupons() {
     const { formatCurrency, settings } = useSettings()
     const { dir, isRTL, locale } = useRTL()
     const user = useAuthStore((state) => state.user)
+    const { busy, beginRead, beginMutation } = useOfferOperations(user)
     const [coupons, setCoupons] = useState([])
     const [selectedCoupon, setSelectedCoupon] = useState(null)
     const [detailsLoading, setDetailsLoading] = useState(false)
@@ -56,6 +59,7 @@ export default function Coupons() {
     }, [filter, user])
 
     const fetchCoupons = async () => {
+        const current = beginRead('list')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setCoupons([])
             setLoading(false)
@@ -65,11 +69,16 @@ export default function Coupons() {
         try {
             setLoading(true)
             const admittedCoupons = await listAdminCoupons(filter, user)
+            if (!current()) return false
             setCoupons(admittedCoupons)
-        } catch (err) {
+            setError('')
+            return true
+        } catch {
+            if (!current()) return false
             setError(t('common.failedToLoad'))
+            return false
         } finally {
-            setLoading(false)
+            if (current()) setLoading(false)
         }
     }
 
@@ -83,6 +92,7 @@ export default function Coupons() {
     }
 
     const handleOpenDetails = async (couponId) => {
+        const current = beginRead('details')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setSelectedCoupon(null)
             setError(t('common.failedToLoad'))
@@ -93,44 +103,59 @@ export default function Coupons() {
             setDetailsLoading(true)
             setError('')
             const admittedCoupon = await getAdminCoupon(couponId, user)
-            setSelectedCoupon(admittedCoupon)
-        } catch (err) {
+            if (current()) setSelectedCoupon(admittedCoupon)
+        } catch {
+            if (!current()) return
             setSelectedCoupon(null)
             setError(t('common.failedToLoad'))
         } finally {
-            setDetailsLoading(false)
+            if (current()) setDetailsLoading(false)
         }
     }
 
     const handleSubmit = async (e) => {
         e.preventDefault()
+        const operation = beginMutation()
+        if (!operation) return
         setError('')
+        setSuccess('')
 
         try {
             const data = {
                 ...formData,
+                code: formData.code.trim().toUpperCase(),
+                // Eligibility is backend-supported but not editable on this form.
+                // A full PUT must retain it, never silently broaden the coupon.
+                applicableProductIds: editingCoupon?.applicableProductIds ?? null,
+                applicableCategoryIds: editingCoupon?.applicableCategoryIds ?? null,
+                excludedProductIds: editingCoupon?.excludedProductIds ?? null,
                 discountValue: parseFloat(formData.discountValue) || 0,
                 minOrderAmount: formData.minOrderAmount ? parseFloat(formData.minOrderAmount) : null,
                 maxDiscountAmount: formData.maxDiscountAmount ? parseFloat(formData.maxDiscountAmount) : null,
                 maxUsage: formData.maxUsage ? parseInt(formData.maxUsage) : null,
                 maxUsagePerCustomer: formData.maxUsagePerCustomer ? parseInt(formData.maxUsagePerCustomer) : null,
-                startDate: formData.startDate || null,
-                endDate: formData.endDate || null
+                startDate: offerDatePayload(formData.startDate, editingCoupon?.startDate),
+                endDate: offerDatePayload(formData.endDate, editingCoupon?.endDate)
             }
 
             if (editingCoupon) {
                 await updateAdminCoupon(editingCoupon, data, user)
-                setSuccess(t('common.updatedSuccessfully'))
             } else {
                 await createAdminCoupon(data, user)
-                setSuccess(t('coupons.created'))
             }
 
+            if (!operation.current()) return
             setShowModal(false)
-            fetchCoupons()
             resetForm()
+            const loaded = await fetchCoupons()
+            if (operation.current()) {
+                if (loaded) setSuccess(t(editingCoupon ? 'common.updatedSuccessfully' : 'coupons.created'))
+                else setError(t('offers.savedReloadFailed'))
+            }
         } catch (err) {
-            setError(err.response?.data?.message || t('common.error'))
+            if (operation.current()) setError(err.response?.data?.message || t('common.error'))
+        } finally {
+            operation.finish()
         }
     }
 
@@ -145,8 +170,8 @@ export default function Coupons() {
             maxDiscountAmount: coupon.maxDiscountAmount?.toString() || '',
             maxUsage: coupon.maxUsage?.toString() || '',
             maxUsagePerCustomer: coupon.maxUsagePerCustomer?.toString() || '',
-            startDate: coupon.startDate ? coupon.startDate.split('T')[0] : '',
-            endDate: coupon.endDate ? coupon.endDate.split('T')[0] : '',
+            startDate: offerDateInput(coupon.startDate),
+            endDate: offerDateInput(coupon.endDate),
             isActive: coupon.isActive,
             firstOrderOnly: coupon.firstOrderOnly
         })
@@ -154,6 +179,9 @@ export default function Coupons() {
     }
 
     const handleDelete = async (id) => {
+        const operation = beginMutation()
+        if (!operation) return
+        try {
         const confirmed = await confirm({
             confirmLabel: t('common.delete'),
             description: t('common.deleteConfirm', { item: t('coupons.coupon') }),
@@ -161,25 +189,30 @@ export default function Coupons() {
             variant: 'danger',
         })
 
-        if (!confirmed) return
+        if (!confirmed || !operation.current()) return
 
         try {
             const coupon = coupons.find((candidate) => candidate.id === id)
             await archiveAdminCoupon(coupon)
-            setSuccess(t('common.deletedSuccessfully'))
-            fetchCoupons()
+            if (!operation.current()) return
+            setSuccess('')
+            if (await fetchCoupons()) setSuccess(t('common.deletedSuccessfully'))
+            else setError(t('offers.savedReloadFailed'))
         } catch (err) {
-            setError(err.response?.data?.message || t('common.deleteFailed'))
+            if (operation.current()) setError(err.response?.data?.message || t('common.deleteFailed'))
         }
+        } finally { operation.finish() }
     }
 
     const handleToggle = async (coupon) => {
+        const operation = beginMutation()
+        if (!operation) return
         try {
             await toggleAdminCoupon(coupon, user)
-            fetchCoupons()
+            if (operation.current() && !await fetchCoupons()) setError(t('offers.savedReloadFailed'))
         } catch (err) {
-            setError(err.response?.data?.message || t('common.error'))
-        }
+            if (operation.current()) setError(err.response?.data?.message || t('common.error'))
+        } finally { operation.finish() }
     }
 
     const resetForm = () => {
@@ -216,6 +249,8 @@ export default function Coupons() {
     }
 
     const getCouponStatus = (coupon) => {
+        if (coupon.status === 'Scheduled') return { label: t('promotions.scheduled'), color: 'bg-blue-100 text-blue-800' }
+        if (coupon.status === 'Exhausted') return { label: t('offers.exhausted'), color: 'bg-gray-100 text-gray-800' }
         if (coupon.status === 'Inactive') return { label: t('common.inactive'), color: 'bg-gray-100 text-gray-800' }
         if (coupon.status === 'Expired') return { label: t('coupons.expired'), color: 'bg-red-100 text-red-800' }
         return { label: t('common.active'), color: 'bg-green-100 text-green-800' }
@@ -231,7 +266,7 @@ export default function Coupons() {
                     <h1 className="text-2xl font-bold text-gray-900">{t('coupons.title')}</h1>
                     <p className="text-sm text-gray-600">{t('coupons.subtitle')}</p>
                 </div>
-                <button onClick={openAddModal} className="btn-primary">
+                <button disabled={busy} onClick={openAddModal} className="btn-primary">
                     + {t('coupons.addCoupon')}
                 </button>
             </div>
@@ -264,6 +299,7 @@ export default function Coupons() {
             {error && (
                 <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
                     {error}
+                    <button type="button" onClick={fetchCoupons}>{t('common.retry')}</button>
                 </div>
             )}
             {success && (
@@ -377,20 +413,20 @@ export default function Coupons() {
                                                     {t('common.view')}
                                                 </button>
                                                 <button
-                                                    onClick={() => handleToggle(coupon)}
+                                                    disabled={busy} onClick={() => handleToggle(coupon)}
                                                     className={`text-yellow-600 hover:text-yellow-900 ${actionSpacingClass}`}
                                                     title={coupon.isActive ? t('coupons.deactivate') : t('coupons.activate')}
                                                 >
                                                     {coupon.isActive ? '🔒' : '🔓'}
                                                 </button>
                                                 <button
-                                                    onClick={() => handleEdit(coupon)}
+                                                    disabled={busy} onClick={() => handleEdit(coupon)}
                                                     className={`text-primary-600 hover:text-primary-900 ${actionSpacingClass}`}
                                                 >
                                                     {t('common.edit')}
                                                 </button>
                                                 <button
-                                                    onClick={() => handleDelete(coupon.id)}
+                                                    disabled={busy} onClick={() => handleDelete(coupon.id)}
                                                     className="text-red-600 hover:text-red-900"
                                                 >
                                                     {t('common.delete')}
@@ -432,7 +468,7 @@ export default function Coupons() {
                             <h2 className="text-xl font-bold">{selectedCoupon?.code || t('coupons.coupon')}</h2>
                             <button
                                 type="button"
-                                onClick={() => setSelectedCoupon(null)}
+                                onClick={() => { beginRead('details'); setDetailsLoading(false); setSelectedCoupon(null) }}
                                 className="text-gray-500 hover:text-gray-900"
                             >
                                 {t('common.close')}
@@ -502,7 +538,8 @@ export default function Coupons() {
                             </h2>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                            <fieldset disabled={busy} className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="label">{t('coupons.code')} *</label>
@@ -513,6 +550,7 @@ export default function Coupons() {
                                         className="input font-mono"
                                         placeholder="e.g., SAVE20"
                                         required
+                                        aria-label={t('coupons.code')}
                                     />
                                 </div>
                                 <div>
@@ -547,6 +585,8 @@ export default function Coupons() {
                                     <input
                                         type="number"
                                         step="0.01"
+                                        min="0.01"
+                                        max={formData.discountType === 'Percentage' ? 100 : 1000000}
                                         value={formData.discountValue}
                                         onChange={(e) => setFormData({ ...formData, discountValue: e.target.value })}
                                         className="input"
@@ -602,18 +642,18 @@ export default function Coupons() {
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="label">{t('coupons.startDate')}</label>
+                                    <label className="label">{t('coupons.startDate')} (UTC)</label>
                                     <input
-                                        type="date"
+                                        type="datetime-local" step="0.001"
                                         value={formData.startDate}
                                         onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
                                         className="input"
                                     />
                                 </div>
                                 <div>
-                                    <label className="label">{t('coupons.endDate')}</label>
+                                    <label className="label">{t('coupons.endDate')} (UTC)</label>
                                     <input
-                                        type="date"
+                                        type="datetime-local" step="0.001"
                                         value={formData.endDate}
                                         onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
                                         className="input"
@@ -654,6 +694,7 @@ export default function Coupons() {
                                     {editingCoupon ? t('common.update') : t('common.save')}
                                 </button>
                             </div>
+                            </fieldset>
                         </form>
                     </div>
                 </div>

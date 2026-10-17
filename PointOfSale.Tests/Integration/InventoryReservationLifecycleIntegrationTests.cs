@@ -22,7 +22,7 @@ using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Integration;
 
-public sealed class InventoryReservationLifecycleIntegrationTests
+public sealed partial class InventoryReservationLifecycleIntegrationTests
 {
     [Fact]
     public async Task CheckoutFailureAfterReserve_ShouldReleaseReservation_AndClearReservedQuantity()
@@ -1312,7 +1312,8 @@ public sealed class InventoryReservationLifecycleIntegrationTests
         ApplicationDbContext context,
         IProductVariantStockRepository repository,
         Mock<IAccountingOutboxService> outbox,
-        Mock<ICouponValidationService>? couponValidationService = null)
+        Mock<ICouponValidationService>? couponValidationService = null,
+        bool requireRowLevelLocking = false)
     {
         var eventPublisher = new Mock<IEventPublisher>();
         eventPublisher.SetReturnsDefault(Task.CompletedTask);
@@ -1425,7 +1426,7 @@ public sealed class InventoryReservationLifecycleIntegrationTests
             NullLogger<PaymentLifecycleService>.Instance,
             Options.Create(new PaymentLifecycleSettings
             {
-                RequireRowLevelLocking = false
+                RequireRowLevelLocking = requireRowLevelLocking
             }));
     }
 
@@ -1509,6 +1510,7 @@ public sealed class InventoryReservationLifecycleIntegrationTests
         {
             Id = tenantId,
             Name = "Inventory Lifecycle Tenant",
+            Slug = $"inventory-lifecycle-{tenantId:N}",
             Currency = "EGP",
             IsActive = true,
             Status = TenantStatus.Active

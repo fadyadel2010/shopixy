@@ -136,15 +136,15 @@ public sealed class BostaCarrierDefinition : ShippingCarrierDefinition
     public override bool SupportsWebhooks => true;
     
     /// <summary>
-    /// Bosta does not currently support scheduled pickup requests via API.
-    /// Pickups are scheduled by default daily.
+    /// Pickup scheduling is not implemented by this adapter. A default pickup
+    /// location does not establish recurring/automatic collection entitlement.
     /// </summary>
     public override bool SupportsPickupScheduling => false;
     
     /// <summary>
     /// Bosta provides AWB labels.
     /// </summary>
-    public override bool SupportsLabels => true;
+    public override bool SupportsLabels => false;
     
     /// <summary>
     /// Bosta allows cancellation before pickup.
@@ -154,7 +154,7 @@ public sealed class BostaCarrierDefinition : ShippingCarrierDefinition
     /// <summary>
     /// Bosta uses zone-based pricing, quotes available.
     /// </summary>
-    public override bool SupportsQuotes => true;
+    public override bool SupportsQuotes => false;
     
     /// <summary>
     /// Bosta primarily operates in Egypt.

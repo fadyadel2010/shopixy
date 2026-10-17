@@ -8,7 +8,7 @@ public sealed class CheckoutAttachmentDownloadSecurityArchitectureTests
         var source = ReadRepositoryFile("PointOfSale.API", "Controllers", "AdminOrdersController.cs");
 
         Assert.Contains("checkout-attachments/{attachmentId:guid}/download", source, StringComparison.Ordinal);
-        Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", source, StringComparison.Ordinal);
+        Assert.Contains("[Authorize(Roles = \"Owner,Admin\", Policy = PosPermissions.StorefrontOrderAttachmentsDownload)]", source, StringComparison.Ordinal);
         Assert.Contains("OpenCheckoutAttachmentDownloadAsync", source, StringComparison.Ordinal);
     }
 

@@ -105,7 +105,7 @@ export default function ShippingHealthPage() {
             )}
 
             {/* Health Data */}
-            {health && (
+            {health && !error && (
                 <>
                     {/* Overall Status */}
                     <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
@@ -123,10 +123,15 @@ export default function ShippingHealthPage() {
                                 </div>
                                 <div>
                                     <h2 className="text-xl font-bold text-gray-900">
-                                        {health.status === 'healthy' ? 'All Systems Operational' : 'Degraded Performance'}
+                                        {health.status === 'healthy'
+                                            ? t('shipping.healthEndpointReachable', 'Webhook endpoint reachable')
+                                            : t('shipping.healthEndpointDegraded', 'Webhook endpoint degraded')}
                                     </h2>
                                     <p className="text-gray-500">
                                         Last checked: {formatDate(health.timestamp)}
+                                    </p>
+                                    <p className="mt-2 text-sm text-amber-800" role="status">
+                                        {t('shipping.healthScopeWarning', 'This liveness check does not verify carrier credentials, account readiness, webhook configuration or tracking-job execution.')}
                                     </p>
                                 </div>
                             </div>
@@ -137,7 +142,7 @@ export default function ShippingHealthPage() {
                     <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                             <Truck size={20} className="text-gray-400" />
-                            Supported Carriers
+                            {t('shipping.healthRegisteredAdapters', 'Registered carrier adapters')}
                         </h3>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -168,25 +173,9 @@ export default function ShippingHealthPage() {
                             Webhook Endpoints
                         </h3>
 
-                        <div className="space-y-3">
-                            {(health.supportedCarriers || []).map(code => {
-                                const info = carrierInfo[code] || { name: code }
-                                return (
-                                    <div
-                                        key={code}
-                                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <CheckCircle className="text-green-500" size={18} />
-                                            <span className="font-medium text-gray-900">{info.name}</span>
-                                        </div>
-                                        <code className="text-sm text-gray-500 bg-gray-200 px-2 py-1 rounded">
-                                            /api/webhooks/shipping/{code}
-                                        </code>
-                                    </div>
-                                )
-                            })}
-                        </div>
+                        <p className="text-sm text-gray-600">
+                            {t('shipping.healthWebhookUnverified', 'Webhook configuration and delivery are not reported by this endpoint. Review carrier-specific readiness in Shipping Administration.')}
+                        </p>
                     </div>
 
                     {/* Tracking Sync Info */}
@@ -196,20 +185,8 @@ export default function ShippingHealthPage() {
                             Tracking Sync Job
                         </h3>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="p-4 bg-blue-50 rounded-lg">
-                                <p className="text-sm text-blue-600 mb-1">Schedule</p>
-                                <p className="text-lg font-semibold text-blue-900">Every 30 minutes</p>
-                            </div>
-                            <div className="p-4 bg-gray-50 rounded-lg">
-                                <p className="text-sm text-gray-600 mb-1">Job ID</p>
-                                <code className="text-sm font-mono text-gray-900">shipping-tracking-sync</code>
-                            </div>
-                        </div>
-
-                        <p className="text-sm text-gray-500 mt-4">
-                            The tracking sync job automatically polls carrier APIs to update shipment statuses
-                            for all active (non-terminal) shipments.
+                        <p className="text-sm text-gray-600">
+                            {t('shipping.healthTrackingUnverified', 'Schedule, last execution and tracking results are not reported by this endpoint.')}
                         </p>
                     </div>
 
@@ -220,7 +197,7 @@ export default function ShippingHealthPage() {
                         </h4>
                         <ul className="text-sm text-gray-600 space-y-1">
                             <li>• Webhooks receive real-time updates from carriers</li>
-                            <li>• Tracking sync runs every 30 minutes as fallback</li>
+                            <li>• {t('shipping.healthTrackingUnverified', 'Schedule, last execution and tracking results are not reported by this endpoint.')}</li>
                             <li>• Terminal states (Delivered, Cancelled, Failed, Returned) don't sync</li>
                             <li>• Status progression is enforced server-side</li>
                         </ul>

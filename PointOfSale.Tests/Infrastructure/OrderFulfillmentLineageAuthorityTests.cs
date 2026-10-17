@@ -55,10 +55,20 @@ public sealed class OrderFulfillmentLineageAuthorityTests
 
         var shipment = await dbContext.Shipments.SingleAsync(candidate => candidate.Id == shipmentId);
         shipment.IsDeleted = true;
-        await dbContext.SaveChangesAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => dbContext.SaveChangesAsync());
+        dbContext.ChangeTracker.Clear();
+        Assert.NotNull(await OrderFulfillmentLineageAuthority.LoadCurrentShipmentAsync(
+            dbContext, tenantId, currentOrderId, shipmentId));
+
+        // Import already-deleted historical lineage at first insert into a
+        // separate process-local fake store; retained history is not rewritten.
+        await using var historical = CreateDbContext(tenantId);
+        SeedOrderAndShipment(historical, tenantId, currentOrderId, shipmentId, ShipmentStatus.Delivered);
+        historical.ChangeTracker.Entries<Shipment>().Single().Entity.IsDeleted = true;
+        await historical.SaveChangesAsync();
 
         var deletedSnapshot = await OrderFulfillmentLineageAuthority.LoadCurrentShipmentAsync(
-            dbContext,
+            historical,
             tenantId,
             currentOrderId,
             shipmentId);

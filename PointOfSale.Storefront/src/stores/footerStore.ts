@@ -73,12 +73,17 @@ export const useFooterStore = create<FooterState>((set, get) => ({
         const requestGeneration = footerGeneration;
         set({ loading: true, error: null });
 
-        let requestRecord!: FooterRequest;
+        let requestRecord: FooterRequest | null = null;
+        const canAcceptResponse = () => requestRecord !== null && footerRequest === requestRecord
+            && footerGeneration === requestGeneration
+            && getRuntimeCacheIdentity('footer', { includeLanguage: true }) === identity
+            && !(useStoreConfigStore.getState().configSource === 'preview'
+                && useStoreConfigStore.getState().config.previewChrome);
         const promise = (async () => {
             try {
                 const footer = await fetchStorefrontFooter();
 
-                if (footerRequest === requestRecord && footerGeneration === requestGeneration) {
+                if (canAcceptResponse()) {
                     set({
                         footer,
                         loading: false,
@@ -90,7 +95,7 @@ export const useFooterStore = create<FooterState>((set, get) => ({
             } catch (error) {
                 console.error('Failed to load storefront footer:', error);
 
-                if (footerRequest === requestRecord && footerGeneration === requestGeneration) {
+                if (canAcceptResponse()) {
                     set({
                         footer: get().footer ?? emptyFooter,
                         error: 'Failed to load footer',

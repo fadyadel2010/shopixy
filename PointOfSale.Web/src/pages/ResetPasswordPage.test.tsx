@@ -34,7 +34,7 @@ describe('ResetPasswordPage', () => {
             isAuthenticated: true,
             hasHydrated: true,
         })
-        vi.mocked(completePosPasswordReset).mockResolvedValue({})
+        vi.mocked(completePosPasswordReset).mockResolvedValue({ data: null, status: 200, statusText: 'OK', headers: {}, config: { headers: {} } })
         vi.mocked(api.post).mockResolvedValue({})
     })
 

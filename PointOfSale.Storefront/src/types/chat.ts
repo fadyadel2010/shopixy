@@ -51,6 +51,7 @@ export interface ChatRequest {
  * Response from the chat endpoint
  */
 export interface ChatResponse {
+    isFallback?: boolean;
     type: 'message' | 'question' | 'order_draft';
     message: string;
     orderDraft?: OrderDraft;

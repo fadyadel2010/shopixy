@@ -48,16 +48,16 @@ public class AdminAnalyticsAttributionController : ControllerBase
         [FromQuery] DateTime? endDate,
         [FromQuery] string? source,
         [FromQuery] string? campaign,
+        [FromQuery] string? period,
         [FromQuery] AttributionModel model = AttributionModel.LastTouch,
         [FromQuery] int skip = 0,
         [FromQuery] int take = 50,
         CancellationToken cancellationToken = default)
     {
+        if (!Enum.IsDefined(model)) return BadRequest(new { message = "Unsupported attribution model" });
         var tenantId = _tenantContext.RequiredTenantId;
 
-        var endUtc = endDate?.ToUniversalTime().Date.AddDays(1) ?? DateTime.UtcNow;
-        var startUtc = startDate?.ToUniversalTime().Date ?? endUtc.AddDays(-30);
-        (startUtc, endUtc, _) = BoundRange((startUtc, endUtc, "custom"));
+        var (startUtc, endUtc, _) = ParsePeriod(period, startDate, endDate);
         skip = Math.Max(0, skip);
         take = Math.Clamp(take, 1, 200);
 
@@ -101,6 +101,7 @@ public class AdminAnalyticsAttributionController : ControllerBase
         [FromQuery] AttributionModel model = AttributionModel.LastTouch,
         CancellationToken cancellationToken = default)
     {
+        if (!Enum.IsDefined(model)) return BadRequest(new { message = "Unsupported attribution model" });
         var tenantId = _tenantContext.RequiredTenantId;
 
         // Parse period or use date range
@@ -144,6 +145,7 @@ public class AdminAnalyticsAttributionController : ControllerBase
         [FromQuery] AttributionModel model = AttributionModel.LastTouch,
         CancellationToken cancellationToken = default)
     {
+        if (!Enum.IsDefined(model)) return BadRequest(new { message = "Unsupported attribution model" });
         var tenantId = _tenantContext.RequiredTenantId;
 
         var (startUtc, endUtc, periodLabel) = ParsePeriod(period, startDate, endDate);
@@ -304,8 +306,8 @@ public class AdminAnalyticsAttributionController : ControllerBase
         {
             "today" => (now.Date, now.Date.AddDays(1), "today"),
             "yesterday" => (now.Date.AddDays(-1), now.Date, "yesterday"),
-            "last_7_days" => (now.Date.AddDays(-7), now.Date.AddDays(1), "last_7_days"),
-            "last_30_days" => (now.Date.AddDays(-30), now.Date.AddDays(1), "last_30_days"),
+            "last_7_days" => (now.Date.AddDays(-6), now.Date.AddDays(1), "last_7_days"),
+            "last_30_days" => (now.Date.AddDays(-29), now.Date.AddDays(1), "last_30_days"),
             "this_month" => (new DateTime(now.Year, now.Month, 1), now.Date.AddDays(1), "this_month"),
             "last_month" => (
                 new DateTime(now.Year, now.Month, 1).AddMonths(-1),

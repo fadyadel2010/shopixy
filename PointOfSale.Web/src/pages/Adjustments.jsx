@@ -53,7 +53,7 @@ const Adjustments = () => {
             }
 
             setParties(response.data.items || response.data)
-        } catch (error) {
+        } catch {
             if (requestId === partiesRequestIdRef.current) {
                 showError(t('accounts.failedToLoadParties'))
             }
@@ -77,7 +77,7 @@ const Adjustments = () => {
             }
 
             setPartyBalance(data)
-        } catch (error) {
+        } catch {
             if (requestId === balanceRequestIdRef.current) {
                 showError(t('accounts.failedToLoadBalance'))
             }
@@ -135,7 +135,7 @@ const Adjustments = () => {
             showSuccess(t('accounts.adjustmentCreated'))
             setShowAdjustmentModal(false)
             await loadPartyBalance(selectedParty, partyType)
-        } catch (error) {
+        } catch {
             showError(t('accounts.failedToCreateAdjustment'))
         } finally {
             submissionLockRef.current = false

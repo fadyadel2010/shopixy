@@ -1,4 +1,7 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit;
 
 namespace PointOfSale.Tests.Architecture;
@@ -410,7 +413,6 @@ public class PaymentLifecycleTests
         // These files have TODO: MIGRATION comments marking them for refactoring
         var whitelistedFiles = new[]
         {
-            "PaymentLifecycleService.cs",
             "Order.cs", // Entity default value
             "PaymentStatusSaveChangesInterceptor.cs", // Tests for change tracking
             
@@ -475,9 +477,15 @@ public class PaymentLifecycleTests
                     
                 var sourceCode = File.ReadAllText(file);
                 var matches = directAssignmentPattern.Matches(sourceCode);
+                if (matches.Count == 0) continue;
+                var root = CSharpSyntaxTree.ParseText(sourceCode).GetRoot();
                 
                 foreach (Match match in matches)
                 {
+                    // Ownership follows the actual declaring type, not a file
+                    // basename. A canonical partial is the same lifecycle owner;
+                    // another service/nested class/namespace is not exempt.
+                    if (IsCanonicalPaymentLifecycleOwner(root, match.Index)) continue;
                     var lineNumber = GetLineNumber(sourceCode, match.Index);
                     var line = GetLine(sourceCode, match.Index);
                     
@@ -640,10 +648,24 @@ public class PaymentLifecycleTests
         var architecture = File.ReadAllText(architecturePath);
 
         Assert.Contains("IConsumer<ShipmentCodCollectedEvent>", consumer, StringComparison.Ordinal);
-        Assert.Contains("MarkOfflineCollectionDeliveredAsync", consumer, StringComparison.Ordinal);
+        Assert.Contains("RecordCarrierCodCollectionAsync", consumer, StringComparison.Ordinal);
+        Assert.DoesNotContain(".MarkOfflineCollectionDeliveredAsync", consumer, StringComparison.Ordinal);
         Assert.Contains("AddConsumer<ShipmentCodCollectedConsumer, ShipmentCodCollectedConsumerDefinition>", program, StringComparison.Ordinal);
         Assert.DoesNotContain("ShipmentCodCollectedEvent` has NO consumer", architecture, StringComparison.Ordinal);
         Assert.DoesNotContain("verified: 0 consumers", architecture, StringComparison.Ordinal);
+    }
+
+    internal static bool IsCanonicalPaymentLifecycleOwner(SyntaxNode root, int assignmentPosition)
+    {
+        var ancestors = root.FindToken(assignmentPosition).Parent!.AncestorsAndSelf().ToList();
+        var types = ancestors.OfType<TypeDeclarationSyntax>().ToArray();
+        if (types.Length != 1 || types[0] is not ClassDeclarationSyntax declaration ||
+            declaration.Identifier.ValueText != "PaymentLifecycleService" ||
+            !declaration.Modifiers.Any(SyntaxKind.PartialKeyword)) return false;
+
+        var declaringNamespace = string.Join(".", ancestors.OfType<BaseNamespaceDeclarationSyntax>()
+            .Reverse().Select(ns => ns.Name.ToString()));
+        return declaringNamespace == "PointOfSale.Infrastructure.Payments";
     }
 
     [Fact]

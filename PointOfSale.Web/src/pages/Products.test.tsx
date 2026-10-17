@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import Products from './Products.jsx'
 
 const apiGetMock = vi.hoisted(() => vi.fn())
@@ -167,7 +167,7 @@ vi.mock('../common/confirm/ConfirmDialogProvider', () => ({
     useConfirmDialog: () => ({ confirm: confirmMock, confirmAction: confirmActionMock }),
 }))
 
-vi.mock('../components/PermissionGuard', () => ({
+vi.mock('../hooks/usePosSessionPermission', () => ({
     useHasPermission: () => true,
 }))
 
@@ -1131,6 +1131,9 @@ describe('Products listing — PDF export integration (Phase 3 remediation)', ()
 })
 
 describe('Products embedded Product Feed management', () => {
+    // Dialog controls should not repeatedly traverse the aria-hidden catalog.
+    const feed = () => within(screen.getByRole('dialog'))
+    afterEach(() => vi.unstubAllGlobals())
     it('shows the catalog-level Product Feed button and opens the embedded dialog without navigating', async () => {
         const user = userEvent.setup()
         await renderLoaded()
@@ -1167,7 +1170,7 @@ describe('Products embedded Product Feed management', () => {
 
         expect(productFeedButton).toHaveFocus()
         expect(searchInput.value).toBe('unsent table draft')
-        expect(rowCheckboxes().some((checkbox) => checkbox.checked)).toBe(true)
+        expect(rowCheckboxes().some((checkbox) => checkbox instanceof HTMLInputElement && checkbox.checked)).toBe(true)
         expect(lastProductsParams()).toMatchObject({ page: 1, pageSize: 50 })
         expect(productCalls()).toHaveLength(productReadsBefore)
     })
@@ -1245,16 +1248,16 @@ describe('Products embedded Product Feed management', () => {
         render(<Products />)
         await waitFor(() => expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(1))
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Google/ }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
-        await user.click(await screen.findByRole('button', { name: 'productFeed.done' }))
-        await user.click(screen.getByRole('button', { name: 'common.close' }))
+        await user.click(await feed().findByRole('tab', { name: /Google/ }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.createAria' }))
+        await user.click(await feed().findByRole('button', { name: 'productFeed.done' }))
+        await user.click(feed().getByRole('button', { name: 'common.close' }))
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Google/ }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.copyUrl' }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.openFeedAria' }))
+        await user.click(await feed().findByRole('tab', { name: /Google/ }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.copyUrl' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.openFeedAria' }))
 
         await waitFor(() => expect(clipboardWriteMock).toHaveBeenLastCalledWith(rawUrl))
         expect(windowOpenMock).toHaveBeenLastCalledWith(rawUrl, '_blank', 'noopener,noreferrer')
@@ -1311,30 +1314,30 @@ describe('Products embedded Product Feed management', () => {
 
         // 2-3. Open Product Feed and select Meta.
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
 
         // 4. Create Meta and return a distinctive exact raw URL.
-        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.createAria' }))
 
         // 5. Copy and Open exist immediately (one-time disclosure card).
-        expect(await screen.findByRole('button', { name: 'productFeed.copyUrl' })).toBeTruthy()
-        expect(screen.getByRole('button', { name: 'productFeed.openFeedAria' })).toBeTruthy()
+        expect(await feed().findByRole('button', { name: 'productFeed.copyUrl' })).toBeTruthy()
+        expect(feed().getByRole('button', { name: 'productFeed.openFeedAria' })).toBeTruthy()
 
         // 6. Close the dialog directly, without clicking Done first.
-        await user.click(screen.getByRole('button', { name: 'common.close' }))
+        await user.click(feed().getByRole('button', { name: 'common.close' }))
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 
         // 7-8. Reopen Product Feed and reselect Meta.
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
 
         // 9. Copy and Open still exist against the retained session URL.
-        expect(await screen.findByRole('button', { name: 'productFeed.copyUrl' })).toBeTruthy()
-        expect(screen.getByRole('button', { name: 'productFeed.openFeedAria' })).toBeTruthy()
+        expect(await feed().findByRole('button', { name: 'productFeed.copyUrl' })).toBeTruthy()
+        expect(feed().getByRole('button', { name: 'productFeed.openFeedAria' })).toBeTruthy()
 
         // 10-11. Click Copy and Open and assert exact URL + target/features.
-        await user.click(screen.getByRole('button', { name: 'productFeed.copyUrl' }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.openFeedAria' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.copyUrl' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.openFeedAria' }))
 
         await waitFor(() => expect(clipboardWriteMock).toHaveBeenLastCalledWith(rawUrl))
         expect(windowOpenMock).toHaveBeenLastCalledWith(rawUrl, '_blank', 'noopener,noreferrer')
@@ -1378,14 +1381,14 @@ describe('Products embedded Product Feed management', () => {
         render(<Products />)
         await waitFor(() => expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(1))
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
-        await user.click(await screen.findByRole('button', { name: 'productFeed.done' }))
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.createAria' }))
+        await user.click(await feed().findByRole('button', { name: 'productFeed.done' }))
 
-        await user.click(screen.getByRole('button', { name: 'productFeed.rotateAria' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.rotateAria' }))
         await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/admin/feeds/meta/tokens/meta-token/rotate'))
-        await user.click(await screen.findByRole('button', { name: 'productFeed.done' }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.copyUrl' }))
+        await user.click(await feed().findByRole('button', { name: 'productFeed.done' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.copyUrl' }))
 
         await waitFor(() => expect(clipboardWriteMock).toHaveBeenLastCalledWith(rotatedUrl))
         expect(clipboardWriteMock).not.toHaveBeenCalledWith(createUrl)
@@ -1433,16 +1436,16 @@ describe('Products embedded Product Feed management', () => {
         render(<Products />)
         await waitFor(() => expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(1))
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
-        await user.click(await screen.findByRole('button', { name: 'productFeed.done' }))
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.createAria' }))
+        await user.click(await feed().findByRole('button', { name: 'productFeed.done' }))
 
-        await user.click(screen.getByRole('tab', { name: /Google/ }))
-        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
-        expect(screen.queryByRole('button', { name: 'productFeed.openFeedAria' })).toBeNull()
+        await user.click(feed().getByRole('tab', { name: /Google/ }))
+        expect(feed().queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        expect(feed().queryByRole('button', { name: 'productFeed.openFeedAria' })).toBeNull()
 
-        await user.click(screen.getByRole('tab', { name: /Meta/ }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.copyUrl' }))
+        await user.click(feed().getByRole('tab', { name: /Meta/ }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.copyUrl' }))
         expect(clipboardWriteMock).toHaveBeenLastCalledWith(metaUrl)
     })
 
@@ -1486,23 +1489,23 @@ describe('Products embedded Product Feed management', () => {
         render(<Products />)
         await waitFor(() => expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(1))
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
 
         // Initially not configured -> Create is available and Copy/Open are absent.
-        expect(await screen.findByRole('button', { name: 'productFeed.createAria' })).toBeTruthy()
-        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        expect(await feed().findByRole('button', { name: 'productFeed.createAria' })).toBeTruthy()
+        expect(feed().queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
 
-        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
-        await user.click(await screen.findByRole('button', { name: 'productFeed.done' }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.copyUrl' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.createAria' }))
+        await user.click(await feed().findByRole('button', { name: 'productFeed.done' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.copyUrl' }))
         await waitFor(() => expect(clipboardWriteMock).toHaveBeenLastCalledWith(rawUrl))
 
-        await user.click(screen.getByRole('button', { name: 'productFeed.revokeAria' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.revokeAria' }))
         await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/admin/feeds/meta/tokens/meta-token/revoke'))
         // Revoke invalidated the token -> metadata refreshes to a not-active state
         // and the retained session URL is discarded, so Copy/Open disappear.
-        expect(await screen.findByRole('button', { name: 'productFeed.createAria' })).toBeTruthy()
-        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        expect(await feed().findByRole('button', { name: 'productFeed.createAria' })).toBeTruthy()
+        expect(feed().queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
     })
 
     it('clears retained feed URLs when the Products page unmounts before reopening', async () => {
@@ -1542,10 +1545,10 @@ describe('Products embedded Product Feed management', () => {
         const { unmount } = render(<Products />)
         await waitFor(() => expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(1))
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
-        await user.click(await screen.findByRole('button', { name: 'productFeed.done' }))
-        await user.click(screen.getByRole('button', { name: 'productFeed.copyUrl' }))
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.createAria' }))
+        await user.click(await feed().findByRole('button', { name: 'productFeed.done' }))
+        await user.click(feed().getByRole('button', { name: 'productFeed.copyUrl' }))
         await waitFor(() => expect(clipboardWriteMock).toHaveBeenLastCalledWith(rawUrl))
 
         // Unmounting Products discards its React memory; reopening must not retain the URL.
@@ -1553,9 +1556,9 @@ describe('Products embedded Product Feed management', () => {
         render(<Products />)
         await waitFor(() => expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(1))
         await user.click(screen.getByRole('button', { name: 'productFeed.title' }))
-        await user.click(await screen.findByRole('tab', { name: /Meta/ }))
-        expect(await screen.findByText('productFeed.sessionUrlUnavailable')).toBeTruthy()
-        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        await user.click(await feed().findByRole('tab', { name: /Meta/ }))
+        expect(await feed().findByText('productFeed.sessionUrlUnavailable')).toBeTruthy()
+        expect(feed().queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
     })
 })
 

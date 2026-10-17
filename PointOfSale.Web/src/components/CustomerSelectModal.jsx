@@ -96,16 +96,9 @@ export default function CustomerSelectModal({ onSelect, onClose }) {
 
             commitSelection(response.data)
         } catch (error) {
-            // Log only non-sensitive metadata in production
-            if (process.env.NODE_ENV === 'development') {
-                console.error('Failed to create customer:', error, error.response?.data)
-            } else {
-                console.error('Failed to create customer:', {
-                    message: error.message,
-                    name: error.name,
-                    status: error.response?.status,
-                })
-            }
+            // Browser builds have no Node process global. Do not log the Axios
+            // error/config/body: it may contain customer contact data or tokens.
+            console.error('Failed to create customer:', { status: error.response?.status })
             if (isMountedRef.current) {
                 showError(t('customerSelectModal.failedToCreate'))
             }

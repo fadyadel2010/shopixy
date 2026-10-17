@@ -11,6 +11,7 @@ describe("payment identity authority", () => {
     status: "PAID" as const,
     orderStatus: "Confirmed",
     paymentStatus: "Paid",
+    canRetryPayment: false,
     totalAmount: 100,
     currency: "EGP"
   };

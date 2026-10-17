@@ -373,7 +373,13 @@ public sealed class DiscountValidationHardeningTests
             .UseInMemoryDatabase(databaseName, _sharedRoot)
             .Options;
 
-        return new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        if (!context.Tenants.Any(t => t.Id == tenantId))
+        {
+            context.Tenants.Add(new Tenant { Id = tenantId, Name = "Synthetic discount tenant", Slug = $"discount-{tenantId:N}", Currency = "EGP" });
+            context.SaveChanges();
+        }
+        return context;
     }
 
     private static CouponsController CreateCouponsController(

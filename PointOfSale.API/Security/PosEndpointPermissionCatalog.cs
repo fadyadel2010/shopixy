@@ -60,6 +60,8 @@ public static class PosEndpointPermissionCatalog
                 overrides: O(
                     ("CreateWarehouse", PosPermissions.InventoryApprove),
                     ("UpdateWarehouse", PosPermissions.InventoryApprove),
+                    ("GetWarehouseAddressPlaces", PosPermissions.InventoryApprove),
+                    ("AdmitWarehouseAddress", PosPermissions.InventoryApprove),
                     ("TransferStock", PosPermissions.InventoryTransfer))),
             ["StockTransfers"] = R(PosPermissions.InventoryView, PosPermissions.InventoryTransfer,
                 overrides: O(
@@ -108,6 +110,7 @@ public static class PosEndpointPermissionCatalog
             ["Treasury"] = R(PosPermissions.FinanceView, PosPermissions.FinanceOperate,
                 overrides: InitializeOverrides()),
             ["TreasuryInitialCapitalizations"] = R(PosPermissions.FinanceInitialize),
+            ["CarrierRemittances"] = R(PosPermissions.StorefrontPaymentsManage),
             ["AdminAccounting"] = R(PosPermissions.FinanceView, PosPermissions.FinanceAdmin),
             ["LegacyBankStatement"] = R(PosPermissions.ReportsFinancialView),
             ["LegacyVisaStatement"] = R(PosPermissions.ReportsFinancialView),
@@ -117,7 +120,8 @@ public static class PosEndpointPermissionCatalog
             ["FinancialReports"] = R(PosPermissions.ReportsFinancialView),
 
             ["Orders"] = StorefrontOrdersRule(),
-            ["AdminOrders"] = StorefrontOrdersRule(),
+            ["AdminOrders"] = StorefrontOrdersRule(O(
+                ("DownloadCheckoutAttachment", PosPermissions.StorefrontOrderAttachmentsDownload))),
             ["AdminAbandonedCheckouts"] = StorefrontOrdersRule(),
             ["AdminAbandonedCartRecovery"] = StorefrontOrdersRule(),
             ["OnlineCustomersAdmin"] = StorefrontOrdersRule(),
@@ -133,6 +137,8 @@ public static class PosEndpointPermissionCatalog
                     ("RefundPayment", PosPermissions.StorefrontRefundsManage))),
             ["PaymentLifecycle"] = R(PosPermissions.StorefrontPaymentsView, PosPermissions.StorefrontPaymentsManage,
                 overrides: O(
+                    ("GetManualSettlementEligibility", PosPermissions.StorefrontPaymentsManage),
+                    ("GetManualCodSettlement", PosPermissions.StorefrontPaymentsManage),
                     ("Refund", PosPermissions.StorefrontRefundsManage),
                     ("RefundPayment", PosPermissions.StorefrontRefundsManage))),
 
@@ -157,9 +163,13 @@ public static class PosEndpointPermissionCatalog
             ["AdminDataSync"] = R(PosPermissions.SettingsView, PosPermissions.SettingsManage),
             ["AdminDomains"] = R(PosPermissions.StorefrontDomainsManage),
             ["AdminGeographicAdministration"] = R(PosPermissions.ShippingManage),
+            ["AdminBostaGeography"] = R(PosPermissions.ShippingManage),
+            ["AdminBostaSetup"] = R(PosPermissions.ShippingManage),
+            ["AdminBostaDestinations"] = R(PosPermissions.ShippingManage, overrides: O(("Save", PosPermissions.ShippingFulfill))),
             ["AdminHelpAssistant"] = R(PosPermissions.SettingsView),
             ["AdminStoreConfig"] = StorefrontDesignRule(),
             ["AdminStorefrontFooter"] = StorefrontDesignRule(),
+            ["HomepageMedia"] = StorefrontDesignRule(),
             ["StorefrontAuthProvidersAdmin"] = R(PosPermissions.StorefrontAuthManage),
 
             ["ShippingMethods"] = R(PosPermissions.ShippingManage),

@@ -9,25 +9,9 @@
  */
 import { memo } from 'react'
 import { ArrowUpDown } from 'lucide-react'
+import { DEFAULT_SORT, PORTAL_SORT_OPTIONS } from '../../lib/portalSortOptions'
 
-const SORT_OPTIONS = [
-    { value: 'ranking', label: 'Best Match' },
-    { value: 'commission_desc', label: 'Highest Commission' },
-    { value: 'commission_asc', label: 'Lowest Commission' },
-    { value: 'newest', label: 'Newest First' },
-    { value: 'price_desc', label: 'Price: High to Low' },
-    { value: 'price_asc', label: 'Price: Low to High' },
-]
-
-const VALID_SORTS = new Set(SORT_OPTIONS.map(o => o.value))
-
-export function isValidSort(sort) {
-    return VALID_SORTS.has(sort)
-}
-
-export const DEFAULT_SORT = 'commission_desc'
-
-const SortDropdown = memo(function SortDropdown({ selectedSort, onChange, options = SORT_OPTIONS }) {
+const SortDropdown = memo(function SortDropdown({ selectedSort, onChange, options = PORTAL_SORT_OPTIONS }) {
     return (
         <div className="relative flex items-center gap-2" id="af33-sort-dropdown">
             <ArrowUpDown className="w-4 h-4 text-gray-500 flex-shrink-0" />

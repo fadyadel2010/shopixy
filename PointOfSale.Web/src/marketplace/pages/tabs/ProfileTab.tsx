@@ -1,17 +1,15 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { marketplaceApi } from '../../api/marketplaceApi'
-import { marketplaceKeys } from '../../queryKeys'
+import { useMarketplaceProfileQuery } from '../../hooks/useMarketplaceProfileQuery'
+import { useMarketplaceProfileEditor, useMarketplaceProfileStats } from '../../hooks/useMarketplaceProfileEditor'
 import { ProfileFormModal } from '../../components/ProfileFormModal'
 import { useFormatting } from '../../../hooks/useFormatting'
 import {
-    marketplaceAuthorityQueryOptions,
-    publishMarketplaceAuthorityInvalidation,
     useMarketplaceAuthorityScope,
 } from '../../authority'
 import { deriveProviderAnalyticsDashboardPresentation } from '../../dashboardTrendAuthority'
 import { deriveProviderProfilePresentation } from '../../providerProfileAuthority'
+import type { MarketplaceProfileInput } from '../../types'
 
 const reputationBadgeKeys: Record<string, string> = {
     New: 'servicesMarketplace.badges.new',
@@ -24,7 +22,6 @@ const reputationBadgeKeys: Record<string, string> = {
 export function ProfileTab() {
     const { t } = useTranslation()
     const { formatNumber, isRTL } = useFormatting()
-    const queryClient = useQueryClient()
     const authorityScope = useMarketplaceAuthorityScope()
     const [showCreateModal, setShowCreateModal] = useState(false)
     const [showEditModal, setShowEditModal] = useState(false)
@@ -35,11 +32,7 @@ export function ProfileTab() {
         isFetching: profileAuthorityRefreshing,
         isError: profileAuthorityFailed,
         isRefetchError: profileAuthorityRefreshFailed,
-    } = useQuery({
-        queryKey: marketplaceKeys.myProfile(authorityScope),
-        queryFn: marketplaceApi.getMyProfile,
-        ...marketplaceAuthorityQueryOptions,
-    })
+    } = useMarketplaceProfileQuery()
     const profile = !profileAuthorityRefreshing
         && !profileAuthorityFailed
         && !profileAuthorityRefreshFailed
@@ -52,12 +45,7 @@ export function ProfileTab() {
         isFetching: statsAuthorityRefreshing,
         isError: statsAuthorityFailed,
         isRefetchError: statsAuthorityRefreshFailed,
-    } = useQuery({
-        queryKey: marketplaceKeys.myProfileStats(authorityScope),
-        queryFn: marketplaceApi.getMyProfileStats,
-        enabled: !profileAuthorityFailed && profile?.hasMarketplaceProfile === true && profile.isActive === true,
-        ...marketplaceAuthorityQueryOptions,
-    })
+    } = useMarketplaceProfileStats(!profileAuthorityFailed && profile?.hasMarketplaceProfile === true && profile.isActive === true)
     const dashboard = !statsAuthorityLoading
         && !statsAuthorityRefreshing
         && !statsAuthorityFailed
@@ -69,35 +57,13 @@ export function ProfileTab() {
         : null
     const stats = dashboard?.cards ?? null
 
-    const createProfileMutation = useMutation({
-        mutationFn: (data: any) => marketplaceApi.createProfile(data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-            setShowCreateModal(false)
-        },
-        onSettled: () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
+    const { createProfileMutation, updateProfileMutation } = useMarketplaceProfileEditor(() => setShowCreateModal(false), () => setShowEditModal(false))
 
-    const updateProfileMutation = useMutation({
-        mutationFn: (data: any) => marketplaceApi.updateProfile(data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-            setShowEditModal(false)
-        },
-        onSettled: () => {
-            publishMarketplaceAuthorityInvalidation(authorityScope)
-            queryClient.invalidateQueries({ queryKey: marketplaceKeys.scope(authorityScope) })
-        },
-    })
-
-    const handleSubmitCreate = async (data: any) => {
+    const handleSubmitCreate = async (data: MarketplaceProfileInput) => {
         await createProfileMutation.mutateAsync(data)
     }
 
-    const handleSubmitEdit = async (data: any) => {
+    const handleSubmitEdit = async (data: MarketplaceProfileInput) => {
         await updateProfileMutation.mutateAsync(data)
     }
 
@@ -145,6 +111,7 @@ export function ProfileTab() {
 
                 {showCreateModal ? (
                     <ProfileFormModal
+                        isRTL={isRTL}
                         onSubmit={handleSubmitCreate}
                         onClose={() => setShowCreateModal(false)}
                     />
@@ -174,7 +141,7 @@ export function ProfileTab() {
                         {profile.profileImageUrl ? (
                             <img
                                 src={profile.profileImageUrl}
-                                alt={profile.displayName}
+                                alt={profile.displayName || ''}
                                 className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-lg"
                             />
                         ) : (
@@ -290,6 +257,7 @@ export function ProfileTab() {
 
             {showCreateModal ? (
                 <ProfileFormModal
+                    isRTL={isRTL}
                     onSubmit={handleSubmitCreate}
                     onClose={() => setShowCreateModal(false)}
                 />
@@ -297,6 +265,7 @@ export function ProfileTab() {
 
             {showEditModal ? (
                 <ProfileFormModal
+                    isRTL={isRTL}
                     initialData={profileData}
                     onSubmit={handleSubmitEdit}
                     onClose={() => setShowEditModal(false)}

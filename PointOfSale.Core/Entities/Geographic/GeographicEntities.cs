@@ -564,6 +564,10 @@ public sealed class AddressAdmissionEvidence : GeographicEntity
     public AddressAdmissionOwnerDomain OwnerDomain { get; set; }
     public Guid? OwnerId { get; set; }
     public string AddressFingerprintSha256 { get; set; } = string.Empty;
+    // Explicit warehouse address input; never recover a postal code from a hash or place name.
+    public string? PostalCode { get; set; }
+    // Null is legacy, not proof of admitted country/postal/contact absence.
+    public string? CanonicalAddressEvidenceJson { get; set; }
     public AddressAdmissionStatus Status { get; set; }
     public string? FailureCode { get; set; }
     public Guid CatalogReleaseId { get; set; }

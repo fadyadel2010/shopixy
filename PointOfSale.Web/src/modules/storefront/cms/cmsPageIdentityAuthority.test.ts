@@ -75,9 +75,9 @@ describe('CMS page identity authority admission', () => {
             metaKeywords: 'about,store',
             openGraphImageUrl: '/media/cms/about.png',
         })
-        expect(admitted?.draft?.seo?.canonicalUrl).toBeUndefined()
-        expect(admitted?.draft?.seo?.robots).toBeUndefined()
-        expect(admitted?.draft?.seo?.structuredData).toBeUndefined()
+        expect(admitted?.draft?.seo).not.toHaveProperty('canonicalUrl')
+        expect(admitted?.draft?.seo).not.toHaveProperty('robots')
+        expect(admitted?.draft?.seo).not.toHaveProperty('structuredData')
     })
 
     it('rejects malformed SEO evidence before editor presentation', () => {

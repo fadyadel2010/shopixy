@@ -1,9 +1,14 @@
+using System.Globalization;
+using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PointOfSale.Core.DTOs.Customs;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Helpers;
 
 namespace PointOfSale.Infrastructure.Shipping.Adapters;
 
@@ -20,17 +25,9 @@ namespace PointOfSale.Infrastructure.Shipping.Adapters;
 /// ✅ Follows canonical ShipmentStatus lifecycle
 /// ✅ ReadyForPickup used after successful creation (NOT Pending)
 /// 
-/// STATUS MAPPING (MANDATORY):
-/// DHL Status          → POS ShipmentStatus
-/// ------------------------------------------
-/// CREATED/ACCEPTED    → ReadyForPickup
-/// PICKED_UP           → PickedUp
-/// IN_TRANSIT          → InTransit
-/// WITH_DELIVERY_COURIER → OutForDelivery
-/// DELIVERED           → Delivered
-/// CANCELLED           → Cancelled
-/// RETURNED            → Returned
-/// EXCEPTION           → Failed
+/// Admitted MyDHL 3.3.4 tracking checkpoints:
+/// PU → PickedUp; AF/PL/DF/RR/CR/AR → InTransit; WC → OutForDelivery; OK → Delivered.
+/// Other checkpoints require separately verified semantics before admission.
 /// </summary>
 public sealed class DhlAdapter : IShippingCarrierAdapter
 {
@@ -66,6 +63,18 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             };
         }
 
+        if (request.IsCashOnDelivery || request.CodAmount is > 0 || request.PackageCount != 1 || !ParcelMeasurements.IsMetricWeight(request.WeightKg) ||
+            !ParcelMeasurements.IsMetricDimension(request.LengthCm) || !ParcelMeasurements.IsMetricDimension(request.WidthCm) || !ParcelMeasurements.IsMetricDimension(request.HeightCm) ||
+            !IsIso2(request.OriginCountry) || !IsIso2(request.DestinationCountry) ||
+            !IsRequiredText(request.OriginCity, 45) || !IsRequiredText(request.DestinationCity, 45) ||
+            !IsPostalCode(request.OriginZipCode) || !IsPostalCode(request.DestinationZipCode))
+            return new ShippingQuoteResult { ErrorCode = "DHL_QUOTE_REQUEST_UNSUPPORTED", ErrorMessage = "Only single-package prepaid DHL quotes with positive actual weight and dimensions are supported." };
+
+        var requestedProduct = string.IsNullOrEmpty(request.ServiceLevel) ? null :
+            MapServiceLevelToProduct(request.ServiceLevel, IsInternational(request.OriginCountry, request.DestinationCountry));
+        if (!string.IsNullOrEmpty(request.ServiceLevel) && requestedProduct == null)
+            return new ShippingQuoteResult { ErrorCode = "DHL_SERVICE_UNSUPPORTED", ErrorMessage = "Requested DHL product mapping is not supported." };
+
         var baseUrl = GetBaseUrl(credentials);
         
         try
@@ -79,13 +88,14 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                     {
                         CityName = request.OriginCity,
                         CountryCode = request.OriginCountry,
-                        PostalCode = request.OriginZipCode
+                        // MyDHL requires the property even where the country has no postcode.
+                        PostalCode = request.OriginZipCode ?? string.Empty
                     },
                     ReceiverDetails = new DhlAddressDetails
                     {
                         CityName = request.DestinationCity,
                         CountryCode = request.DestinationCountry,
-                        PostalCode = request.DestinationZipCode
+                        PostalCode = request.DestinationZipCode ?? string.Empty
                     }
                 },
                 Accounts = new List<DhlAccount>
@@ -104,7 +114,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                     new DhlPackage
                     {
                         Weight = request.WeightKg,
-                        Dimensions = new DhlDimensions { Length = 30, Width = 20, Height = 10 }
+                        Dimensions = new DhlDimensions { Length = request.LengthCm.Value, Width = request.WidthCm.Value, Height = request.HeightCm.Value }
                     }
                 }
             };
@@ -113,13 +123,12 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             AddAuthHeaders(httpRequest, credentials);
             httpRequest.Content = JsonContent.Create(dhlRequest, options: GetJsonOptions());
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("DHL rate calculation failed: {StatusCode} - {Body}", 
-                    response.StatusCode, responseBody);
+                _logger.LogError("DHL rate calculation failed: {StatusCode}", response.StatusCode);
                 
                 return new ShippingQuoteResult
                 {
@@ -141,26 +150,45 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 };
             }
             
-            var quotes = rateResponse.Products.Select(product => new ShippingQuote
+            var quotes = new List<ShippingQuote>();
+            foreach (var product in rateResponse.Products)
             {
-                CarrierCode = CarrierCode,
-                ServiceLevel = MapDhlProductToServiceLevel(product.ProductCode),
-                ServiceName = product.ProductName ?? GetServiceName(product.ProductCode),
-                Cost = product.TotalPrice?.FirstOrDefault()?.Price ?? 0,
-                Currency = product.TotalPrice?.FirstOrDefault()?.CurrencyType ?? "USD",
-                EstimatedDeliveryDaysMin = product.DeliveryCapabilities?.EstimatedDeliveryDateAndTime != null ? 1 : 2,
-                EstimatedDeliveryDaysMax = product.DeliveryCapabilities?.EstimatedDeliveryDateAndTime != null ? 3 : 5,
-                SupportsCod = false, // DHL typically prepaid only
-                CarrierQuoteId = product.ProductCode
-            }).ToList();
+                // Billing currency is the account quote basis; array order is not authority.
+                var billingPrices = product.TotalPrice?.Where(p => p.CurrencyType == "BILLC").ToList();
+                var price = billingPrices?.Count == 1 ? billingPrices[0] : null;
+                var serviceLevel = MapDhlProductToServiceLevel(product.ProductCode);
+                if (price?.Price is null || price.Price < 0 || !IsCurrency(price.PriceCurrency) || serviceLevel is null)
+                {
+                    return new ShippingQuoteResult
+                    {
+                        Success = false,
+                        ErrorCode = "DHL_RATE_RESPONSE_INVALID",
+                        ErrorMessage = "DHL did not return an unambiguous billing price, monetary currency, and supported product."
+                    };
+                }
+                quotes.Add(new ShippingQuote
+                {
+                    CarrierCode = CarrierCode,
+                    ServiceLevel = serviceLevel,
+                    ServiceName = product.ProductName ?? GetServiceName(product.ProductCode),
+                    Cost = price.Price.Value,
+                    Currency = price.PriceCurrency!.ToUpperInvariant(),
+                    EstimatedDeliveryDaysMin = product.DeliveryCapabilities?.EstimatedDeliveryDateAndTime != null ? 1 : 2,
+                    EstimatedDeliveryDaysMax = product.DeliveryCapabilities?.EstimatedDeliveryDateAndTime != null ? 3 : 5,
+                    SupportsCod = false,
+                    CarrierQuoteId = product.ProductCode
+                });
+            }
             
             // Filter by service level if specified
-            if (!string.IsNullOrEmpty(request.ServiceLevel))
+            if (requestedProduct != null)
             {
                 quotes = quotes
-                    .Where(q => q.ServiceLevel.Equals(request.ServiceLevel, StringComparison.OrdinalIgnoreCase))
+                    .Where(q => string.Equals(q.CarrierQuoteId, requestedProduct, StringComparison.OrdinalIgnoreCase))
                     .ToList();
             }
+            if (quotes.Count == 0)
+                return new ShippingQuoteResult { ErrorCode = "DHL_RATE_UNAVAILABLE", ErrorMessage = "DHL did not return an estimate for the admitted route product." };
             
             return new ShippingQuoteResult
             {
@@ -170,22 +198,22 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "DHL rate calculation HTTP error");
+            _logger.LogError("DHL rating transport failed ({FailureType})", ex.GetType().Name);
             return new ShippingQuoteResult
             {
                 Success = false,
                 ErrorCode = "DHL_RATE_HTTP_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "DHL rating connection failed."
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "DHL rate calculation unexpected error");
+            _logger.LogError("DHL rating failed ({FailureType})", ex.GetType().Name);
             return new ShippingQuoteResult
             {
                 Success = false,
                 ErrorCode = "DHL_RATE_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "DHL rating response could not be verified."
             };
         }
     }
@@ -207,23 +235,53 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             };
         }
 
-        if (request.WeightKg <= 0 ||
+        if (!ParcelMeasurements.IsMetricWeight(request.WeightKg) ||
             request.PackageCount != 1 ||
-            string.IsNullOrWhiteSpace(request.OriginCountry) ||
-            string.IsNullOrWhiteSpace(request.RecipientCountry))
+            !IsIso2(request.OriginCountry) ||
+            !IsIso2(request.RecipientCountry) ||
+            string.IsNullOrWhiteSpace(request.CarrierRequestId) ||
+            string.IsNullOrWhiteSpace(request.InternalShipmentId) ||
+            string.IsNullOrWhiteSpace(request.OrderNumber) || request.OrderNumber.Length > 35 ||
+            request.InsuranceAmount is < 0 || request.DeclaredValue is < 0 ||
+            (request.PieceReference != null && (request.PieceReference.Length is 0 or > 35 || request.PieceReference.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))) ||
+            !ParcelMeasurements.IsMetricDimension(request.LengthCm) || !ParcelMeasurements.IsMetricDimension(request.WidthCm) || !ParcelMeasurements.IsMetricDimension(request.HeightCm) ||
+            !IsRequiredText(request.OriginName, 100) || !IsRequiredText(request.RecipientName, 100) ||
+            !IsRequiredText(request.OriginAddress, 45) || !IsRequiredText(request.RecipientAddress, 45) ||
+            !IsOptionalText(request.RecipientAddressLine2, 45) ||
+            !IsRequiredText(request.OriginCity, 45) || !IsRequiredText(request.RecipientCity, 45) ||
+            !IsPostalCode(request.OriginZipCode) || !IsPostalCode(request.RecipientZipCode) ||
+            !IsRequiredText(request.OriginPhone, 70) || !IsRequiredText(request.RecipientPhone, 70) ||
+            !IsOptionalText(request.RecipientEmail, 70) || !IsOptionalText(request.PackageDescription, 70))
         {
             return new CreateShipmentResult
             {
                 Success = false,
                 ErrorCode = "DHL_REQUEST_CONTRACT_INVALID",
-                ErrorMessage = "DHL shipment creation requires positive weight, one package, and ISO origin/destination countries."
+                ErrorMessage = "DHL shipment creation requires positive package measurements, one package, ISO countries, durable request identity, and an order reference of at most 35 characters."
             };
         }
+
+        if (request.IsCashOnDelivery || request.CodAmount is > 0)
+            return new CreateShipmentResult { ErrorCode = "DHL_COD_UNSUPPORTED", ErrorMessage = "DHL COD is not implemented or certified by this integration." };
+        if (request.InsuranceAmount is > 0)
+            return new CreateShipmentResult { ErrorCode = "DHL_INSURANCE_UNSUPPORTED", ErrorMessage = "Requested DHL insurance service is not implemented by this integration." };
+
+        var productCode = MapServiceLevelToProduct(request.ServiceLevel, isInternational);
+        if (productCode is null)
+            return new CreateShipmentResult { ErrorCode = "DHL_SERVICE_UNSUPPORTED", ErrorMessage = "Requested DHL product mapping is not supported." };
 
         DhlExportDeclaration? exportDeclaration = null;
         if (isInternational)
         {
             var customsValidationFailure = TryBuildExportDeclaration(request.Customs, out exportDeclaration);
+            if (customsValidationFailure is null &&
+                (!string.Equals(request.Customs!.OriginCountryIso2, request.OriginCountry, StringComparison.OrdinalIgnoreCase) ||
+                 !string.Equals(request.Customs.DestinationCountryIso2, request.RecipientCountry, StringComparison.OrdinalIgnoreCase)))
+                customsValidationFailure = "DHL_CUSTOMS_ROUTE_MISMATCH";
+            if (customsValidationFailure is null &&
+                (!TryConvertToKg(request.Customs!.ShipmentGrossWeight, request.Customs.ShipmentGrossWeightUnit, out var grossKg) ||
+                 grossKg != request.WeightKg || request.Customs.Lines.Sum(l => ConvertCustomsWeight(l.NetWeight, l.NetWeightUnit)) > grossKg))
+                customsValidationFailure = "DHL_CUSTOMS_WEIGHT_MISMATCH";
             if (customsValidationFailure is not null)
             {
                 return new CreateShipmentResult
@@ -240,14 +298,15 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         try
         {
             // Build DHL shipment creation request
+            var messageReference = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.CarrierRequestId!)))[..32];
             var dhlRequest = new DhlCreateShipmentRequest
             {
                 PlannedShippingDateAndTime = DateTime.UtcNow.AddHours(2).ToString("yyyy-MM-ddTHH:mm:ss") + " GMT+00:00",
                 Pickup = new DhlPickup
                 {
-                    IsRequested = false // Pickup scheduled separately
+                    IsRequested = false // Pickup scheduling is not implemented by this integration.
                 },
-                ProductCode = MapServiceLevelToProduct(request.ServiceLevel, isInternational),
+                ProductCode = productCode,
                 Accounts = new List<DhlAccount>
                 {
                     new DhlAccount
@@ -265,7 +324,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                             AddressLine1 = request.OriginAddress,
                             CityName = request.OriginCity,
                             CountryCode = request.OriginCountry,
-                            PostalCode = request.OriginZipCode
+                            PostalCode = request.OriginZipCode ?? string.Empty
                         },
                         ContactInformation = new DhlContactInfo
                         {
@@ -282,7 +341,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                             AddressLine2 = request.RecipientAddressLine2,
                             CityName = request.RecipientCity,
                             CountryCode = request.RecipientCountry,
-                            PostalCode = request.RecipientZipCode
+                            PostalCode = request.RecipientZipCode ?? string.Empty
                         },
                         ContactInformation = new DhlContactInfo
                         {
@@ -302,20 +361,20 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                             Weight = request.WeightKg,
                             Dimensions = new DhlDimensions
                             {
-                                Length = request.LengthCm ?? 30,
-                                Width = request.WidthCm ?? 20,
-                                Height = request.HeightCm ?? 10
+                                Length = request.LengthCm.Value,
+                                Width = request.WidthCm.Value,
+                                Height = request.HeightCm.Value
                             },
                             CustomerReferences = new List<DhlReference>
                             {
-                                new DhlReference { Value = request.OrderNumber, TypeCode = "CU" }
+                                new DhlReference { Value = request.PieceReference ?? request.OrderNumber, TypeCode = "CU" }
                             },
                             Description = request.PackageDescription ?? "Package"
                         }
                     },
                     IsCustomsDeclarable = isInternational,
                     DeclaredValue = isInternational
-                        ? request.Customs!.Lines.Sum(line => line.DeclaredValue)
+                        ? request.Customs!.Lines.Sum(line => line.DeclaredValue * line.Quantity)
                         : request.DeclaredValue,
                     DeclaredValueCurrency = isInternational
                         ? request.Customs!.Lines[0].Currency
@@ -338,7 +397,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 CustomerReferences = new List<DhlReference>
                 {
                     new DhlReference { Value = request.OrderNumber, TypeCode = "CU" },
-                    new DhlReference { Value = request.InternalShipmentId, TypeCode = "AAO" }
+                    new DhlReference { Value = messageReference, TypeCode = "OID" }
                 },
                 GetRateEstimates = false,
                 GetTransliteratedResponse = false,
@@ -358,16 +417,20 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/shipments");
             AddAuthHeaders(httpRequest, credentials);
+            // Official request/response correlation, NOT a provider idempotency guarantee.
+            httpRequest.Headers.Add("Message-Reference", messageReference);
             httpRequest.Content = JsonContent.Create(dhlRequest, options: GetJsonOptions());
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError(
-                    "DHL API error: {StatusCode} - {Body}",
-                    response.StatusCode, responseBody);
+                    "DHL API error: {StatusCode}", response.StatusCode);
+
+                if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout)
+                    return ReconciliationRequired("DHL_CREATE_HTTP_AMBIGUOUS", responseBody);
                     
                 return new CreateShipmentResult
                 {
@@ -378,6 +441,11 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 };
             }
             
+            if (response.StatusCode != HttpStatusCode.Created ||
+                !response.Headers.TryGetValues("Message-Reference", out var returnedReferences) ||
+                !returnedReferences.SequenceEqual(new[] { messageReference }, StringComparer.Ordinal))
+                return ReconciliationRequired("DHL_CREATE_CORRELATION_INVALID", responseBody);
+
             var dhlResponse = JsonSerializer.Deserialize<DhlCreateShipmentResponse>(responseBody, GetJsonOptions());
             
             if (string.IsNullOrWhiteSpace(dhlResponse?.ShipmentTrackingNumber))
@@ -385,29 +453,22 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 var errorMessage = "Shipment creation failed - no tracking number returned";
                 _logger.LogError("DHL shipment creation failed: {Error}", errorMessage);
                 
-                return new CreateShipmentResult
-                {
-                    Success = false,
-                    ErrorCode = "DHL_CREATE_ERROR",
-                    ErrorMessage = errorMessage,
-                    RawResponse = responseBody
-                };
+                return ReconciliationRequired("DHL_CREATE_IDENTITY_MISSING", responseBody);
             }
             
-            var trackingNumber = dhlResponse.ShipmentTrackingNumber.Trim();
-            if (!string.IsNullOrWhiteSpace(dhlResponse.ShipmentTrackingNumber) &&
-                dhlResponse.ShipmentTrackingNumber.Any(char.IsWhiteSpace))
+            var trackingNumber = dhlResponse.ShipmentTrackingNumber;
+            if (!IsTrackingNumber(trackingNumber) || dhlResponse.Packages?.Count != request.PackageCount ||
+                dhlResponse.Packages.Any(p => !IsPieceIdentifier(p.TrackingNumber)) ||
+                dhlResponse.Packages.Select(p => p.TrackingNumber).Distinct(StringComparer.Ordinal).Count() != request.PackageCount)
             {
-                return new CreateShipmentResult
-                {
-                    Success = false,
-                    ErrorCode = "DHL_RESPONSE_IDENTITY_INVALID",
-                    ErrorMessage = "DHL returned a malformed shipment tracking number.",
-                    RawResponse = responseBody
-                };
+                return ReconciliationRequired("DHL_RESPONSE_IDENTITY_INVALID", responseBody);
             }
 
-            var labelDoc = dhlResponse.Documents?.FirstOrDefault(d => d.TypeCode == "label");
+            var labels = dhlResponse.Documents?.Where(d => d.TypeCode == "label").ToList();
+            var labelDoc = labels?.Count == 1 ? labels[0] : null;
+            if (labelDoc is null || !string.Equals(labelDoc.ImageFormat, "PDF", StringComparison.OrdinalIgnoreCase) ||
+                !IsPdfLabel(labelDoc.Content) || (labelDoc.PackageReferenceNumber.HasValue && labelDoc.PackageReferenceNumber != 1))
+                return ReconciliationRequired("DHL_LABEL_RESPONSE_INVALID", responseBody);
             
             // Build tracking URL
             var trackingUrl = $"https://www.dhl.com/global-en/home/tracking.html?tracking-id={trackingNumber}";
@@ -425,10 +486,8 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 "Created DHL shipment. TrackingNumber: {TrackingNumber}, OrderNumber: {OrderNumber}",
                 trackingNumber, request.OrderNumber);
             
-            // Determine ExternalReferenceId: prefer DispatchConfirmationNumber, fallback to trackingNumber
-            var externalReferenceId = !string.IsNullOrWhiteSpace(dhlResponse.DispatchConfirmationNumber)
-                ? dhlResponse.DispatchConfirmationNumber.Trim()
-                : trackingNumber;
+            // A dispatch confirmation identifies a pickup booking, never this shipment.
+            var externalReferenceId = trackingNumber;
             
             return new CreateShipmentResult
             {
@@ -440,7 +499,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 // CANONICAL RULE: Successful carrier creation → ReadyForPickup (NEVER Pending)
                 InitialStatus = ShipmentStatus.ReadyForPickup,
                 LabelUrl = null, // DHL returns base64 encoded labels
-                LabelData = labelDoc?.Content,
+                LabelData = labelDoc.Content,
                 LabelFormat = "PDF",
                 CarrierMetadata = metadata,
                 RawResponse = responseBody
@@ -448,22 +507,22 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "DHL HTTP request failed");
+            _logger.LogError("DHL HTTP request failed ({FailureType})", ex.GetType().Name);
             return new CreateShipmentResult
             {
                 Success = false,
-                ErrorCode = "HTTP_ERROR",
-                ErrorMessage = $"Connection error: {ex.Message}"
+                ErrorCode = "DHL_CREATE_RECONCILIATION_REQUIRED",
+                ErrorMessage = "DHL connection failed; the provider outcome is not established."
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error creating DHL shipment");
+            _logger.LogError("DHL creation failed ({FailureType})", ex.GetType().Name);
             return new CreateShipmentResult
             {
                 Success = false,
-                ErrorCode = "UNEXPECTED_ERROR",
-                ErrorMessage = ex.Message
+                ErrorCode = "DHL_CREATE_RECONCILIATION_REQUIRED",
+                ErrorMessage = "DHL creation could not be verified. Reconciliation is required before retry."
             };
         }
     }
@@ -473,7 +532,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         CarrierCredentials credentials,
         CancellationToken cancellationToken = default)
     {
-        // MyDHL REST v3.3.1 supports cancellation of pickup bookings through
+        // MyDHL REST v3.3.4 supports cancellation of pickup bookings through
         // DELETE /pickups/{dispatchConfirmationNumber}; it does not publish a
         // DELETE shipment operation. Never treat a guessed route as proof that
         // the external shipment was cancelled.
@@ -482,6 +541,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         {
             Success = false,
             ErrorCode = "DHL_SHIPMENT_CANCELLATION_UNSUPPORTED",
+            Disposition = CarrierCancellationDisposition.Unsupported,
             ErrorMessage = "DHL MyDHL REST does not publish shipment cancellation for this integration."
         };
     }
@@ -505,11 +565,13 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         
         try
         {
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, 
-                $"{baseUrl}/tracking?shipmentTrackingNumber={trackingNumber}");
+            if (!IsTrackingNumber(trackingNumber))
+                return new ShipmentTrackingResult { ErrorCode = "TRACKING_IDENTITY_INVALID" };
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get,
+                $"{baseUrl}/shipments/{Uri.EscapeDataString(trackingNumber)}/tracking?trackingView=all-checkpoints&levelOfDetail=shipment&requestGMTOffsetPerEvent=true");
             AddAuthHeaders(httpRequest, credentials);
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
@@ -524,7 +586,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             }
             
             var trackResponse = JsonSerializer.Deserialize<DhlTrackingResponse>(responseBody, GetJsonOptions());
-            var shipment = trackResponse?.Shipments?.FirstOrDefault();
+            var shipment = trackResponse?.Shipments?.Count == 1 ? trackResponse.Shipments[0] : null;
             
             if (shipment == null)
             {
@@ -538,9 +600,9 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             }
 
             if (!string.Equals(
-                    shipment.ShipmentTrackingNumber?.Trim(),
-                    trackingNumber.Trim(),
-                    StringComparison.OrdinalIgnoreCase))
+                    shipment.ShipmentTrackingNumber,
+                    trackingNumber,
+                    StringComparison.Ordinal))
             {
                 return new ShipmentTrackingResult
                 {
@@ -551,10 +613,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 };
             }
             
-            var latestEvent = shipment.Events?.OrderByDescending(e => e.Timestamp).FirstOrDefault();
-            var mappedCurrentStatus = TryMapDhlStatus(
-                latestEvent?.StatusCode ?? shipment.Status?.StatusCode ?? "");
-            if (!mappedCurrentStatus.HasValue)
+            if (shipment.Status != "Success" || shipment.Events?.Count is not > 0)
             {
                 return new ShipmentTrackingResult
                 {
@@ -565,11 +624,10 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 };
             }
 
-            var currentStatus = mappedCurrentStatus.Value;
             var mappedEvents = new List<TrackingEvent>();
             foreach (var trackingEvent in shipment.Events ?? new List<DhlTrackingEvent>())
             {
-                var mappedStatus = TryMapDhlStatus(trackingEvent.StatusCode ?? "");
+                var mappedStatus = TryMapDhlStatus(trackingEvent.TypeCode ?? "");
                 if (!mappedStatus.HasValue)
                 {
                     return new ShipmentTrackingResult
@@ -581,25 +639,30 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                     };
                 }
 
+                if (!TryParseScanTimestamp(trackingEvent, out var timestamp))
+                    return new ShipmentTrackingResult { ErrorCode = "TRACKING_TIMESTAMP_UNADMITTED", RawResponse = responseBody };
                 mappedEvents.Add(new TrackingEvent
                 {
-                    Timestamp = trackingEvent.Timestamp ?? DateTime.UtcNow,
+                    Timestamp = timestamp,
                     Status = mappedStatus.Value,
                     Description = trackingEvent.Description ?? "",
-                    Location = trackingEvent.ServiceArea?.Description,
-                    CarrierStatusCode = trackingEvent.StatusCode
+                    Location = string.Join("; ", trackingEvent.ServiceArea?.Select(a => a.Description).Where(d => !string.IsNullOrWhiteSpace(d)) ?? Array.Empty<string?>()),
+                    CarrierStatusCode = trackingEvent.TypeCode
                 });
             }
-            
+            var latestEvent = mappedEvents.OrderByDescending(e => e.Timestamp).First();
+            if (mappedEvents.Any(e => e.Timestamp == latestEvent.Timestamp && e.Status != latestEvent.Status))
+                return new ShipmentTrackingResult { ErrorCode = "TRACKING_STATUS_AMBIGUOUS", RawResponse = responseBody };
+            var currentStatus = latestEvent.Status;
             var result = new ShipmentTrackingResult
             {
                 Success = true,
                 CurrentStatus = currentStatus,
-                CurrentStatusDescription = latestEvent?.Description ?? shipment.Status?.Description,
-                CurrentLocation = latestEvent?.ServiceArea?.Description,
+                CurrentStatusDescription = latestEvent.Description,
+                CurrentLocation = latestEvent.Location,
                 EstimatedDeliveryDate = shipment.EstimatedDeliveryDate,
                 ActualDeliveryDate = currentStatus == ShipmentStatus.Delivered 
-                    ? latestEvent?.Timestamp 
+                    ? latestEvent.Timestamp
                     : null,
                 RawResponse = responseBody,
                 Events = mappedEvents.OrderByDescending(e => e.Timestamp).ToList()
@@ -609,12 +672,12 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error tracking DHL shipment {TrackingNumber}", trackingNumber);
+            _logger.LogError("DHL tracking failed ({FailureType})", ex.GetType().Name);
             return new ShipmentTrackingResult
             {
                 Success = false,
                 ErrorCode = "TRACKING_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "DHL tracking response could not be verified."
             };
         }
     }
@@ -623,23 +686,35 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         CarrierCredentials credentials,
         CancellationToken cancellationToken = default)
     {
-        await Task.CompletedTask;
-
-        if (!HasRequiredCredentials(credentials))
+        if (string.IsNullOrWhiteSpace(credentials.ApiKey)) return CarrierConnectionDiagnostics.Failure("CREDENTIAL_APIKEY_MISSING");
+        if (string.IsNullOrWhiteSpace(credentials.ApiSecret)) return CarrierConnectionDiagnostics.Failure("CREDENTIAL_APISECRET_MISSING");
+        try
         {
-            return new CarrierValidationResult
-            {
-                Success = false,
-                ErrorCode = "DHL_CREDENTIALS_INVALID",
-                ErrorMessage = "DHL MyDHL API key, secret, and account number are required."
-            };
+            // MyDHL REST reference data is a documented authenticated, non-mutating
+            // read. It does NOT verify account/rating/shipping entitlement.
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{GetBaseUrl(credentials)}/reference-data?datasetName=country");
+            AddAuthHeaders(request, credentials);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, request, cancellationToken);
+            var failure = CarrierConnectionDiagnostics.HttpFailure(response.StatusCode);
+            if (failure != null) return failure;
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.TryGetProperty("status", out _) ||
+                !root.TryGetProperty("referenceData", out var sets) || sets.ValueKind != JsonValueKind.Array ||
+                !sets.EnumerateArray().Any(set => set.ValueKind == JsonValueKind.Object &&
+                    set.TryGetProperty("datasetName", out var name) && name.ValueKind == JsonValueKind.String && name.GetString() == "country" &&
+                    set.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array && data.GetArrayLength() > 0 &&
+                    data.EnumerateArray().All(row => row.ValueKind == JsonValueKind.Array && row.EnumerateArray().Any(item =>
+                        item.ValueKind == JsonValueKind.Object && item.TryGetProperty("attribute", out var attribute) &&
+                        attribute.ValueKind == JsonValueKind.String && attribute.GetString() == "countryCode" &&
+                        item.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.String &&
+                        CountryCodeHelper.TryNormalizeCountryCode(value.GetString(), out _)))))
+                return CarrierConnectionDiagnostics.Failure("PROVIDER_RESPONSE_INVALID");
+            return new CarrierValidationResult { Success = true };
         }
-
-        return new CarrierValidationResult
-        {
-            Success = true,
-            AccountName = $"DHL Account ({credentials.AccountId})"
-        };
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return CarrierConnectionDiagnostics.Failure("CONNECTION_TIMEOUT"); }
+        catch (HttpRequestException) { return CarrierConnectionDiagnostics.Failure("NETWORK_ERROR"); }
+        catch (JsonException) { return CarrierConnectionDiagnostics.Failure("PROVIDER_RESPONSE_INVALID"); }
     }
     
     public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels()
@@ -664,14 +739,6 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
             },
             new ServiceLevelInfo
             {
-                Code = "same_day",
-                Name = "DHL Same Day",
-                Description = "Same day express delivery (selected cities)",
-                TypicalDaysMin = 0,
-                TypicalDaysMax = 0
-            },
-            new ServiceLevelInfo
-            {
                 Code = "domestic",
                 Name = "DHL Domestic Express",
                 Description = "Domestic express delivery (1-2 business days)",
@@ -686,6 +753,9 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         string? signature,
         string? webhookSecret)
     {
+        // No official MyDHL webhook contract/trust has been certified.
+        if (!SupportsOfficialWebhookContract())
+            return null;
         try
         {
             // Validate signature if secret is configured
@@ -798,6 +868,46 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
     }
     
     #region Helper Methods
+
+    private static bool SupportsOfficialWebhookContract() => false;
+
+    private static CreateShipmentResult ReconciliationRequired(string reason, string responseBody) => new()
+    {
+        ErrorCode = "DHL_CREATE_RECONCILIATION_REQUIRED",
+        ErrorMessage = $"{reason}: DHL may have created the shipment; do not repeat POST without reconciliation.",
+        RawResponse = responseBody
+    };
+
+    private static bool IsTrackingNumber(string? value) =>
+        value is { Length: 10 } && value.All(c => c is >= '0' and <= '9');
+
+    private static bool IsPieceIdentifier(string? value) =>
+        value is { Length: > 0 and <= 128 } && value.All(c => char.IsAsciiLetterOrDigit(c));
+
+    private static bool IsPdfLabel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 8 * 1024 * 1024)
+            return false;
+        try
+        {
+            var bytes = Convert.FromBase64String(value);
+            return bytes.AsSpan().StartsWith("%PDF-"u8) &&
+                   Encoding.ASCII.GetString(bytes).TrimEnd().EndsWith("%%EOF", StringComparison.Ordinal);
+        }
+        catch (FormatException) { return false; }
+    }
+
+    private static bool TryParseScanTimestamp(DhlTrackingEvent scan, out DateTime timestamp)
+    {
+        timestamp = default;
+        // Never invent UTC or observation time for a local scan without an offset.
+        if (scan.GmtOffset is not { Length: 6 } ||
+            !DateTimeOffset.TryParseExact($"{scan.Date}T{scan.Time}{scan.GmtOffset}",
+                "yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            return false;
+        timestamp = parsed.UtcDateTime;
+        return true;
+    }
     
     /// <summary>
     /// Maps DHL status codes to canonical POS ShipmentStatus.
@@ -806,43 +916,27 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
     /// - Carrier "created" → ReadyForPickup (NEVER Pending)
     /// - Unknown status -> reject before lifecycle admission
     /// </summary>
-    private ShipmentStatus? TryMapDhlStatus(string dhlStatus)
+    private static ShipmentStatus? TryMapDhlStatus(string dhlStatus)
     {
         // CRITICAL: Map all DHL statuses to canonical POS statuses ONLY
         // No DHL enums leak outside this adapter
-        return dhlStatus.ToUpperInvariant().Replace("-", "_").Replace(" ", "_") switch
+        return dhlStatus switch
         {
-            // Shipment created/accepted - CANONICAL RULE: Use ReadyForPickup, NOT Pending
-            "CREATED" or "SHIPMENT_ACCEPTED" or "SHIPMENT_CREATED" or "LA" or "PL" or "AF"
-                => ShipmentStatus.ReadyForPickup,
-            
             // Picked up by carrier
-            "PICKED_UP" or "PU" or "RW" or "AR"
+            "PU"
                 => ShipmentStatus.PickedUp,
             
             // In transit through network
-            "IN_TRANSIT" or "TRANSIT" or "DF" or "CC" or "FD" or "TF" or "HP" or "DD" or "OH"
+            "DF" or "AF" or "PL" or "RR" or "CR" or "AR"
                 => ShipmentStatus.InTransit,
             
             // Out for final delivery
-            "WITH_DELIVERY_COURIER" or "OUT_FOR_DELIVERY" or "WC" or "CR" or "MD"
+            "WC"
                 => ShipmentStatus.OutForDelivery,
             
             // Successfully delivered
-            "DELIVERED" or "OK" or "DL"
+            "OK"
                 => ShipmentStatus.Delivered,
-            
-            // Cancelled
-            "CANCELLED" or "CANCELED" or "CA"
-                => ShipmentStatus.Cancelled,
-            
-            // Returned to sender
-            "RETURNED" or "RETURN_TO_SENDER" or "RR" or "RT" or "BR"
-                => ShipmentStatus.Returned,
-            
-            // Failed delivery / Exception
-            "EXCEPTION" or "FAILED" or "DELIVERY_FAILED" or "MS" or "NH" or "CM" or "BA" or "BN"
-                => ShipmentStatus.Failed,
             
             // Unknown status is not admitted by authoritative tracking sync.
             _ => null
@@ -901,7 +995,7 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         }
 
         var currency = customs.Lines[0].Currency;
-        if (!IsCurrency(currency))
+        if (!IsCurrency(currency) || customs.Lines.Count > 999)
         {
             return "DHL_CUSTOMS_SNAPSHOT_INCOMPLETE";
         }
@@ -910,6 +1004,8 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         for (var index = 0; index < customs.Lines.Count; index++)
         {
             var line = customs.Lines[index];
+            if (line.DangerousGoods == true)
+                return "DHL_DANGEROUS_GOODS_UNSUPPORTED";
             if (line.OrderItemId == Guid.Empty ||
                 line.ProductId == Guid.Empty ||
                 line.CustomsEvidenceId == Guid.Empty ||
@@ -918,17 +1014,17 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 string.IsNullOrWhiteSpace(line.HsCode) ||
                 string.IsNullOrWhiteSpace(line.CommodityDescription) ||
                 !IsIso2(line.CountryOfOriginIso2) ||
-                (line.CountryOfManufactureIso2 is not null && !IsIso2(line.CountryOfManufactureIso2)) ||
-                line.DeclaredValue <= 0 ||
+                !IsIso2(line.CountryOfManufactureIso2) ||
+                line.DeclaredValue <= 0 || line.DeclaredValue > 999999999999999m ||
                 !string.Equals(line.Currency, currency, StringComparison.OrdinalIgnoreCase) ||
-                line.Quantity <= 0 ||
-                line.NetWeight <= 0)
+                line.Quantity <= 0 || line.Quantity > 1000000000m || line.Quantity != decimal.Truncate(line.Quantity) ||
+                line.NetWeight <= 0 || line.NetWeight > 999999999999m)
             {
                 return "DHL_CUSTOMS_SNAPSHOT_INCOMPLETE";
             }
 
             if (!TryMapDhlQuantityUnit(line.QuantityUnit, out var dhlQuantityUnit) ||
-                !TryMapDhlWeightUnit(line.NetWeightUnit, out var dhlWeightUnit))
+                !TryConvertToKg(line.NetWeight, line.NetWeightUnit, out var netWeightKg))
             {
                 return "DHL_CUSTOMS_ENUM_UNSUPPORTED";
             }
@@ -947,12 +1043,10 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
                 {
                     new() { TypeCode = "outbound", Value = line.HsCode.Trim() }
                 },
-                ManufacturerCountry = line.CountryOfManufactureIso2?.Trim().ToUpperInvariant(),
+                ManufacturerCountry = line.CountryOfManufactureIso2!.Trim().ToUpperInvariant(),
                 Weight = new DhlExportWeight
                 {
-                    NetValue = line.NetWeight,
-                    GrossValue = line.NetWeight,
-                    UnitOfMeasurement = dhlWeightUnit
+                    NetValue = netWeightKg
                 }
             });
         }
@@ -961,18 +1055,43 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         {
             LineItems = lineItems
         };
+        if (customs.Lines.Sum(line => line.DeclaredValue * line.Quantity) > 999999999999999m)
+            return "DHL_CUSTOMS_DECLARED_VALUE_OUT_OF_RANGE";
         return null;
     }
 
     private static bool IsIso2(string? value) =>
-        !string.IsNullOrWhiteSpace(value) &&
-        value.Trim().Length == 2 &&
-        value.Trim().All(char.IsLetter);
+        value is { Length: 2 } && value.All(char.IsAsciiLetter);
 
     private static bool IsCurrency(string? value) =>
         !string.IsNullOrWhiteSpace(value) &&
         value.Trim().Length == 3 &&
-        value.Trim().All(char.IsLetter);
+        value.Length == 3 && value.All(char.IsAsciiLetter);
+
+    private static bool IsRequiredText(string? value, int maximum) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= maximum && !value.Any(char.IsControl);
+
+    private static bool IsOptionalText(string? value, int maximum) =>
+        value is null || IsRequiredText(value, maximum);
+
+    private static bool IsPostalCode(string? value) =>
+        value is null || value.Length <= 12 && !value.Any(char.IsControl);
+
+    private static bool TryConvertToKg(decimal value, string? unit, out decimal kg)
+    {
+        kg = unit?.Trim().ToLowerInvariant() switch
+        {
+            "kg" => value,
+            "g" => value / 1000m,
+            "lb" => value * 0.45359237m,
+            "oz" => value * 0.028349523125m,
+            _ => 0
+        };
+        kg = decimal.Round(kg, 3, MidpointRounding.AwayFromZero);
+        return kg > 0;
+    }
+
+    private static decimal ConvertCustomsWeight(decimal value, string unit) => TryConvertToKg(value, unit, out var kg) ? kg : 0m;
 
     private static bool TryMapDhlQuantityUnit(string? unit, out string dhlUnit)
     {
@@ -995,27 +1114,25 @@ public sealed class DhlAdapter : IShippingCarrierAdapter
         return dhlUnit.Length > 0;
     }
     
-    private static string MapServiceLevelToProduct(string? serviceLevel, bool isInternational)
+    private static string? MapServiceLevelToProduct(string? serviceLevel, bool isInternational)
     {
         return (serviceLevel?.ToLowerInvariant()) switch
         {
             "express" => isInternational ? "P" : "N", // Express Worldwide or Domestic Express
             "economy" => "H", // Economy Select
-            "same_day" => "1", // Same Day
-            "domestic" => "N", // Domestic Express
-            _ => isInternational ? "P" : "N"
+            "domestic" when !isInternational => "N",
+            _ => null
         };
     }
     
-    private static string MapDhlProductToServiceLevel(string? productCode)
+    private static string? MapDhlProductToServiceLevel(string? productCode)
     {
         return productCode?.ToUpperInvariant() switch
         {
-            "P" or "D" or "U" => "express",
-            "H" or "W" => "economy",
-            "1" or "I" => "same_day",
+            "P" => "express",
+            "H" => "economy",
             "N" => "domestic",
-            _ => "express"
+            _ => null
         };
     }
     
@@ -1306,10 +1423,7 @@ internal class DhlExportWeight
     public decimal NetValue { get; set; }
 
     [JsonPropertyName("grossValue")]
-    public decimal GrossValue { get; set; }
-
-    [JsonPropertyName("unitOfMeasurement")]
-    public string? UnitOfMeasurement { get; set; }
+    public decimal? GrossValue { get; set; }
 }
 
 internal class DhlNotification
@@ -1401,7 +1515,10 @@ internal class DhlCreateShipmentRequest
 internal class DhlPrice
 {
     [JsonPropertyName("price")]
-    public decimal Price { get; set; }
+    public decimal? Price { get; set; }
+
+    [JsonPropertyName("priceCurrency")]
+    public string? PriceCurrency { get; set; }
     
     [JsonPropertyName("currencyType")]
     public string? CurrencyType { get; set; }
@@ -1436,6 +1553,11 @@ internal class DhlRateResponse
 
 internal class DhlDocument
 {
+    [JsonPropertyName("imageFormat")]
+    public string? ImageFormat { get; set; }
+
+    [JsonPropertyName("packageReferenceNumber")]
+    public int? PackageReferenceNumber { get; set; }
     [JsonPropertyName("typeCode")]
     public string? TypeCode { get; set; }
     
@@ -1445,6 +1567,8 @@ internal class DhlDocument
 
 internal class DhlCreateShipmentResponse
 {
+    [JsonPropertyName("packages")]
+    public List<DhlCreatedPackage>? Packages { get; set; }
     [JsonPropertyName("shipmentTrackingNumber")]
     public string? ShipmentTrackingNumber { get; set; }
     
@@ -1464,6 +1588,12 @@ internal class DhlCreateShipmentResponse
     public List<DhlDocument>? Documents { get; set; }
 }
 
+internal class DhlCreatedPackage
+{
+    [JsonPropertyName("trackingNumber")]
+    public string? TrackingNumber { get; set; }
+}
+
 internal class DhlServiceArea
 {
     [JsonPropertyName("code")]
@@ -1475,26 +1605,20 @@ internal class DhlServiceArea
 
 internal class DhlTrackingEvent
 {
-    [JsonPropertyName("timestamp")]
-    public DateTime? Timestamp { get; set; }
-    
-    [JsonPropertyName("statusCode")]
-    public string? StatusCode { get; set; }
+    [JsonPropertyName("date")]
+    public string? Date { get; set; }
+    [JsonPropertyName("time")]
+    public string? Time { get; set; }
+    [JsonPropertyName("GMTOffset")]
+    public string? GmtOffset { get; set; }
+    [JsonPropertyName("typeCode")]
+    public string? TypeCode { get; set; }
     
     [JsonPropertyName("description")]
     public string? Description { get; set; }
     
     [JsonPropertyName("serviceArea")]
-    public DhlServiceArea? ServiceArea { get; set; }
-}
-
-internal class DhlTrackingStatus
-{
-    [JsonPropertyName("statusCode")]
-    public string? StatusCode { get; set; }
-    
-    [JsonPropertyName("description")]
-    public string? Description { get; set; }
+    public List<DhlServiceArea>? ServiceArea { get; set; }
 }
 
 internal class DhlShipmentTracking
@@ -1503,7 +1627,7 @@ internal class DhlShipmentTracking
     public string? ShipmentTrackingNumber { get; set; }
     
     [JsonPropertyName("status")]
-    public DhlTrackingStatus? Status { get; set; }
+    public string? Status { get; set; }
     
     [JsonPropertyName("estimatedDeliveryDate")]
     public DateTime? EstimatedDeliveryDate { get; set; }

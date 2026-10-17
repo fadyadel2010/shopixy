@@ -82,7 +82,7 @@ describe('API authentication refresh replay policy', () => {
         const responseHandlers = (api.interceptors.response as unknown as {
             handlers: Array<{ rejected: (error: unknown) => Promise<unknown> }>
         }).handlers
-        const rejectResponse = responseHandlers.at(-1)?.rejected
+        const rejectResponse = responseHandlers[responseHandlers.length - 1]?.rejected
 
         const response = await rejectResponse?.({
             config: {
@@ -106,7 +106,7 @@ describe('API authentication refresh replay policy', () => {
         const responseHandlers = (api.interceptors.response as unknown as {
             handlers: Array<{ rejected: (error: unknown) => Promise<unknown> }>
         }).handlers
-        const rejectResponse = responseHandlers.at(-1)?.rejected
+        const rejectResponse = responseHandlers[responseHandlers.length - 1]?.rejected
 
         await expect(rejectResponse?.({
             config: { url: '/orders', method: 'get', headers: {} },

@@ -41,7 +41,9 @@ function createStorefrontCsp({ allowReactRefreshPreamble }: { allowReactRefreshP
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
     const isDevServer = command === 'serve'
-    const adminOrigin = loadEnv(mode, process.cwd()).VITE_ADMIN_ORIGIN || (isDevServer ? 'http://localhost:5173' : '')
+    const env = loadEnv(mode, process.cwd())
+    const apiTarget = env.VITE_DEV_API_TARGET || 'http://localhost:5010'
+    const adminOrigin = env.VITE_ADMIN_ORIGIN || (isDevServer ? 'http://localhost:5173' : '')
     const storefrontCsp = createStorefrontCsp({
         allowReactRefreshPreamble: isDevServer,
     })
@@ -95,7 +97,7 @@ export default defineConfig(({ command, mode }) => {
             port: 5174,
             proxy: {
                 '/api': {
-                    target: 'http://localhost:5010',
+                    target: apiTarget,
                     changeOrigin: false,
                     secure: false,
                     // IMPORTANT: Configure cookie handling for auth

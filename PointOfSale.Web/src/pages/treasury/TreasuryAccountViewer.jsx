@@ -224,9 +224,14 @@ export default function TreasuryAccountViewer() {
                                 {t('treasury.role', 'Treasury role')}: {roleLabelKey ? t(roleLabelKey, catalogAccount.accountType) : ''}
                             </span>
                         </p>
-                        {roleKey && (
-                            <p className="text-sm text-gray-600 mt-1">{t(roleKey)}</p>
-                        )}
+                         {roleKey && (
+                             <p className="text-sm text-gray-600 mt-1">{t(roleKey)}</p>
+                         )}
+                         {isClearingAccount(catalogAccount) && (
+                             <p className="text-sm text-gray-600 mt-2" role="note">
+                                 {t('treasury.clearingSettlementUnavailable', 'COD and gateway clearing settlement is currently unavailable because authenticated carrier remittance or provider payout evidence is not integrated. Clearing balances cannot be moved through Treasury Transfers.')}
+                             </p>
+                         )}
                     </div>
                 </div>
                 <div className="flex items-center gap-3">

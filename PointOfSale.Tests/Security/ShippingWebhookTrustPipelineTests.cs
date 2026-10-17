@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
@@ -31,12 +32,17 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
     private readonly TenantContext _tenantContext;
     private readonly Guid _tenantId = Guid.NewGuid();
     private readonly Guid _shipmentId = Guid.NewGuid();
+    private readonly DbContextOptions<ApplicationDbContext> _options;
+    private readonly Mock<IShippingCarrierRegistry> _registry;
+    private readonly Mock<ICarrierCredentialEncryptionService> _encryption;
+    private readonly RecordingEventPublisher _publisher = new();
 
     public ShippingWebhookTrustPipelineTests()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase($"ShippingWebhookTrust_{Guid.NewGuid()}")
             .Options;
+        _options = options;
 
         _tenantContext = new TenantContext();
         _tenantContext.SetTenantId(_tenantId);
@@ -45,6 +51,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
 
         var adapter = new FakeShippingCarrierAdapter();
         var registry = new Mock<IShippingCarrierRegistry>(MockBehavior.Strict);
+        _registry = registry;
         registry.Setup(x => x.GetAdapter(It.Is<string>(code => code == CarrierCode))).Returns(adapter);
         registry.Setup(x => x.IsCarrierSupported(It.Is<string>(code => code == CarrierCode))).Returns(true);
         registry.Setup(x => x.GetAllAdapters()).Returns([adapter]);
@@ -76,27 +83,274 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
                 OrderFulfillmentResult.Succeeded(orderId, "TEST", FulfillmentStatus.OutForDelivery, FulfillmentStatus.FailedDelivery, source, idempotencyKey));
 
         var encryption = new Mock<ICarrierCredentialEncryptionService>(MockBehavior.Strict);
+        _encryption = encryption;
         encryption.Setup(service => service.Decrypt(It.IsAny<string?>()))
             .Returns<string?>(value => value ?? string.Empty);
+        _service = CreateService(_db);
+    }
+
+    private CarrierShipmentService CreateService(ApplicationDbContext db, bool claimsEnabled = false)
+    {
         var authority = new CarrierIntegrationAuthority(
-            _db,
-            registry.Object,
-            new CarrierCapabilityRegistry(registry.Object),
-            encryption.Object,
+            db,
+            _registry.Object,
+            new CarrierCapabilityRegistry(_registry.Object),
+            _encryption.Object,
             NullLogger<CarrierIntegrationAuthority>.Instance);
 
-        _service = new CarrierShipmentService(
-            _db,
-            registry.Object,
-            encryption.Object,
-            new NoOpEventPublisher(),
+        return new CarrierShipmentService(
+            db,
+            _registry.Object,
+            _encryption.Object,
+            _publisher,
             _fulfillmentService.Object,
             new CommerceReliabilityTelemetry(),
             _tenantContext,
             Mock.Of<ICustomsEvidenceAdmissionService>(),
             Mock.Of<ICarrierGeographicMappingService>(),
             NullLogger<CarrierShipmentService>.Instance,
-            authority);
+            authority, webhookClaimOptions: Options.Create(new ShippingWebhookClaimOptions { Enabled = claimsEnabled }));
+    }
+
+    [Fact]
+    public async Task EnabledClaims_OnInMemory_FailsExplicitlyWithoutWeakOwnershipOrEffects()
+    {
+        var result = await CreateService(_db, true).ProcessWebhookAsync(CarrierCode,
+            BuildPayload("evt_provider", "delivered"), WebhookSecret, null, null);
+        Assert.False(result.Success);
+        Assert.Equal("WEBHOOK_CLAIM_PROVIDER_UNSUPPORTED", result.ErrorCode);
+        Assert.Empty(await _db.ShippingWebhookLogs.ToListAsync());
+        Assert.Empty(await _db.ShippingWebhookClaims.ToListAsync());
+        Assert.Equal(0, _publisher.Count);
+    }
+
+    [Fact]
+    public async Task DisabledClaims_NewCompletion_CreatesNoOwnershipMetadata()
+    {
+        Assert.True((await Deliver(BuildPayload("evt_disabled", "delivered"))).Success);
+        Assert.Empty(await _db.ShippingWebhookClaims.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(WebhookProcessingStatus.Completed)]
+    [InlineData(WebhookProcessingStatus.Skipped)]
+    public async Task MatchingTerminalLegacyEvent_RemainsSuccessfulIdempotentDuplicate(WebhookProcessingStatus status)
+    {
+        var payload = BuildPayload("evt_terminal_legacy", "delivered");
+        await SeedLog(payload, "evt_terminal_legacy", status, 1440);
+        var result = await Deliver(payload);
+        Assert.True(result.Success); Assert.True(result.IsDuplicate);
+        Assert.Equal(0, _publisher.Count); Assert.Empty(_fulfillmentService.Invocations);
+        Assert.Empty(await _db.ShippingWebhookClaims.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(WebhookProcessingStatus.Completed)]
+    [InlineData(WebhookProcessingStatus.Processing)]
+    public async Task PayloadMatch_WithDifferentProviderIdentity_IsNeverAcknowledged(WebhookProcessingStatus status)
+    {
+        var payload = BuildPayload("evt_actual", "delivered");
+        await SeedLog(payload, "evt_other", status, 0);
+        var result = await Deliver(payload);
+        Assert.False(result.Success);
+        Assert.Equal("WEBHOOK_EVENT_IDENTITY_CONFLICT", result.ErrorCode);
+        Assert.Equal(0, _publisher.Count);
+        var helper = typeof(CarrierShipmentService).GetMethod("TryResolveShippingWebhookConflictAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var resolved = await (Task<WebhookProcessResult?>)helper.Invoke(_service,
+            [_tenantId, CarrierCode, "evt_actual", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))), _shipmentId, CancellationToken.None])!;
+        Assert.Equal("WEBHOOK_EVENT_IDENTITY_CONFLICT", resolved!.ErrorCode);
+    }
+
+    // These exercise the real generic handler with synthetic InMemory state, not SQL leases/locks.
+    // Legacy timestamps cannot establish abandonment; the safe recovery boundary must refuse replay.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1440)]
+    public async Task ProcessingClaim_RecentOrApparentlyStale_IsNotAcknowledgedOrStolen(int ageMinutes)
+    {
+        var payload = BuildPayload("evt_processing", "delivered");
+        var log = await SeedLog(payload, "evt_processing", WebhookProcessingStatus.Processing, ageMinutes);
+        var before = JsonSerializer.Serialize(log);
+        var result = await Deliver(payload);
+        Assert.False(result.Success);
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal("WEBHOOK_PROCESSING_UNRESOLVED", result.ErrorCode);
+        Assert.False(result.IsDuplicate);
+        Assert.Equal(before, JsonSerializer.Serialize(await _db.ShippingWebhookLogs.AsNoTracking().SingleAsync()));
+        Assert.Equal(ShipmentStatus.OutForDelivery, (await _db.Shipments.SingleAsync()).Status);
+        Assert.Equal(0, _publisher.Count);
+        Assert.Empty(_fulfillmentService.Invocations);
+    }
+
+    [Theory]
+    [InlineData(WebhookProcessingStatus.Failed)]
+    [InlineData(WebhookProcessingStatus.Pending)]
+    public async Task UnfinishedLegacyRetry_PreservesIdentityAndAudit_WithoutReplayingPartialEffects(WebhookProcessingStatus status)
+    {
+        var payload = BuildPayload("evt_unfinished", "delivered");
+        var log = await SeedLog(payload, "evt_unfinished", status, 1440);
+        var before = JsonSerializer.Serialize(log);
+        var result = await Deliver(payload);
+        Assert.False(result.Success);
+        Assert.Equal(409, result.StatusCode);
+        Assert.Equal("WEBHOOK_RECONCILIATION_REQUIRED", result.ErrorCode);
+        Assert.Equal(before, JsonSerializer.Serialize(await _db.ShippingWebhookLogs.AsNoTracking().SingleAsync()));
+        Assert.Equal(0, _publisher.Count);
+        Assert.Empty(_fulfillmentService.Invocations);
+    }
+
+    [Fact]
+    public async Task ConcurrentDuplicate_DuringActiveWork_DoesNotExecuteEffectOrAcknowledgeCompletion()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fulfillmentService.Setup(x => x.SynchronizeFromShipmentAsync(It.IsAny<Guid>(), It.IsAny<FulfillmentStatus>(),
+                It.IsAny<FulfillmentRequestSource>(), It.IsAny<Guid?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (Guid orderId, FulfillmentStatus target, FulfillmentRequestSource source, Guid? shipment,
+                string? tracking, string? actor, string? key, CancellationToken ct) =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+                return OrderFulfillmentResult.Succeeded(orderId, "TEST", target, target, source, key);
+            });
+        var payload = BuildPayload("evt_concurrent", "delivered");
+        var first = Deliver(payload);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var secondDb = new ApplicationDbContext(_options, _tenantContext);
+            var duplicate = await CreateService(secondDb).ProcessWebhookAsync(CarrierCode, payload, WebhookSecret,
+                "203.0.113.10", "test-suite");
+            Assert.False(duplicate.Success);
+            Assert.Equal(503, duplicate.StatusCode);
+            Assert.Equal(0, _publisher.Count);
+            Assert.Single(_fulfillmentService.Invocations);
+        }
+        finally { release.TrySetResult(); }
+        Assert.True((await first).Success);
+        var effectCount = _publisher.Count;
+        Assert.True(effectCount > 0);
+        Assert.True((await Deliver(payload)).IsDuplicate);
+        Assert.Equal(effectCount, _publisher.Count);
+        Assert.Single(_fulfillmentService.Invocations);
+        Assert.Single(_db.ShippingWebhookLogs);
+    }
+
+    [Fact]
+    public async Task FailureAfterSimulatedPartialPublish_RetryCannotDuplicateDownstreamEffects()
+    {
+        _publisher.FailAfterRecording = true;
+        var payload = BuildPayload("evt_partial_failure", "delivered");
+        Assert.False((await Deliver(payload)).Success);
+        Assert.Equal(1, _publisher.Count);
+        var log = await _db.ShippingWebhookLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(WebhookProcessingStatus.Failed, log.ProcessingStatus);
+        var evidence = JsonSerializer.Serialize(log);
+        _publisher.FailAfterRecording = false;
+        var retry = await Deliver(payload);
+        Assert.False(retry.Success);
+        Assert.Equal("WEBHOOK_RECONCILIATION_REQUIRED", retry.ErrorCode);
+        Assert.Equal(1, _publisher.Count);
+        Assert.Single(_fulfillmentService.Invocations);
+        Assert.Equal(evidence, JsonSerializer.Serialize(await _db.ShippingWebhookLogs.AsNoTracking().SingleAsync()));
+        Assert.Single(_db.Shipments);
+        Assert.Empty(_db.CarrierCollectionEvidence);
+        Assert.Empty(_db.AccountingOutboxMessages);
+    }
+
+    [Theory]
+    [InlineData(WebhookProcessingStatus.Processing, false, 503)]
+    [InlineData(WebhookProcessingStatus.Failed, false, 409)]
+    [InlineData(WebhookProcessingStatus.Completed, true, 200)]
+    public async Task UniqueInsertConflict_OnlyAcknowledgesFinishedEvidence(WebhookProcessingStatus status, bool success, int http)
+    {
+        var payload = BuildPayload("evt_conflict", "delivered");
+        var log = await SeedLog(payload, "evt_conflict", status, 0);
+        var method = typeof(CarrierShipmentService).GetMethod("TryResolveShippingWebhookConflictAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var result = await (Task<WebhookProcessResult?>)method.Invoke(_service,
+            [_tenantId, CarrierCode, log.EventId, log.PayloadHash, _shipmentId, CancellationToken.None])!;
+        Assert.NotNull(result);
+        Assert.Equal(success, result.Success);
+        Assert.Equal(http, result.StatusCode);
+        Assert.Equal(success, result.IsDuplicate);
+        Assert.Equal(0, _publisher.Count);
+    }
+
+    [Fact]
+    public async Task FailureWriter_AfterAmbiguousCommit_DoesNotDowngradeCompletedAudit()
+    {
+        var payload = BuildPayload("evt_commit", "delivered");
+        var log = await SeedLog(payload, "evt_commit", WebhookProcessingStatus.Completed, 0);
+        var before = JsonSerializer.Serialize(log);
+        var method = typeof(CarrierShipmentService).GetMethod("PersistShippingWebhookFailureAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await (Task)method.Invoke(_service, [log, "simulated lost commit acknowledgement", 1L, CancellationToken.None])!;
+        Assert.Equal(before, JsonSerializer.Serialize(await _db.ShippingWebhookLogs.AsNoTracking().SingleAsync()));
+    }
+
+    private Task<WebhookProcessResult> Deliver(string payload) => _service.ProcessWebhookAsync(
+        CarrierCode, payload, WebhookSecret, "203.0.113.10", "test-suite");
+
+    [Fact]
+    public async Task RequestCancellationAfterClaim_PersistsBoundedFailureAuditWithoutReplaying()
+    {
+        using var request = new CancellationTokenSource();
+        _fulfillmentService.Setup(x => x.SynchronizeFromShipmentAsync(It.IsAny<Guid>(), It.IsAny<FulfillmentStatus>(),
+                It.IsAny<FulfillmentRequestSource>(), It.IsAny<Guid?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns((Guid order, FulfillmentStatus status, FulfillmentRequestSource source, Guid? shipment,
+                string? tracking, string? actor, string? key, CancellationToken ct) =>
+            {
+                request.Cancel();
+                return Task.FromException<OrderFulfillmentResult>(new OperationCanceledException(ct));
+            });
+        var payload = BuildPayload("evt_cancelled_worker", "delivered");
+        Assert.False((await _service.ProcessWebhookAsync(CarrierCode, payload, WebhookSecret,
+            "203.0.113.10", "test-suite", request.Token)).Success);
+        var log = await _db.ShippingWebhookLogs.AsNoTracking().SingleAsync();
+        Assert.Equal(WebhookProcessingStatus.Failed, log.ProcessingStatus);
+        Assert.NotNull(log.ProcessedAt);
+        Assert.Equal("evt_cancelled_worker", log.EventId);
+        Assert.Equal("WEBHOOK_RECONCILIATION_REQUIRED", (await Deliver(payload)).ErrorCode);
+        Assert.Single(_fulfillmentService.Invocations);
+        Assert.Equal(0, _publisher.Count);
+    }
+
+    [Fact]
+    public async Task UniqueConflict_EventIntegrityTakesPrecedenceOverAnotherCompletedPayloadRow()
+    {
+        var payload = BuildPayload("evt_integrity", "delivered");
+        var hashMatch = await SeedLog(payload, "different-event", WebhookProcessingStatus.Completed, 0);
+        await SeedLog(BuildPayload("evt_integrity", "failed"), "evt_integrity", WebhookProcessingStatus.Processing, 0);
+        var method = typeof(CarrierShipmentService).GetMethod("TryResolveShippingWebhookConflictAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var result = await (Task<WebhookProcessResult?>)method.Invoke(_service,
+            [_tenantId, CarrierCode, "evt_integrity", hashMatch.PayloadHash, _shipmentId, CancellationToken.None])!;
+        Assert.NotNull(result);
+        Assert.False(result.Success);
+        Assert.Equal(401, result.StatusCode);
+        Assert.Equal("WEBHOOK_TAMPERED", result.ErrorCode);
+        Assert.False(result.IsDuplicate);
+        Assert.Equal(0, _publisher.Count);
+        Assert.Empty(_fulfillmentService.Invocations);
+    }
+
+    private async Task<ShippingWebhookLog> SeedLog(string payload, string eventId, WebhookProcessingStatus status, int ageMinutes)
+    {
+        var log = new ShippingWebhookLog
+        {
+            Id = Guid.NewGuid(), TenantId = _tenantId, CarrierCode = CarrierCode, EventId = eventId,
+            PayloadHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))),
+            ShipmentId = _shipmentId, OrderId = (await _db.Shipments.SingleAsync()).OrderId,
+            ProcessingStatus = status, CreatedAt = DateTime.UtcNow.AddMinutes(-ageMinutes),
+            EventType = "original-event-type", PayloadSummary = "original redacted evidence", Signature = "sha256:original",
+            SignatureVerified = true, ValidationMethod = "original-validation", ProcessingError = "original failure evidence"
+        };
+        _db.ShippingWebhookLogs.Add(log);
+        await _db.SaveChangesAsync();
+        return log;
     }
 
     [Fact]
@@ -486,10 +740,14 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
         }
     }
 
-    private sealed class NoOpEventPublisher : IEventPublisher
+    private sealed class RecordingEventPublisher : IEventPublisher
     {
+        public int Count { get; private set; }
+        public bool FailAfterRecording { get; set; }
         public Task PublishAsync<T>(T @event, CancellationToken cancellationToken = default) where T : IntegrationEvent
         {
+            Count++;
+            if (FailAfterRecording) throw new InvalidOperationException("Synthetic partial publish failure");
             return Task.CompletedTask;
         }
 

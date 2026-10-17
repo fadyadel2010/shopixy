@@ -170,15 +170,16 @@ export default function Cashbox() {
         void fetchSummary(cashboxId, controller.signal, requestSequence)
     }, [fetchSummary, selectedCashbox?.id])
 
+    const abortPendingRequests = useCallback(() => {
+        cashboxesRequestControllerRef.current?.abort()
+        transactionsRequestControllerRef.current?.abort()
+        summaryRequestControllerRef.current?.abort()
+    }, [])
+
     useEffect(() => {
         refreshCashboxes()
-
-        return () => {
-            cashboxesRequestControllerRef.current?.abort()
-            transactionsRequestControllerRef.current?.abort()
-            summaryRequestControllerRef.current?.abort()
-        }
-    }, [refreshCashboxes])
+        return abortPendingRequests
+    }, [refreshCashboxes, abortPendingRequests])
 
     useEffect(() => {
         if (selectedCashbox?.id) {

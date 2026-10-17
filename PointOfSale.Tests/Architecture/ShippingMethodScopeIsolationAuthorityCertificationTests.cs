@@ -10,7 +10,8 @@ public sealed class ShippingMethodScopeIsolationAuthorityCertificationTests
 
         Assert.Contains("public Guid TenantId { get; set; }", dto, StringComparison.Ordinal);
         Assert.Contains("TenantId = doc.TenantId", service, StringComparison.Ordinal);
-        Assert.Contains("TryValidateCachedTenantScope(tenantId, cached", service, StringComparison.Ordinal);
+        Assert.Contains("TryValidateCachedTenantScope(tenantId, documents", service, StringComparison.Ordinal);
+        Assert.Contains("throw new StorefrontConfigOutOfSyncException", service, StringComparison.Ordinal);
         Assert.Contains("method.TenantId == tenantId", service, StringComparison.Ordinal);
         Assert.Contains("tenant_scope_mismatch", service, StringComparison.Ordinal);
         Assert.Contains("missing_tenant_scope", service, StringComparison.Ordinal);
@@ -41,10 +42,10 @@ public sealed class ShippingMethodScopeIsolationAuthorityCertificationTests
         var carrierShipment = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/CarrierShipmentService.cs");
 
         Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
-        Assert.Contains("sm.TenantId == tenantId", shipment, StringComparison.Ordinal);
-        Assert.Contains("configuration.TenantId == tenantId", shipment, StringComparison.Ordinal);
-        Assert.Contains("method.Id == order.ShippingMethodId.Value", carrierShipment, StringComparison.Ordinal);
-        Assert.Contains("method.TenantId == tenantId", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("LoadOrderForShipmentMutationAsync(tenantId, orderId", shipment, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
+        Assert.Contains("ShippingMethodId = order.ShippingMethodId.Value", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("s.OrderId == orderId && s.TenantId == tenantId", carrierShipment, StringComparison.Ordinal);
         Assert.Contains("ORDER_SHIPPING_METHOD_CARRIER_MISMATCH", carrierShipment, StringComparison.Ordinal);
     }
 

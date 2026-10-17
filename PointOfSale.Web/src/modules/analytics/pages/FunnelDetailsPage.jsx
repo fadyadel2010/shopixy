@@ -200,6 +200,9 @@ export default function FunnelDetailsPage() {
             )}
 
             {/* Main Content */}
+            <p className="mb-4 rounded border p-3 text-sm text-gray-600">{isRTL
+                ? 'هذه أعداد أحداث وليست مسارات جلسات فريدة. الشراء من القيود المحاسبية؛ بقية المراحل من مجموعات ساعية تقريبية. قد تتجاوز النسب 100٪ ولا تُثبت سبب مغادرة الزائر.'
+                : 'These are event totals, not unique-session paths. Purchases use posted accounting records; other stages use approximate hourly buckets. Rates can exceed 100% and do not establish why visitors left.'}</p>
             {result && (
                 <>
                     {/* Summary Cards */}

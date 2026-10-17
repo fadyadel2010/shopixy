@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import CarrierConnectionForm from './CarrierConnectionForm'
 import {
     activateCarrierAccount,
     disableCarrierAccount,
@@ -47,6 +48,7 @@ const emptyConnectionForm = {
     apiKey: '',
     apiSecret: '',
     accountId: '',
+    webhookSecret: '',
     useSandbox: true,
     extraConfig: {},
 }
@@ -77,11 +79,20 @@ function isProviderConnectivityFailure(code) {
         .includes((code || '').toUpperCase())
 }
 
-function getMerchantIntegrationState(account, carrierDefinition, t) {
+function getMerchantIntegrationState(account, carrierDefinition, t, outcome) {
     const readiness = account.integrationReadiness
     const test = account.lastConnectionTest
 
-    if (carrierDefinition?.accountRequired === false) {
+    if (['bosta', 'aramex', 'dhl', 'mylerz'].includes(account.carrierCode)) {
+        const configured = carrierDefinition?.credentialFields?.filter(field => field.required).every(field => account.savedCredentialFields?.includes(field.key)) && account.savedCredentialFields?.length > 0
+        const current = carrierDefinition?.connectionTestMode === 'Remote' ? outcome || (account.connectionTestIsCurrent ? test : null) : null
+        if (!configured) return { badge: 'Not configured', title: t('shippingAdministration.account.notConfigured'), message: t('shippingAdministration.connection.saveFirst'), checks: ['credentialsNotSaved', 'connectionNotVerified'] }
+        if (current?.status === 'Failed') return { badge: 'Connection failed', title: t('shippingAdministration.account.verificationFailed'), message: t('shippingAdministration.account.savedRetry'), checks: ['credentialsSaved', 'connectionNotVerified'] }
+        if (current?.status === 'Succeeded') return { badge: 'Connected', title: t('shippingAdministration.connection.authenticated'), message: t('shippingAdministration.connection.entitlement'), checks: ['credentialsSaved', 'connectionVerified'] }
+        return { badge: 'Credentials saved', title: t('shippingAdministration.account.credentialsSaved'), message: t('shippingAdministration.connection.notTested'), checks: ['credentialsSaved', 'connectionNotVerified'] }
+    }
+
+    if (carrierDefinition?.accountRequired === false && !['Unavailable', 'NotCertified'].includes(carrierDefinition.productionCapability)) {
         return {
             badge: 'Ready',
             title: t('shippingAdministration.account.manualReady'),
@@ -153,38 +164,70 @@ function getMerchantIntegrationState(account, carrierDefinition, t) {
         badge: 'Action required',
         title: t('shippingAdministration.account.actionRequired'),
         message: t('shippingAdministration.account.reviewDiagnostics'),
-        checks: ['credentialsSaved', test?.status === 'Succeeded' ? 'connectionVerified' : 'connectionPending'],
+        checks: ['credentialsSaved', test?.status === 'Succeeded'
+            ? (carrierDefinition?.connectionTestMode === 'LocalOnly' ? 'localCredentialsValidated' : 'connectionVerified')
+            : 'connectionPending'],
     }
 }
 
 export default function CarrierAccountCard({ account, supportedCarriers, onMutated }) {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const carrierDefinition = supportedCarriers.find((carrier) => carrier.carrierCode === account.carrierCode)
     const displayName = getCarrierDisplayName(supportedCarriers, account.carrierCode)
     const accountRequired = carrierDefinition?.accountRequired !== false
     const enabledServices = account.serviceLevels.filter((level) => level.isEnabled)
-    const connectionStatus = account.lastConnectionTest?.status || 'Not Tested'
+    const connectionStatus = ['bosta', 'aramex', 'dhl', 'mylerz'].includes(account.carrierCode) && !account.connectionTestIsCurrent
+        ? 'Not Tested' : account.lastConnectionTest?.status || 'Not Tested'
     const credentialFields = carrierDefinition?.credentialFields || []
-    const connectionTestSupported = carrierDefinition?.connectionTestSupported !== false
+    const connectionTestSupported = carrierDefinition?.connectionTestSupported === true
+    const activationSupported = carrierDefinition && ['ProductionReady', 'Partial'].includes(carrierDefinition.productionCapability)
     const readiness = account.integrationReadiness
-    const merchantState = getMerchantIntegrationState(account, carrierDefinition, t)
+    const connectionOnly = ['bosta', 'aramex', 'dhl', 'mylerz'].includes(account.carrierCode)
+    const [connectionOutcome, setConnectionOutcome] = useState(null)
+    useEffect(() => { setConnectionOutcome(null) }, [account.lastConnectionTest?.id, account.connectionTestIsCurrent, account.activeCredentialReferenceId])
+    const merchantState = getMerchantIntegrationState(account, carrierDefinition, t, connectionOutcome)
     const [environment, setEnvironment] = useState(account.environment || '')
     const [connectionForm, setConnectionForm] = useState(emptyConnectionForm)
     const [workingAction, setWorkingAction] = useState('')
     const [message, setMessage] = useState('')
+    const activeAccountRef = useRef(null)
+    const pendingActionRef = useRef(null)
+    useEffect(() => {
+        const target = { id: account.id, carrier: account.carrierCode }
+        activeAccountRef.current = target
+        pendingActionRef.current = null
+        setConnectionForm(emptyConnectionForm)
+        setWorkingAction('')
+        setMessage('')
+        setConnectionOutcome(null)
+        return () => { activeAccountRef.current = null; pendingActionRef.current = null }
+    }, [account.id, account.carrierCode])
+    useEffect(() => { setEnvironment(account.environment || '') }, [account.id, account.environment])
 
-    const runAction = async (actionName, action) => {
+    const runAction = async (actionName, action, onSuccess) => {
+        const target = activeAccountRef.current
+        if (!target || pendingActionRef.current) return
+        const pending = { target }
+        pendingActionRef.current = pending
         setWorkingAction(actionName)
         setMessage('')
         try {
             await action()
+            if (activeAccountRef.current !== target) return
+            onSuccess?.()
             await onMutated()
+            if (activeAccountRef.current !== target) return
             setMessage(t('shippingAdministration.account.actionCompleted', { action: actionName }))
         } catch (error) {
+            if (activeAccountRef.current !== target) return
             await onMutated().catch(() => {})
+            if (activeAccountRef.current !== target) return
             setMessage(error.message || t('shippingAdministration.account.actionFailed', { action: actionName }))
         } finally {
-            setWorkingAction('')
+            if (pendingActionRef.current === pending) {
+                pendingActionRef.current = null
+                setWorkingAction('')
+            }
         }
     }
 
@@ -194,25 +237,29 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
         runAction(t('shippingAdministration.account.actions.environmentSelection'), () => selectCarrierEnvironment(account.id, environment))
     }
 
-    const submitConnectionTest = (event) => {
+    const submitConnectionTest = (event, saveOnly = false) => {
         event.preventDefault()
-        if (!connectionTestSupported || !areRequiredCredentialFieldsPresent()) return
-        runAction(t('shippingAdministration.account.actions.connectionTest'), async () => {
+        if ((!saveOnly && !connectionTestSupported) || !areRequiredCredentialFieldsPresent()) return
+        runAction(t(saveOnly ? 'common.save' : 'shippingAdministration.account.actions.connectionTest'), async () => {
             const extraConfig = Object.fromEntries(
                 Object.entries(connectionForm.extraConfig)
                     .map(([key, value]) => [key, value.trim()])
                     .filter(([, value]) => !!value)
             )
-            await runCarrierConnectionTest(account.id, {
+            const result = await runCarrierConnectionTest(account.id, {
                 apiKey: connectionForm.apiKey.trim(),
                 apiSecret: toNullableText(connectionForm.apiSecret),
                 accountId: toNullableText(connectionForm.accountId),
+                webhookSecret: toNullableText(connectionForm.webhookSecret),
                 apiUrl: null,
-                useSandbox: connectionForm.useSandbox,
+                useSandbox: carrierDefinition?.environmentSupported === false ? false : connectionForm.useSandbox,
                 extraConfig: Object.keys(extraConfig).length ? extraConfig : null,
+                saveOnly,
             })
-            setConnectionForm(emptyConnectionForm)
-        })
+            if (result?.succeeded !== true) {
+                throw new Error([t('shippingAdministration.account.verificationFailed'), result?.failureCode, ...(result?.blockers || [])].filter(Boolean).join(' — '))
+            }
+        }, () => setConnectionForm(emptyConnectionForm))
     }
 
     const runLifecycleAction = (label, action) => {
@@ -223,6 +270,7 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
         if (field.target === 'ApiKey') return connectionForm.apiKey
         if (field.target === 'ApiSecret') return connectionForm.apiSecret
         if (field.target === 'AccountId') return connectionForm.accountId
+        if (field.target === 'WebhookSecret') return connectionForm.webhookSecret
         if (field.target?.startsWith('ExtraConfig.')) {
             const key = field.target.slice('ExtraConfig.'.length)
             return connectionForm.extraConfig[key] || ''
@@ -242,6 +290,10 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
         }
         if (field.target === 'AccountId') {
             setConnectionForm({ ...connectionForm, accountId: value })
+            return
+        }
+        if (field.target === 'WebhookSecret') {
+            setConnectionForm({ ...connectionForm, webhookSecret: value })
             return
         }
         if (field.target?.startsWith('ExtraConfig.')) {
@@ -283,7 +335,25 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                 </div>
             </div>
 
-            {account.lastConnectionTest?.failureReason && (
+            {accountRequired && <section className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm"
+                aria-label={i18n.language === 'ar' ? 'التفعيل وأهلية الحجز' : 'Activation and booking eligibility'}>
+                <h4 className="font-semibold text-gray-900">{i18n.language === 'ar' ? 'التفعيل وأهلية الحجز' : 'Activation and booking eligibility'}</h4>
+                <p className="mt-1 text-gray-700">{i18n.language === 'ar'
+                    ? 'نجاح المصادقة لا يفعّل الحساب ولا يثبت جاهزية طلب للشحن. تظل بيانات الطرد والوجهة والمصدر خاضعة للتحقق.'
+                    : 'Authentication does not activate this account or certify an order for booking. Parcel, destination and pickup evidence are checked separately.'}</p>
+                {account.carrierCode === 'bosta' && (connectionOutcome?.status === 'Succeeded' || !connectionOutcome && account.connectionTestIsCurrent && account.lastConnectionTest?.status === 'Succeeded') && <p className="mt-2 font-medium">{t('shippingAdministration.native.connectedIncomplete')}</p>}
+                <dl className="mt-2 grid grid-cols-2 gap-2">
+                    <div><dt>{t('shippingAdministration.native.integrationSwitch')}</dt><dd>{readiness?.enabled === true ? t('common.yes') : t('common.no')}</dd></div>
+                    <div><dt>{t('shippingAdministration.account.state', { defaultValue: 'Account state' })}</dt><dd>{t(`shippingAdministration.states.${account.state}`, { defaultValue: account.state || '-' })}</dd></div>
+                    <div><dt>{t('shippingAdministration.account.runtimeExecutable')}</dt><dd>{readiness?.canExecute === true ? t('common.yes') : t('common.no')}</dd></div>
+                    {account.carrierCode === 'bosta' && <div><dt>{t('shippingAdministration.native.providerActivation')}</dt><dd>{t('shippingAdministration.native.providerUnknown')}</dd></div>}
+                </dl>
+                {readiness?.blockers?.length > 0 && <ul className="mt-2 list-inside list-disc break-words text-xs text-amber-900">
+                    {readiness.blockers.map(blocker => <li key={blocker}>{account.carrierCode === 'bosta' ? t(`shippingAdministration.native.errors.${blocker}`, { defaultValue: blocker }) : blocker}</li>)}
+                </ul>}
+            </section>}
+
+            {account.lastConnectionTest?.failureReason && (!connectionOnly || account.connectionTestIsCurrent) && (
                 <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                     {account.lastConnectionTest.failureReason}
                 </div>
@@ -292,7 +362,9 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
             <details className="mt-4 rounded-lg border border-gray-100 bg-white p-3 text-sm text-gray-600">
                 <summary className="cursor-pointer font-medium text-gray-800">{t('shippingAdministration.account.advancedDiagnostics')}</summary>
                 <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <Detail label={t('shippingAdministration.account.environment')} value={t(`shippingAdministration.states.${readiness?.environment || account.environment || 'NotSelected'}`)} />
+                    <Detail label={t('shippingAdministration.account.environment')} value={account.carrierCode === 'mylerz'
+                        ? t('shippingAdministration.connection.integrationEndpoint')
+                        : t(`shippingAdministration.states.${readiness?.environment || account.environment || 'NotSelected'}`)} />
                     <Detail label={t('shippingAdministration.account.connectionEvidence')} value={t(`shippingAdministration.states.${connectionStatus.replaceAll(' ', '')}`)} />
                     <Detail label={t('shippingAdministration.account.runtimeCredentials')} value={t(`shippingAdministration.states.${readiness?.credentialAvailability || 'Unknown'}`)} />
                     <Detail label={t('shippingAdministration.account.runtimeExecutable')} value={readiness?.canExecute ? t('common.yes') : t('common.no')} />
@@ -302,12 +374,23 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                 {readiness?.blockers?.length > 0 && (
                     <div className="mt-3 text-xs text-gray-500">{readiness.blockers.join(', ')}</div>
                 )}
+                {account.operations?.length > 0 && <section className="mt-4" aria-label={t('shippingAdministration.operations.title')}>
+                    <h4 className="font-medium text-gray-800">{t('shippingAdministration.operations.title')}</h4>
+                    <p className="mt-1 text-xs">{t('shippingAdministration.operations.boundary')}</p>
+                    <ul className="mt-2 space-y-2">
+                        {account.operations.map(operation => <li key={operation.operation} className="rounded border border-gray-200 p-2">
+                            <span className="font-medium">{t(`shippingAdministration.operations.names.${operation.operation}`)}</span>: {t(`shippingAdministration.operations.states.${operation.implementation}`)}
+                            {operation.implementation === 'Implemented' && <span> — {t(operation.accountReady ? 'shippingAdministration.operations.accountReady' : 'shippingAdministration.operations.accountBlocked')}</span>}
+                            {operation.blockers.length > 0 && <div className="mt-1 break-words text-xs text-gray-500">{operation.blockers.join(', ')}</div>}
+                        </li>)}
+                    </ul>
+                </section>}
                 {account.healthReason && (
                     <div className="mt-2 text-xs text-gray-500">{account.healthReason}</div>
                 )}
             </details>
 
-            {!accountRequired && (
+            {!accountRequired && !['Unavailable', 'NotCertified'].includes(carrierDefinition?.productionCapability) && (
                 <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                     {t('shippingAdministration.account.manualExplanation')}
                 </div>
@@ -326,14 +409,16 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                 </div>
             </div>
 
-            {accountRequired && <div className="mt-5 rounded-lg border border-gray-100 bg-gray-50 p-4">
+            {accountRequired && connectionOnly && <CarrierConnectionForm key={`${account.id}-${account.carrierCode}`} account={account} definition={carrierDefinition} onMutated={onMutated} onBusy={setWorkingAction} onOutcome={setConnectionOutcome} />}
+
+            {accountRequired && !connectionOnly && <div className="mt-5 rounded-lg border border-gray-100 bg-gray-50 p-4">
                 <h4 className="text-sm font-semibold text-gray-900">{t('shippingAdministration.account.management')}</h4>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                     <form onSubmit={submitEnvironment} className="space-y-2">
                         <label htmlFor={`carrier-environment-${account.id}`} className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('shippingAdministration.account.environment')}</label>
                         <div className="flex gap-2">
-                            <select id={`carrier-environment-${account.id}`} value={environment} onChange={(event) => setEnvironment(event.target.value)} className="input">
+                            <select id={`carrier-environment-${account.id}`} disabled={!!workingAction} value={environment} onChange={(event) => setEnvironment(event.target.value)} className="input">
                                 <option value="">{t('shippingAdministration.account.selectEnvironment')}</option>
                                 <option value="Sandbox">{t('shippingAdministration.states.Sandbox')}</option>
                                 <option value="Production">{t('shippingAdministration.states.Production')}</option>
@@ -342,7 +427,7 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                         </div>
                     </form>
 
-                    <form onSubmit={submitConnectionTest} className="space-y-2">
+                    <form onSubmit={(event) => submitConnectionTest(event)} className="space-y-2">
                         <div className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('shippingAdministration.account.saveAndValidate')}</div>
                         <p className="text-xs text-gray-500">{describeConnectionTest(carrierDefinition, t)}</p>
                         {!connectionTestSupported && (
@@ -364,7 +449,7 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                                             value={getCredentialFieldValue(field)}
                                             onChange={(event) => setCredentialFieldValue(field, event.target.value)}
                                             type={field.isSecret ? 'password' : 'text'}
-                                            disabled={!connectionTestSupported}
+                                            disabled={!!workingAction}
                                             required={field.required}
                                         />
                                     </label>
@@ -372,9 +457,12 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                             })}
                         </div>
                         {carrierDefinition?.environmentSupported !== false && <label className="flex items-center gap-2 text-sm text-gray-700">
-                            <input type="checkbox" checked={connectionForm.useSandbox} onChange={(event) => setConnectionForm({ ...connectionForm, useSandbox: event.target.checked })} />
+                            <input type="checkbox" disabled={!!workingAction} checked={connectionForm.useSandbox} onChange={(event) => setConnectionForm({ ...connectionForm, useSandbox: event.target.checked })} />
                             {t('shippingAdministration.account.useSandbox')}
                         </label>}
+                        <button type="button" onClick={(event) => submitConnectionTest(event, true)} disabled={!areRequiredCredentialFieldsPresent() || !!workingAction} className="btn-secondary">
+                            {t('shippingAdministration.account.saveCredentialsOnly')}
+                        </button>
                         <button type="submit" disabled={!connectionTestSupported || !areRequiredCredentialFieldsPresent() || !!workingAction} className="btn-secondary">
                             {carrierDefinition?.connectionTestMode === 'LocalOnly'
                                 ? t('shippingAdministration.account.saveValidateLocally')
@@ -388,7 +476,7 @@ export default function CarrierAccountCard({ account, supportedCarriers, onMutat
                 <h4 className="text-sm font-semibold text-gray-900">{t('shippingAdministration.account.availableActions')}</h4>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
                     <button type="button" disabled={!!workingAction} onClick={() => runLifecycleAction(t('shippingAdministration.account.actions.healthEvaluation'), evaluateCarrierHealth)} className="rounded border border-gray-200 px-2 py-1">{t('shippingAdministration.account.actions.evaluateHealth')}</button>
-                    <button type="button" disabled={!!workingAction} onClick={() => runLifecycleAction(t('shippingAdministration.account.actions.activation'), activateCarrierAccount)} className="rounded border border-gray-200 px-2 py-1">{t('shippingAdministration.account.actions.activate')}</button>
+                    <button type="button" disabled={!!workingAction || !activationSupported} onClick={() => runLifecycleAction(t('shippingAdministration.account.actions.activation'), activateCarrierAccount)} className="rounded border border-gray-200 px-2 py-1">{t('shippingAdministration.account.actions.activate')}</button>
                     <button type="button" disabled={!!workingAction} onClick={() => runLifecycleAction(t('shippingAdministration.account.actions.suspension'), suspendCarrierAccount)} className="rounded border border-gray-200 px-2 py-1">{t('shippingAdministration.account.actions.suspend')}</button>
                     <button type="button" disabled={!!workingAction} onClick={() => runLifecycleAction(t('shippingAdministration.account.actions.disable'), disableCarrierAccount)} className="rounded border border-gray-200 px-2 py-1">{t('shippingAdministration.account.actions.disable')}</button>
                     <button type="button" disabled={!!workingAction} onClick={() => runLifecycleAction(t('shippingAdministration.account.actions.retire'), retireCarrierAccount)} className="rounded border border-gray-200 px-2 py-1">{t('shippingAdministration.account.actions.retire')}</button>

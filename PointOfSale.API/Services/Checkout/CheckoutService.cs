@@ -40,6 +40,7 @@ using PointOfSale.Core.Entities.Geographic;
 using PointOfSale.Core.Interfaces.WhatsApp;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Payments;
+using PointOfSale.Core.Policies;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.Infrastructure.Payments;
@@ -1060,7 +1061,8 @@ public class CheckoutService : ICheckoutService
                 request.ShippingAddress,
                 request.BillingAddress,
                 correlationId,
-                cancellationToken);
+                cancellationToken,
+                $"{ownerType}:{ownerId}");
 
             steps.Add(new CheckoutStepResult
             {
@@ -1184,6 +1186,12 @@ public class CheckoutService : ICheckoutService
             activeStep = "ShippingMethodValidation";
             var shippingMethod = await ValidateShippingMethodAsync(
                 request.ShippingMethodId, tenantId, correlationId, cancellationToken);
+            if (CarrierCodes.Normalize(shippingMethod.CarrierCode) == CarrierCodes.Bosta)
+            {
+                var destinationFailure = BostaDestinationAdmission.ValidateCheckoutAddress(shippingMethod.ServiceLevel,
+                    request.ShippingAddress.Country, request.ShippingAddress.Street);
+                if (destinationFailure != null) throw new CheckoutException(destinationFailure, "Bosta requires a domestic Egypt delivery address; provider destination selection is required before booking.", "ShippingMethodValidation");
+            }
 
             // Validate payment method from TenantPaymentMethod (Phase 10.4.D3)
             activeStep = "PaymentMethodValidation";
@@ -1967,9 +1975,14 @@ public class CheckoutService : ICheckoutService
         {
             _reliabilityTelemetry?.RecordCheckoutProcessed(tenantId, canonicalPaymentMethodCode ?? request.PaymentMethod, "failed");
 
-            _logger.LogError(ex,
-                "Checkout unexpected error | TenantId: {TenantId} | CartId: {CartId} | Step: {Step} | CorrelationId: {CorrelationId}",
-                tenantId, request.CartId, activeStep, correlationId);
+            if (ex is WarehouseResolutionException resolutionFailure)
+                _logger.LogWarning(
+                    "Checkout resolution rejected | TenantId: {TenantId} | CartId: {CartId} | Step: {Step} | Code: {Code} | CorrelationId: {CorrelationId}",
+                    tenantId, request.CartId, activeStep, resolutionFailure.ErrorCode, correlationId);
+            else
+                _logger.LogError(ex,
+                    "Checkout unexpected error | TenantId: {TenantId} | CartId: {CartId} | Step: {Step} | CorrelationId: {CorrelationId}",
+                    tenantId, request.CartId, activeStep, correlationId);
 
             // Only run pre-commit compensation if order was NOT committed
             if (!orderCommitted)
@@ -2036,8 +2049,9 @@ public class CheckoutService : ICheckoutService
                 await _checkoutRequestIdempotencyCoordinator.DeleteClaimAsync(idempotencyRecord, CancellationToken.None);
             }
 
-            // Preserve DomainGuardException for middleware to handle with structured error response
-            if (ex is DomainGuardException)
+            // Preserve domain admission failures after normal compensation so
+            // the controller returns their structured 4xx, not CHECKOUT_FAILED.
+            if (ex is DomainGuardException or WarehouseResolutionException)
             {
                 throw;
             }
@@ -2121,7 +2135,8 @@ public class CheckoutService : ICheckoutService
         AddressDto shippingAddress,
         AddressDto? billingAddress,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string principalReference)
     {
         var shippingAdmission = await AdmitAddressIfCanonicalCandidateAsync(
             tenantId,
@@ -2129,18 +2144,18 @@ public class CheckoutService : ICheckoutService
             shippingAddress,
             "shipping",
             correlationId,
-            cancellationToken);
+            cancellationToken,
+            principalReference);
 
         var effectiveBillingAddress = billingAddress ?? shippingAddress;
-        var billingAdmission = ReferenceEquals(effectiveBillingAddress, shippingAddress)
-            ? shippingAdmission
-            : await AdmitAddressIfCanonicalCandidateAsync(
+        var billingAdmission = await AdmitAddressIfCanonicalCandidateAsync(
                 tenantId,
                 cartId,
                 effectiveBillingAddress,
                 "billing",
                 correlationId,
-                cancellationToken);
+                cancellationToken,
+                principalReference);
 
         return new CheckoutGeographicAdmissionSnapshot(shippingAdmission, billingAdmission);
     }
@@ -2151,7 +2166,8 @@ public class CheckoutService : ICheckoutService
         AddressDto address,
         string addressRole,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string principalReference)
     {
         var geography = address.Geography;
         if (geography?.HasAnyPlaceCandidate != true)
@@ -2173,6 +2189,11 @@ public class CheckoutService : ICheckoutService
             throw new CheckoutException(validation.ErrorCode, validation.ErrorMessage!, "AddressGeographicAdmission");
         }
 
+        var canonicalInputs = new CanonicalAddressInputs($"checkout-{addressRole}", principalReference,
+            "owned-cart:checkout-authority", address.Country, address.Street, address.Street2, address.City,
+            address.State, address.Building, address.Floor, address.Apartment, address.Landmark, address.Name, address.Phone, address.Email);
+        var lineage = new GeographicPlaceLineage(geography.CountryPlaceId!.Value, geography.AdministrativeAreaPlaceId,
+            geography.LocalityPlaceId, geography.DistrictPlaceId, geography.ZonePlaceId);
         var candidate = new GeographicAddressCandidate(
             TenantId: tenantId,
             OwnerDomain: AddressAdmissionOwnerDomain.Checkout,
@@ -2183,11 +2204,13 @@ public class CheckoutService : ICheckoutService
                 geography.LocalityPlaceId,
                 geography.DistrictPlaceId,
                 geography.ZonePlaceId),
-            AddressFingerprintSha256: BuildGeographicAddressFingerprint(address, addressRole),
+            AddressFingerprintSha256: PointOfSale.Infrastructure.Geographic.CanonicalAddressEvidence.ComputeInputFingerprint(
+                tenantId, AddressAdmissionOwnerDomain.Checkout, cartId, lineage, canonicalInputs, address.ZipCode),
             PostalCode: address.ZipCode?.Trim(),
             Latitude: null,
             Longitude: null,
-            CoordinateSource: null);
+            CoordinateSource: null,
+            CanonicalInputs: canonicalInputs);
 
         var result = await _addressAdmissionService.AdmitAsync(candidate, cancellationToken);
         if (!result.Succeeded || !result.AddressAdmissionEvidenceId.HasValue || !result.CatalogReleaseId.HasValue)
@@ -3584,25 +3607,14 @@ public class CheckoutService : ICheckoutService
                 cancellationToken);
         }
 
+        // Price preview has no complete address/contact payload and is read-only.
+        // A geographic candidate is not admission evidence. The actual submitted
+        // address is admitted on checkout, never using invented preview inputs.
         if (request.ShippingGeography?.HasAnyPlaceCandidate == true)
         {
-            var previewAddress = new AddressDto
-            {
-                Name = "Pricing Preview",
-                Phone = "00000000",
-                Street = "Pricing Preview",
-                City = "Pricing Preview",
-                Country = request.ShippingCountry ?? "EG",
-                Geography = request.ShippingGeography
-            };
-
-            await AdmitAddressIfCanonicalCandidateAsync(
-                tenantId,
-                request.CartId,
-                previewAddress,
-                "shipping_quote",
-                correlationId,
-                cancellationToken);
+            var validation = request.ShippingGeography.Validate();
+            if (validation.ErrorCode != null)
+                throw new CheckoutException(validation.ErrorCode, validation.ErrorMessage!, "AddressGeographicAdmission");
         }
 
         var pricing = await _storefrontPricingService.CalculateCheckoutAsync(
@@ -6955,6 +6967,12 @@ public class CheckoutService : ICheckoutService
 
             snapshot = transactionScopedAuthority.Snapshot;
             shippingMethod = transactionScopedAuthority.ShippingMethod;
+            if (CarrierCodes.Normalize(shippingMethod.CarrierCode) == CarrierCodes.Bosta)
+            {
+                var destinationFailure = BostaDestinationAdmission.ValidateCheckoutAddress(shippingMethod.ServiceLevel,
+                    request.ShippingAddress.Country, request.ShippingAddress.Street);
+                if (destinationFailure != null) throw new CheckoutException(destinationFailure, "Bosta destination admission changed before checkout commit.", "ShippingMethodValidation");
+            }
             paymentMethod = transactionScopedAuthority.PaymentMethod;
             var finalWarehouseResolution = await _warehouseResolutionService.ValidateSubmittedResolutionAsync(
                 tenantId,
@@ -7026,6 +7044,12 @@ public class CheckoutService : ICheckoutService
                 correlationId,
                 cancellationToken,
                 emitExternalReservationSideEffects: false);
+
+            // Retain the original physical/nonphysical decision before the first
+            // order insert. Payment and binding must not infer it from today's catalog.
+            order.PricingSnapshotJson = OrderInventoryReservationSnapshot.Capture(order,
+                inventoryReservation.ReservedItems.GroupBy(i => (i.ProductId, i.VariantId))
+                    .ToDictionary(g => g.Key, g => g.Sum(i => (decimal)i.Quantity)));
 
             _logger.LogInformation(
                 "Inventory reserved transactionally with order creation | ReservationId: {ReservationId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",

@@ -22,7 +22,7 @@ const translate = (key: string, options: Record<string, unknown> = {}) => {
     const value = resolveKey(resource, key)
     if (typeof value !== 'string') return key
     return Object.entries(options).reduce(
-        (text, [name, replacement]) => text.replaceAll(`{{${name}}}`, String(replacement)),
+        (text, [name, replacement]) => text.split(`{{${name}}}`).join(String(replacement)),
         value,
     )
 }
@@ -186,7 +186,7 @@ describe('AbandonedCheckouts', () => {
             const latestListUrl = [...api.get.mock.calls]
                 .map(([url]) => String(url))
                 .filter((url) => url.includes('/admin/abandoned-checkouts?'))
-                .at(-1)
+                .slice(-1)[0]
             expect(latestListUrl).not.toContain('status=')
         })
     })

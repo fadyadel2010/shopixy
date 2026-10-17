@@ -14,6 +14,8 @@ namespace PointOfSale.API.Services.Admin;
 /// </summary>
 public interface IAdminStoreConfigService
 {
+    Task<AdminStoreConfigResponse> UpdateCommerceAiAsync(Guid tenantId, AdminCommerceAiConfigDto request,
+        string traceId, CancellationToken cancellationToken = default, uint? expectedRowVersion = null);
     /// <summary>
     /// Gets the store config for a tenant.
     /// Creates a default config if none exists.

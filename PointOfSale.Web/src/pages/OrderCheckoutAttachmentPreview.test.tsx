@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import OrderCheckoutAttachmentPreview, { isPreviewableCheckoutImage } from './OrderCheckoutAttachmentPreview'
+import OrderCheckoutAttachmentPreview from './OrderCheckoutAttachmentPreview'
+import { isPreviewableCheckoutImage } from './orderCheckoutImage'
+import { useAuthStore } from '../store/authStore'
 import {
     downloadAdminOrderCheckoutAttachment,
     getAdminOrderCheckoutAttachmentBlob,
@@ -12,7 +14,7 @@ vi.mock('react-i18next', () => ({
         t: (key: string, fallbackOrValues?: string | Record<string, unknown>, interpolationValues: Record<string, unknown> = {}) => {
             if (typeof fallbackOrValues !== 'string') return key
             return Object.entries(interpolationValues).reduce(
-                (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+                (text, [name, value]) => text.split(`{{${name}}}`).join(String(value)),
                 fallbackOrValues,
             )
         },
@@ -34,6 +36,7 @@ const imageAttachment = {
 
 describe('OrderCheckoutAttachmentPreview', () => {
     beforeEach(() => {
+        useAuthStore.setState({ user: { effectivePermissions: ['storefront.orders.attachments.download'] } })
         vi.mocked(getAdminOrderCheckoutAttachmentBlob).mockReset()
         vi.mocked(downloadAdminOrderCheckoutAttachment).mockReset()
         vi.stubGlobal('URL', {
@@ -44,6 +47,8 @@ describe('OrderCheckoutAttachmentPreview', () => {
     })
 
     afterEach(() => {
+        cleanup()
+        useAuthStore.setState({ user: null })
         vi.unstubAllGlobals()
     })
 
@@ -98,5 +103,29 @@ describe('OrderCheckoutAttachmentPreview', () => {
         expect(getAdminOrderCheckoutAttachmentBlob).not.toHaveBeenCalled()
         expect(screen.queryByRole('img')).not.toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'View / Download' })).toBeEnabled()
+    })
+
+    it.each(['Manager', 'Cashier', 'Warehouse'])('does not preview or offer downloads for %s with only order-view authority', (role) => {
+        useAuthStore.setState({ user: { role, effectivePermissions: ['storefront.orders.view'] } })
+        const view = render(<OrderCheckoutAttachmentPreview orderId="order-1" fieldLabel="Proof" attachment={imageAttachment} />)
+        expect(view.container).toBeEmptyDOMElement()
+        expect(getAdminOrderCheckoutAttachmentBlob).not.toHaveBeenCalled()
+        expect(downloadAdminOrderCheckoutAttachment).not.toHaveBeenCalled()
+    })
+
+    it('downloads for an explicitly authorized user', async () => {
+        vi.mocked(downloadAdminOrderCheckoutAttachment).mockResolvedValue(undefined)
+        render(<OrderCheckoutAttachmentPreview orderId="order-1" fieldLabel="Proof" attachment={{ ...imageAttachment, mediaType: 'file' }} />)
+        fireEvent.click(screen.getByRole('button', { name: 'View / Download' }))
+        await waitFor(() => expect(downloadAdminOrderCheckoutAttachment).toHaveBeenCalledWith('order-1', 'attachment-1', 'customer.png'))
+    })
+
+    it('removes a loaded preview and revokes the blob when permission is lost', async () => {
+        vi.mocked(getAdminOrderCheckoutAttachmentBlob).mockResolvedValue(new Blob(['png']))
+        const view = render(<OrderCheckoutAttachmentPreview orderId="order-1" fieldLabel="Proof" attachment={imageAttachment} />)
+        await screen.findByRole('img')
+        act(() => useAuthStore.setState({ user: { effectivePermissions: ['storefront.orders.view'] } }))
+        await waitFor(() => expect(view.container).toBeEmptyDOMElement())
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:secure-preview')
     })
 })

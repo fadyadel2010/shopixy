@@ -33,6 +33,7 @@ public class PixelTrackingConfigService : IPixelTrackingConfigService
 
     public async Task<PixelTrackingConfig> GetConfigAsync(Guid tenantId, CancellationToken ct = default)
     {
+        if (tenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(tenantId));
         // 1. Try Cache
         try
         {
@@ -60,6 +61,7 @@ public class PixelTrackingConfigService : IPixelTrackingConfigService
         // Note: Assuming DbSet<PixelTrackingConfig> will be added to DbContext
         // Using Set<PixelTrackingConfig>() to avoid compile error if property not yet in DbContext class
         var config = await dbContext.Set<PixelTrackingConfig>()
+            .IgnoreQueryFilters()
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.TenantId == tenantId, ct);
 
@@ -109,6 +111,10 @@ public class PixelTrackingConfigService : IPixelTrackingConfigService
 
     public async Task UpdateConfigAsync(PixelTrackingConfig config, CancellationToken ct = default)
     {
+        if (config.TenantId == Guid.Empty || !Enum.IsDefined(config.Strategy) || config.Value < 0 ||
+            config.Value > (config.Strategy == PixelOverrideStrategy.Percentage ? 100m : 1000000m) ||
+            config.AppliesTo?.Any(p => !Enum.IsDefined(p)) == true)
+            throw new ArgumentException("Invalid pixel override configuration.", nameof(config));
         // Sync JSON property
         config.AppliesToJson = JsonSerializer.Serialize(config.AppliesTo ?? Array.Empty<PixelProvider>());
         config.UpdatedAtUtc = DateTime.UtcNow;
@@ -117,6 +123,7 @@ public class PixelTrackingConfigService : IPixelTrackingConfigService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var existing = await dbContext.Set<PixelTrackingConfig>()
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(c => c.TenantId == config.TenantId, ct);
 
         if (existing == null)

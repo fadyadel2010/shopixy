@@ -9,6 +9,27 @@ namespace PointOfSale.Tests.Infrastructure;
 
 public sealed class AramexOfficialContractCompatibilityTests
 {
+    [Theory]
+    [InlineData("create")]
+    [InlineData("tracking")]
+    [InlineData("quote")]
+    public async Task ProviderNotifications_NeverBecomeMerchantMessages(string operation)
+    {
+        const string secret = "SYNTHETIC-ECHOED-CREDENTIAL";
+        var handler = new RecordingHandler($$"""{"HasErrors":true,"Notifications":[{"Message":"{{secret}}"}]}""");
+        var adapter = CreateAdapter(handler);
+        var message = operation switch
+        {
+            "create" => (await adapter.CreateShipmentAsync(CreateRequest(), Credentials())).ErrorMessage,
+            "tracking" => (await adapter.GetTrackingAsync("SYNTHETIC-ONLY", Credentials())).ErrorMessage,
+            "quote" => (await adapter.GetQuoteAsync(new ShippingQuoteRequest { OriginCity = "Cairo", OriginCountry = "EG",
+                DestinationCity = "Giza", DestinationCountry = "EG", WeightKg = 2, PackageCount = 1, ServiceLevel = "standard" }, Credentials())).ErrorMessage,
+            _ => throw new InvalidOperationException()
+        };
+        Assert.False(string.IsNullOrWhiteSpace(message));
+        Assert.DoesNotContain(secret, message);
+    }
+
     [Fact]
     public async Task CreateShipment_UsesOfficialProductPairingAndNestedLabel()
     {
@@ -17,6 +38,8 @@ public sealed class AramexOfficialContractCompatibilityTests
               "HasErrors": false,
               "Shipments": [{
                 "ID": "1234567890",
+                "HasErrors": false,
+                "Notifications": [],
                 "Reference1": "ORD-1",
                 "ShipmentLabel": {
                   "LabelURL": "https://ws.aramex.net/labels/1234567890.pdf",
@@ -47,6 +70,8 @@ public sealed class AramexOfficialContractCompatibilityTests
             @"^/Date\(\d+\)/$",
             shipment.GetProperty("ShippingDateTime").GetString()!);
         Assert.False(shipment.TryGetProperty("DueDate", out _));
+        Assert.False(shipment.TryGetProperty("HasErrors", out _));
+        Assert.False(shipment.TryGetProperty("Notifications", out _));
         Assert.Equal("Sender", shipment.GetProperty("Shipper").GetProperty("Contact").GetProperty("CompanyName").GetString());
     }
 
@@ -56,7 +81,7 @@ public sealed class AramexOfficialContractCompatibilityTests
         const string response = """
             {
               "HasErrors": false,
-              "Shipments": [{ "ID": "1234567890" }]
+              "Shipments": [{ "ID": "1234567890", "HasErrors": false, "Notifications": [] }]
             }
             """;
         var handler = new RecordingHandler(response);
@@ -156,8 +181,24 @@ public sealed class AramexOfficialContractCompatibilityTests
 
         Assert.False(definition.SupportsCancellation);
         Assert.False(definition.SupportsWebhooks);
+        Assert.False(definition.SupportsPickupScheduling);
         Assert.True(definition.SupportsTracking);
         Assert.True(definition.SupportsLabels);
+    }
+
+    [Fact]
+    public async Task Tracking_DeliveredLogisticsEvidenceNeverInventsCodCollection()
+    {
+        var response = TrackingResponse(
+            TrackingUpdate("1234567890", "2026-07-06T10:00:00Z", "UTC", "SH003"));
+
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .GetTrackingAsync("1234567890", Credentials());
+
+        Assert.True(result.Success);
+        Assert.Equal(PointOfSale.Core.Enums.ShipmentStatus.Delivered, result.CurrentStatus);
+        Assert.False(result.CodCollected);
+        Assert.Null(result.CodCollectedAt);
     }
 
     [Fact]
@@ -168,6 +209,7 @@ public sealed class AramexOfficialContractCompatibilityTests
               "HasErrors": false,
               "Shipments": [{
                 "ID": "1234567890",
+                "HasErrors": false,
                 "Reference1": "OTHER-ORDER",
                 "Reference2": "OTHER-SHIPMENT"
               }]
@@ -190,6 +232,7 @@ public sealed class AramexOfficialContractCompatibilityTests
               "TrackingResults": [{
                 "Key": "1234567890",
                 "Value": [{
+                  "WaybillNumber": "1234567890",
                   "UpdateCode": "UNKNOWN-NEW-CODE",
                   "UpdateDescription": "Unrecognized",
                   "UpdateDateTime": "2026-07-06T10:00:00Z"
@@ -214,6 +257,7 @@ public sealed class AramexOfficialContractCompatibilityTests
               "TrackingResults": [{
                 "Key": "9999999999",
                 "Value": [{
+                  "WaybillNumber": "9999999999",
                   "UpdateCode": "SH007",
                   "UpdateDescription": "In transit",
                   "UpdateDateTime": "2026-07-06T10:00:00Z"
@@ -286,6 +330,291 @@ public sealed class AramexOfficialContractCompatibilityTests
         Assert.Equal(1, handler.CallCount);
     }
 
+    // Official ShippingAPI.V2 Shipping WSDL: ProcessedShipment has its own required
+    // HasErrors/Notifications, independently of ShipmentCreationResponse.HasErrors.
+    [Theory]
+    [InlineData("true", "[]")]
+    [InlineData("true", "[{\"Code\":\"ERR01\",\"Message\":\"Invalid shipment\"}]")]
+    [InlineData("false", "[{\"Code\":\"ERR01\",\"Message\":\"Invalid shipment\"}]")]
+    [InlineData("false", "[{}]")]
+    [InlineData("null", "[]")]
+    [InlineData(null, "[]")]
+    public async Task CreateShipment_ProcessedFailureOrMissingAdmissionNeverExposesAwbOrLabel(
+        string? hasErrors, string notifications)
+    {
+        var errorMember = hasErrors == null ? "" : $"\"HasErrors\":{hasErrors},";
+        var response = $$"""
+            {"HasErrors":false,"Shipments":[{
+              {{errorMember}} "Notifications":{{notifications}},
+              "ID":"1234567890","Reference1":"ORD-1","Reference2":"shipment-1",
+              "ShipmentLabel":{"LabelURL":"https://ws.aramex.net/labels/1234567890.pdf","LabelFileContents":"cGRm"}
+            }]}
+            """;
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .CreateShipmentAsync(CreateRequest(), Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("ARAMEX_CREATE_ERROR", result.ErrorCode);
+        Assert.Equal(response, result.RawResponse);
+        Assert.Null(result.TrackingNumber);
+        Assert.Null(result.ExternalReferenceId);
+        Assert.Null(result.AwbNumber);
+        Assert.Null(result.LabelUrl);
+        Assert.Null(result.LabelData);
+        if (notifications.Contains("Invalid shipment", StringComparison.Ordinal))
+        {
+            Assert.Equal("Aramex did not confirm successful processing of the shipment.", result.ErrorMessage);
+            Assert.DoesNotContain("Invalid shipment", result.ErrorMessage);
+        }
+    }
+
+    [Fact]
+    public async Task CreateShipment_RootFailureCannotBeOverriddenBySuccessfulProcessedShipment()
+    {
+        const string response = """
+            {"HasErrors":true,"Notifications":[{"Code":"ERR00","Message":"Account error"}],
+             "Shipments":[{"ID":"1234567890","HasErrors":false,"Notifications":[]}]}
+            """;
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .CreateShipmentAsync(CreateRequest(), Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("ARAMEX_CREATE_ERROR", result.ErrorCode);
+        Assert.Null(result.TrackingNumber);
+    }
+
+    // Tracking WSDL: both dictionary Key and each TrackingResult.WaybillNumber bind
+    // the response, including older events that must not contaminate another AWB.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("9999999999")]
+    public async Task Tracking_MatchingOuterKeyCannotAdmitMissingOrForeignInnerWaybill(string? waybill)
+    {
+        var response = TrackingResponse(
+            TrackingUpdate("1234567890", "2026-07-06T11:00:00Z"),
+            TrackingUpdate(waybill, "2026-07-06T10:00:00Z"));
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .GetTrackingAsync("1234567890", Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("TRACKING_IDENTITY_MISMATCH", result.ErrorCode);
+        Assert.Equal(response, result.RawResponse);
+        Assert.Empty(result.Events);
+        Assert.False(result.CodCollected);
+    }
+
+    [Fact]
+    public async Task Tracking_DuplicateOuterKeysFailClosedEvenWhenInnerWaybillsMatch()
+    {
+        var entry = new { Key = "1234567890", Value = new[] { TrackingUpdate("1234567890", "2026-07-06T10:00:00Z") } };
+        var response = JsonSerializer.Serialize(new { HasErrors = false, TrackingResults = new[] { entry, entry } });
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .GetTrackingAsync("1234567890", Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("TRACKING_IDENTITY_MISMATCH", result.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("not-a-date", "UTC")]
+    [InlineData("2026-07-06T10:00:00", null)]
+    [InlineData("2026-07-06T10:00:00", "+03:00")]
+    [InlineData("2026-07-06T10:00:00Z", "opaque-provider-zone")]
+    [InlineData("2026-07-06T10:00:00Z", "+03:00")]
+    [InlineData("2026-07-06T10:00:00+03:00", "+02:00")]
+    [InlineData("2026-07-06T10:00:00Z", "+1460")]
+    [InlineData("2026-07-06T10:00:00Z", "+14:01")]
+    [InlineData("0001-01-01T00:00:00Z", null)]
+    [InlineData("/Date(999999999999999999999)/", null)]
+    [InlineData("/Date(253402300800000)/", null)]
+    [InlineData("/Date(1783332000000+2500)/", null)]
+    [InlineData("/Date(1783332000000)/", "opaque-provider-zone")]
+    public async Task Tracking_UnadmittedTimestampOrZoneRejectsWholeHistory(string? timestamp, string? zone)
+    {
+        var response = TrackingResponse(
+            TrackingUpdate("1234567890", "2026-07-06T11:00:00Z"),
+            TrackingUpdate("1234567890", timestamp, zone));
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .GetTrackingAsync("1234567890", Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("TRACKING_TIMESTAMP_UNADMITTED", result.ErrorCode);
+        Assert.Equal(response, result.RawResponse);
+        Assert.Empty(result.Events);
+    }
+
+    [Theory]
+    [InlineData("2026-07-06T10:00:00Z", null)]
+    [InlineData("2026-07-06T10:00:00Z", "UTC")]
+    [InlineData("2026-07-06T13:00:00+03:00", "+0300")]
+    [InlineData("2026-07-06T05:00:00-05:00", "-05:00")]
+    [InlineData("/Date(1783332000000)/", null)]
+    [InlineData("/Date(1783332000000+0300)/", "+03:00")]
+    [InlineData("/Date(1783332000000-0500)/", "-05:00")]
+    public async Task Tracking_ExplicitIsoOrWcfInstantIsUtcAndRequestsZoneEvidence(string timestamp, string? zone)
+    {
+        // WCF's milliseconds are UTC; its Local-kind suffix must not be applied twice.
+        // https://learn.microsoft.com/dotnet/framework/wcf/feature-details/stand-alone-json-serialization
+        var response = TrackingResponse(TrackingUpdate("1234567890", timestamp, zone));
+        var handler = new RecordingHandler(response);
+        var result = await CreateAdapter(handler).GetTrackingAsync("1234567890", Credentials());
+
+        Assert.True(result.Success);
+        var entry = Assert.Single(result.Events);
+        Assert.Equal(new DateTime(2026, 7, 6, 10, 0, 0, DateTimeKind.Utc), entry.Timestamp);
+        Assert.Equal(DateTimeKind.Utc, entry.Timestamp.Kind);
+        Assert.False(result.CodCollected);
+        using var request = JsonDocument.Parse(handler.RequestBody!);
+        Assert.True(request.RootElement.GetProperty("GetUpdateTimeZone").GetBoolean());
+        Assert.False(request.RootElement.GetProperty("GetLastTrackingUpdateOnly").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Tracking_SortsNormalizedInstantsRatherThanWallClocks()
+    {
+        var response = TrackingResponse(
+            TrackingUpdate("1234567890", "2026-07-06T13:00:00+03:00", "+03:00", "SH007"),
+            TrackingUpdate("1234567890", "2026-07-06T10:30:00Z", "UTC", "SH014"));
+        var result = await CreateAdapter(new RecordingHandler(response))
+            .GetTrackingAsync("1234567890", Credentials());
+
+        Assert.True(result.Success);
+        Assert.Equal(PointOfSale.Core.Enums.ShipmentStatus.OutForDelivery, result.CurrentStatus);
+        Assert.Equal("SH014", result.Events[0].CarrierStatusCode);
+        Assert.Equal("SH007", result.Events[1].CarrierStatusCode);
+        Assert.True(result.Events[0].Timestamp > result.Events[1].Timestamp);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(25)]
+    public async Task Quote_CodWithoutAdmittedCurrencyAndFeeSemanticsFailsBeforeNetwork(int? amount)
+    {
+        var handler = new RecordingHandler("""{"HasErrors":false,"TotalAmount":{"Value":12.50,"CurrencyCode":"USD"}}""");
+        var request = QuoteRequest();
+        request.IsCashOnDelivery = true;
+        request.CodAmount = amount;
+        var result = await CreateAdapter(handler).GetQuoteAsync(request, Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("ARAMEX_COD_QUOTE_UNSUPPORTED", result.ErrorCode);
+        Assert.Empty(result.Quotes);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Theory]
+    [InlineData("express", "EG")]
+    [InlineData("international", "EG")]
+    [InlineData("economy", "EG")]
+    [InlineData("standard", "US")]
+    [InlineData("express", "US")]
+    [InlineData("invented", "EG")]
+    public async Task UnsupportedServiceDistinctionFailsBeforeBothQuoteAndCreate(string service, string destination)
+    {
+        var handler = new RecordingHandler("{}");
+        var adapter = CreateAdapter(handler);
+        var quote = QuoteRequest();
+        quote.ServiceLevel = service;
+        quote.DestinationCountry = destination;
+        var shipment = CreateRequest();
+        shipment.ServiceLevel = service;
+        shipment.RecipientCountry = destination;
+        // Supply all unrelated international prerequisites so product admission is tested.
+        shipment.OriginZipCode = "11511";
+        shipment.RecipientZipCode = "10001";
+        shipment.OriginStateOrProvinceCode = "C";
+        shipment.RecipientStateOrProvinceCode = "NY";
+        shipment.DeclaredValue = 25;
+
+        var quoteResult = await adapter.GetQuoteAsync(quote, Credentials());
+        var createResult = await adapter.CreateShipmentAsync(shipment, Credentials());
+
+        Assert.False(quoteResult.Success);
+        Assert.Equal("ARAMEX_SERVICE_LEVEL_UNSUPPORTED", quoteResult.ErrorCode);
+        Assert.Empty(quoteResult.Quotes);
+        Assert.False(createResult.Success);
+        Assert.Equal("ARAMEX_REQUEST_CONTRACT_INVALID", createResult.ErrorCode);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Theory]
+    [InlineData("standard", "EG", "DOM", "OND")]
+    [InlineData(" STANDARD ", "eg", "DOM", "OND")]
+    [InlineData(null, "EG", "DOM", "OND")]
+    [InlineData("international", "US", "EXP", "PPX")]
+    [InlineData(null, "US", "EXP", "PPX")]
+    [InlineData("economy", "US", "EXP", "EPX")]
+    public async Task Quote_ReturnsOnlyProviderAmountForCanonicalProductWithoutInventedPromises(
+        string? service, string destination, string group, string product)
+    {
+        var handler = new RecordingHandler("""{"HasErrors":false,"TotalAmount":{"Value":12.50,"CurrencyCode":" usd "}}""");
+        var request = QuoteRequest();
+        request.ServiceLevel = service;
+        request.DestinationCountry = destination;
+        var result = await CreateAdapter(handler).GetQuoteAsync(request, Credentials());
+
+        Assert.True(result.Success);
+        var quote = Assert.Single(result.Quotes);
+        Assert.Equal(12.50m, quote.Cost);
+        Assert.Equal("USD", quote.Currency);
+        Assert.Contains(product, quote.ServiceName, StringComparison.Ordinal);
+        Assert.Equal(0, quote.EstimatedDeliveryDaysMin);
+        Assert.Equal(0, quote.EstimatedDeliveryDaysMax);
+        Assert.False(quote.SupportsCod);
+        using var body = JsonDocument.Parse(handler.RequestBody!);
+        var details = body.RootElement.GetProperty("ShipmentDetails");
+        Assert.Equal(group, details.GetProperty("ProductGroup").GetString());
+        Assert.Equal(product, details.GetProperty("ProductType").GetString());
+        Assert.Equal("P", details.GetProperty("PaymentType").GetString());
+        Assert.False(details.TryGetProperty("Services", out _));
+        Assert.False(details.TryGetProperty("CashOnDeliveryAmount", out _));
+    }
+
+    [Fact]
+    public void ServiceCatalog_DoesNotAdvertiseDuplicateExpressProductOrTransitGuarantees()
+    {
+        var levels = CreateAdapter(new RecordingHandler("{}")).GetSupportedServiceLevels();
+        Assert.Equal(new[] { "standard", "international", "economy" }, levels.Select(l => l.Code));
+        Assert.All(levels, level =>
+        {
+            Assert.Equal(0, level.TypicalDaysMin);
+            Assert.Equal(0, level.TypicalDaysMax);
+        });
+    }
+
+    [Theory]
+    [InlineData("{\"CurrencyCode\":\"USD\"}")]
+    [InlineData("{\"Value\":-1,\"CurrencyCode\":\"USD\"}")]
+    [InlineData("{\"Value\":12.50,\"CurrencyCode\":\"UNKNOWN\"}")]
+    public async Task Quote_InvalidProviderMoneyCannotInventAFreeRateOrCurrency(string amount)
+    {
+        var response = $$"""{"HasErrors":false,"TotalAmount":{{amount}}}""";
+        var result = await CreateAdapter(new RecordingHandler(response)).GetQuoteAsync(QuoteRequest(), Credentials());
+
+        Assert.False(result.Success);
+        Assert.Equal("ARAMEX_RATE_RESPONSE_INVALID", result.ErrorCode);
+        Assert.Empty(result.Quotes);
+    }
+
+    private static object TrackingUpdate(string? waybill, string? timestamp, string? zone = null, string code = "SH007") =>
+        new { WaybillNumber = waybill, UpdateCode = code, UpdateDateTime = timestamp, UpdateTimeZone = zone };
+
+    private static string TrackingResponse(params object[] updates) => JsonSerializer.Serialize(new
+    {
+        HasErrors = false,
+        TrackingResults = new[] { new { Key = "1234567890", Value = updates } }
+    });
+
+    private static ShippingQuoteRequest QuoteRequest() => new()
+    {
+        OriginCity = "Cairo", OriginCountry = "EG", DestinationCity = "Giza", DestinationCountry = "EG",
+        WeightKg = 1, PackageCount = 1, ServiceLevel = "standard"
+    };
+
     private static AramexAdapter CreateAdapter(RecordingHandler handler)
     {
         return new AramexAdapter(
@@ -324,7 +653,7 @@ public sealed class AramexOfficialContractCompatibilityTests
         WeightKg = 1,
         PackageCount = 1,
         PackageDescription = "Clothes",
-        ServiceLevel = "express",
+        ServiceLevel = "standard",
         Currency = "EGP"
     };
 

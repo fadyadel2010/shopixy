@@ -33,7 +33,7 @@ import { useNavigate } from 'react-router-dom'
 import {
     Settings, Truck, Package, Plus, RefreshCw, Activity,
     AlertCircle, CheckCircle, ArrowRight, ChevronDown, ChevronUp,
-    Search, Filter, Eye
+    Eye
 } from 'lucide-react'
 
 import { useSettings } from '../../../contexts/SettingsContext'
@@ -60,7 +60,6 @@ export default function ShippingSetupPage() {
     const navigate = useNavigate()
     const { confirm } = useConfirmDialog()
     const { formatCurrency, settings } = useSettings()
-    const isRTL = i18n.language === 'ar'
 
     // TABS STATE
     const [activeTab, setActiveTab] = useState('configuration')
@@ -88,7 +87,7 @@ export default function ShippingSetupPage() {
     } = useShippingOptionActions()
 
     // Shipments Data
-    const [shipmentFilters, setShipmentFilters] = useState({})
+    const [shipmentFilters] = useState({})
     const {
         shipments,
         pagination,
@@ -416,8 +415,8 @@ export default function ShippingSetupPage() {
 // CONFIGURATION TAB
 // ═══════════════════════════════════════════════════════════════
 function ConfigurationTab({
-    carriers, carriersLoading, carriersError,
-    options, optionsLoading, optionsError,
+    carriers, carriersError,
+    options, optionsError,
     expandedSections, toggleSection,
     handleConfigureCarrier, refetchCarriers,
     openAddModal, openEditModal, handleDeleteOption, handleToggleOption,
@@ -636,7 +635,7 @@ function ConfigurationTab({
 // ═══════════════════════════════════════════════════════════════
 // SHIPMENTS TAB
 // ═══════════════════════════════════════════════════════════════
-function ShipmentsTab({ shipments, pagination, loading, error, goToPage, navigate, formatDate, formatCurrency, t }) {
+function ShipmentsTab({ shipments, pagination, loading, error, goToPage, navigate, formatDate, t }) {
     if (loading && shipments.length === 0) {
         return (
             <div className="flex items-center justify-center h-64">

@@ -1,5 +1,6 @@
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.DTOs.Customs;
+using System.Text.Json.Serialization;
 
 namespace PointOfSale.Infrastructure.Shipping;
 
@@ -115,6 +116,10 @@ public class ShippingQuoteRequest
     
     public decimal WeightKg { get; set; }
     public int PackageCount { get; set; } = 1;
+    // Actual package dimensions when required by the provider; never inferred from weight.
+    public decimal? LengthCm { get; set; }
+    public decimal? WidthCm { get; set; }
+    public decimal? HeightCm { get; set; }
     
     public bool IsCashOnDelivery { get; set; }
     public decimal? CodAmount { get; set; }
@@ -143,6 +148,9 @@ public class CreateShipmentRequest
     public string? OriginZipCode { get; set; }
     public required string OriginPhone { get; set; }
     public ShipmentOriginDto? Origin { get; set; }
+    public BostaPickupOrigin? BostaPickupOrigin { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public BostaNativeDestination? BostaDestination { get; set; }
     public IReadOnlyList<ResolvedProviderGeography> ResolvedOriginProviderGeography { get; set; } =
         Array.Empty<ResolvedProviderGeography>();
     
@@ -167,6 +175,9 @@ public class CreateShipmentRequest
     public decimal WeightKg { get; set; }
     public int PackageCount { get; set; } = 1;
     public string? PackageDescription { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PackageItemCount { get; set; }
+    public string? PieceReference { get; set; }
     public CarrierNeutralCustomsDto? Customs { get; set; }
     public decimal? LengthCm { get; set; }
     public decimal? WidthCm { get; set; }
@@ -210,7 +221,21 @@ public sealed record ShipmentOriginDto(
     string ContactPhone,
     string Street,
     DateTime SnapshottedAtUtc,
-    int SnapshotVersion);
+    int SnapshotVersion)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PostalCode { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? AdministrativeAreaCode { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? TenantId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? OrderId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? ShipmentId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? CanonicalAddressEvidenceJson { get; init; }
+}
 
 public sealed record ResolvedProviderGeography(
     string ProviderGeographicType,
@@ -318,10 +343,17 @@ public class CreateShipmentResult
 /// </summary>
 public class CancelShipmentResult
 {
+    // Legacy Success is retained for source compatibility only; it is never authority.
     public bool Success { get; set; }
+    public CarrierCancellationDisposition Disposition { get; set; } = CarrierCancellationDisposition.Unknown;
+    public string? TargetTrackingNumber { get; set; }
+    public string? EvidenceReference { get; set; }
+    public string? EvidenceHash { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
 }
+
+public enum CarrierCancellationDisposition { Confirmed, Pending, Rejected, Unsupported, Unknown }
 
 /// <summary>
 /// Shipment tracking result.
@@ -371,6 +403,7 @@ public class TrackingEvent
 /// </summary>
 public class CarrierValidationResult
 {
+    public DateTime? TestedAtUtc { get; set; }
     public bool Success { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
@@ -398,6 +431,7 @@ public class ServiceLevelInfo
 /// </summary>
 public class WebhookParseResult
 {
+    public CarrierMoneyObservation? MoneyObservation { get; set; }
     public required string TrackingNumber { get; set; }
     public required ShipmentStatus Status { get; set; }
     public string? StatusDescription { get; set; }
@@ -412,5 +446,10 @@ public class WebhookParseResult
     /// </summary>
     public string? RawPayload { get; set; }
 }
+
+/// <summary>Parsed provider facts only; authentication, currency and financial admission remain server authorities.</summary>
+public sealed record CarrierMoneyObservation(string DeliveryReference, int State, int DeliveryType,
+    DateTime ProviderEventAtUtc, decimal? Amount, string AmountCode, bool? ConfirmedDelivery,
+    string Contract, string Fingerprint);
 
 #endregion

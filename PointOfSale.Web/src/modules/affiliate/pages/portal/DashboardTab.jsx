@@ -6,8 +6,8 @@ import { motion } from 'framer-motion'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import affiliateApi from '../../../../services/affiliateApi'
 import {
-    DollarSign, TrendingUp, ShoppingBag, MousePointerClick,
-    ArrowUpRight, ArrowDownRight, Link2, CheckCircle2
+    DollarSign, TrendingUp, ShoppingBag,
+    ArrowUpRight, ArrowDownRight, CheckCircle2
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 

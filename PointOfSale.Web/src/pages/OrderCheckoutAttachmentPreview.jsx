@@ -1,28 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { hasPosPermission } from '../auth/posPermissions'
+import { useAuthStore } from '../store/authStore'
+import { isPreviewableCheckoutImage } from './orderCheckoutImage'
 
 import {
     downloadAdminOrderCheckoutAttachment,
     getAdminOrderCheckoutAttachmentBlob,
 } from '../services/adminOrdersApi'
 
-const PREVIEWABLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
-
-export function isPreviewableCheckoutImage(attachment) {
-    const contentType = String(attachment?.contentType || '').split(';', 1)[0].trim().toLowerCase()
-    return String(attachment?.mediaType || '').toLowerCase() === 'image'
-        && PREVIEWABLE_IMAGE_TYPES.has(contentType)
-}
-
 export default function OrderCheckoutAttachmentPreview({ orderId, fieldLabel, attachment }) {
     const { t } = useTranslation()
+    const canDownload = useAuthStore((state) => hasPosPermission(state.user, 'storefront.orders.attachments.download'))
     const previewable = isPreviewableCheckoutImage(attachment)
     const [previewAttempt, setPreviewAttempt] = useState(0)
     const [preview, setPreview] = useState({ status: previewable ? 'loading' : 'not-applicable', url: null })
     const [downloadState, setDownloadState] = useState({ status: 'idle', message: null })
 
     useEffect(() => {
-        if (!previewable) {
+        if (!canDownload || !previewable) {
             setPreview({ status: 'not-applicable', url: null })
             return undefined
         }
@@ -48,9 +44,10 @@ export default function OrderCheckoutAttachmentPreview({ orderId, fieldLabel, at
             controller.abort()
             if (objectUrl) window.URL.revokeObjectURL(objectUrl)
         }
-    }, [attachment.attachmentId, orderId, previewAttempt, previewable])
+    }, [attachment.attachmentId, canDownload, orderId, previewAttempt, previewable])
 
     const download = async () => {
+        if (!canDownload) return
         setDownloadState({ status: 'loading', message: null })
         try {
             await downloadAdminOrderCheckoutAttachment(orderId, attachment.attachmentId, attachment.fileName)
@@ -62,6 +59,8 @@ export default function OrderCheckoutAttachmentPreview({ orderId, fieldLabel, at
             })
         }
     }
+
+    if (!canDownload) return null
 
     return (
         <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">

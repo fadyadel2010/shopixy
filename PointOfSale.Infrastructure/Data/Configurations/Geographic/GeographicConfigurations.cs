@@ -438,6 +438,8 @@ public sealed class AddressAdmissionEvidenceConfiguration : IEntityTypeConfigura
         builder.HasKey(x => x.Id);
         builder.Property(x => x.OwnerDomain).HasConversion<string>().HasMaxLength(64).IsRequired();
         builder.Property(x => x.AddressFingerprintSha256).IsRequired().HasMaxLength(64).IsFixedLength();
+        builder.Property(x => x.PostalCode).HasMaxLength(32);
+        builder.Property(x => x.CanonicalAddressEvidenceJson).HasColumnType("text");
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(x => x.FailureCode).HasMaxLength(128);
         builder.Property(x => x.NormalizationRuleVersion).HasMaxLength(128);

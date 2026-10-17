@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isStoreSlugFormatValid, normalizeStoreSlug } from './Register'
+import { isStoreSlugFormatValid, normalizeStoreSlug } from './storeSlug'
 
 describe('registration store slug contract', () => {
     it.each([

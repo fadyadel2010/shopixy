@@ -48,6 +48,7 @@ const StatusHeader: React.FC<StatusHeaderProps> = ({
     estimatedDelivery,
 }) => {
     // Get status config
+    const { t, language } = useTranslation();
     const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG];
 
     // Determine header style based on status
@@ -84,25 +85,25 @@ const StatusHeader: React.FC<StatusHeaderProps> = ({
 
                 {/* Status Text */}
                 <div className="flex-1">
-                    <p className="text-sm text-muted mb-1">Order #{orderNumber}</p>
+                    <p className="text-sm text-muted mb-1">{t('order.tracking.number', { number: orderNumber })}</p>
                     <h1
                         id="tracking-heading"
                         className={`text-xl font-bold ${textColor}`}
                         tabIndex={-1}
                     >
-                        {config?.label || 'Processing'}
+                        {config ? t(`order.tracking.labels.${status}`) : t('order.processing')}
                     </h1>
                     <p className="text-sm text-muted mt-1">
-                        {statusText}
+                        {config && statusText === config.description ? t(`order.tracking.descriptions.${status}`) : statusText}
                     </p>
                 </div>
 
                 {/* Estimated Delivery */}
                 {estimatedDelivery && !isDelivered && !isCancelled && (
                     <div className="text-right hidden sm:block">
-                        <p className="text-xs text-muted">Estimated Delivery</p>
+                        <p className="text-xs text-muted">{t('order.tracking.estimated')}</p>
                         <p className="text-sm font-medium text-text">
-                            {new Date(estimatedDelivery).toLocaleDateString('en-US', {
+                            {new Date(estimatedDelivery).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', {
                                 month: 'short',
                                 day: 'numeric',
                             })}
@@ -114,9 +115,9 @@ const StatusHeader: React.FC<StatusHeaderProps> = ({
             {/* Mobile Estimated Delivery */}
             {estimatedDelivery && !isDelivered && !isCancelled && (
                 <div className="mt-4 pt-4 border-t border-current/10 sm:hidden">
-                    <p className="text-xs text-muted">Estimated Delivery</p>
+                    <p className="text-xs text-muted">{t('order.tracking.estimated')}</p>
                     <p className="text-sm font-medium text-text">
-                        {new Date(estimatedDelivery).toLocaleDateString('en-US', {
+                        {new Date(estimatedDelivery).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', {
                             weekday: 'long',
                             month: 'long',
                             day: 'numeric',
@@ -594,6 +595,7 @@ const RefundsAndReturnsSection: React.FC<{ refunds: OrderRefundDto[] }> = ({ ref
 // ============================================================================
 
 export const OrderTrackingPage: React.FC = () => {
+    const { t } = useTranslation();
     const { orderId } = useParams<{ orderId: string }>();
     const navigate = useAffiliateNavigate();
     const { order, status, timeline, isLoading, error, refetch } = useOrder(orderId);
@@ -647,7 +649,7 @@ export const OrderTrackingPage: React.FC = () => {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                         </svg>
-                        Back
+                        {t('common.back')}
                     </button>
                 </nav>
 
@@ -664,7 +666,7 @@ export const OrderTrackingPage: React.FC = () => {
                     className="my-8 p-6 bg-muted/5 border border-muted/10 rounded-xl"
                     aria-labelledby="timeline-heading"
                 >
-                    <h2 id="timeline-heading" className="sr-only">Order Progress Timeline</h2>
+                    <h2 id="timeline-heading" className="sr-only">{t('order.tracking.timeline')}</h2>
                     <OrderStatusTimeline steps={timeline} />
                 </section>
 
@@ -714,7 +716,7 @@ export const OrderTrackingPage: React.FC = () => {
                                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                             />
                         </svg>
-                        Refresh Status
+                        {t('order.tracking.refresh')}
                     </button>
 
                     <button
@@ -727,13 +729,13 @@ export const OrderTrackingPage: React.FC = () => {
                             focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2
                         "
                     >
-                        Continue Shopping
+                        {t('order.continueShopping')}
                     </button>
                 </div>
 
                 {/* Help Section */}
                 <div className="mt-8 p-5 bg-muted/5 border border-muted/10 rounded-xl">
-                    <h2 className="font-semibold text-text mb-3">Need Help?</h2>
+                    <h2 className="font-semibold text-text mb-3">{t('order.tracking.help')}</h2>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                         <a
                             href="/faq"
@@ -747,7 +749,7 @@ export const OrderTrackingPage: React.FC = () => {
                                     d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                                 />
                             </svg>
-                            Frequently Asked Questions
+                            {t('order.tracking.faq')}
                         </a>
                         <a
                             href="/contact"
@@ -761,7 +763,7 @@ export const OrderTrackingPage: React.FC = () => {
                                     d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                                 />
                             </svg>
-                            Contact Support
+                            {t('order.tracking.support')}
                         </a>
                     </div>
                 </div>

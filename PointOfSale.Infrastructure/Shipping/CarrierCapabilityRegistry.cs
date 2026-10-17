@@ -102,14 +102,17 @@ public sealed class CarrierCapabilityRegistry : ICarrierCapabilityRegistry
                 CarrierProductionCapability.Partial,
                 new[]
                 {
-                    new CarrierCredentialFieldDescriptor("apiKey", "API key / token", true, true, "ApiKey")
+                    new CarrierCredentialFieldDescriptor("apiKey", "API key / token", true, true, "ApiKey"),
+                    new CarrierCredentialFieldDescriptor("webhookSecret", "Webhook Authorization header value", true, false, "WebhookSecret"),
+                    new CarrierCredentialFieldDescriptor("codCollectionCurrency", "COD collection currency", false, false, "ExtraConfig.codCollectionCurrency"),
+                    new CarrierCredentialFieldDescriptor("businessLocationId", "Bosta business location ID", false, false, "ExtraConfig.businessLocationId")
                 },
                 EnvironmentSupported: true,
                 ConnectionTestSupported: true,
                 CarrierConnectionTestMode.Remote,
                 serviceLevels,
                 RequiresOriginReadiness: false,
-                RequiresGeographyMapping: true,
+                RequiresGeographyMapping: false,
                 SupportsWebhooks: true,
                 new[] { "shared_secret" }),
 
@@ -119,8 +122,8 @@ public sealed class CarrierCapabilityRegistry : ICarrierCapabilityRegistry
                 CarrierProductionCapability.Partial,
                 new[]
                 {
-                    new CarrierCredentialFieldDescriptor("apiKey", "Username / API key", false, true, "ApiKey"),
-                    new CarrierCredentialFieldDescriptor("apiSecret", "Password / API secret", true, true, "ApiSecret"),
+                    new CarrierCredentialFieldDescriptor("apiKey", "Aramex username", true, true, "ApiKey"),
+                    new CarrierCredentialFieldDescriptor("apiSecret", "Aramex password", true, true, "ApiSecret"),
                     new CarrierCredentialFieldDescriptor("accountId", "Account number", false, true, "AccountId"),
                     new CarrierCredentialFieldDescriptor("accountPin", "Account PIN", true, true, "ExtraConfig.AccountPin"),
                     new CarrierCredentialFieldDescriptor("accountEntity", "Account entity", false, true, "ExtraConfig.AccountEntity"),
@@ -141,13 +144,13 @@ public sealed class CarrierCapabilityRegistry : ICarrierCapabilityRegistry
                 CarrierProductionCapability.Partial,
                 new[]
                 {
-                    new CarrierCredentialFieldDescriptor("apiKey", "API key", false, true, "ApiKey"),
-                    new CarrierCredentialFieldDescriptor("apiSecret", "API secret", true, true, "ApiSecret"),
-                    new CarrierCredentialFieldDescriptor("accountId", "Account ID", false, true, "AccountId")
+                    new CarrierCredentialFieldDescriptor("apiKey", "MyDHL Basic Auth username / API key", true, true, "ApiKey"),
+                    new CarrierCredentialFieldDescriptor("apiSecret", "MyDHL Basic Auth password / API secret", true, true, "ApiSecret"),
+                    new CarrierCredentialFieldDescriptor("accountId", "DHL Express account number (operations)", false, false, "AccountId")
                 },
                 EnvironmentSupported: true,
                 ConnectionTestSupported: true,
-                CarrierConnectionTestMode.LocalOnly,
+                CarrierConnectionTestMode.Remote,
                 serviceLevels,
                 RequiresOriginReadiness: false,
                 RequiresGeographyMapping: true,
@@ -158,10 +161,14 @@ public sealed class CarrierCapabilityRegistry : ICarrierCapabilityRegistry
                 CarrierCodes.Mylerz,
                 displayName,
                 CarrierProductionCapability.Unavailable,
-                Array.Empty<CarrierCredentialFieldDescriptor>(),
-                EnvironmentSupported: true,
-                ConnectionTestSupported: false,
-                CarrierConnectionTestMode.Unsupported,
+                new[]
+                {
+                    new CarrierCredentialFieldDescriptor("apiKey", "Mylerz username", true, true, "ApiKey"),
+                    new CarrierCredentialFieldDescriptor("apiSecret", "Mylerz password", true, true, "ApiSecret")
+                },
+                EnvironmentSupported: false,
+                ConnectionTestSupported: true,
+                CarrierConnectionTestMode.Remote,
                 serviceLevels,
                 RequiresOriginReadiness: false,
                 RequiresGeographyMapping: true,
@@ -172,10 +179,15 @@ public sealed class CarrierCapabilityRegistry : ICarrierCapabilityRegistry
                 CarrierCodes.FedEx,
                 displayName,
                 CarrierProductionCapability.NotCertified,
-                Array.Empty<CarrierCredentialFieldDescriptor>(),
+                new[]
+                {
+                    new CarrierCredentialFieldDescriptor("apiKey", "Project client ID", true, true, "ApiKey"),
+                    new CarrierCredentialFieldDescriptor("apiSecret", "Project client secret", true, true, "ApiSecret"),
+                    new CarrierCredentialFieldDescriptor("accountId", "FedEx account number", false, true, "AccountId")
+                },
                 EnvironmentSupported: true,
-                ConnectionTestSupported: false,
-                CarrierConnectionTestMode.Unsupported,
+                ConnectionTestSupported: true,
+                CarrierConnectionTestMode.Remote,
                 serviceLevels,
                 RequiresOriginReadiness: false,
                 RequiresGeographyMapping: true,

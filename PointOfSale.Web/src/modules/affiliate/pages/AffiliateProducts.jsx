@@ -79,7 +79,7 @@ export default function AffiliateProducts() {
     const [error, setError] = useState(false)
     const [managing, setManaging] = useState(null)
     const [manageBusy, setManageBusy] = useState(false)
-    const [manageDirty, setManageDirty] = useState(false)
+    const [, setManageDirty] = useState(false)
     const requestSeq = useRef(0)
     const manageDialogRef = useRef(null)
     const manageCloseButtonRef = useRef(null)

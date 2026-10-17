@@ -25,6 +25,8 @@ import { selectBehavior, useStoreConfigStore } from '@/store';
 import { CouponInput } from './CouponInput';
 import { useIsAffiliateMode } from '@/contexts/AffiliateContext';
 import { canEnterCheckout } from '@/features/checkout/cartCheckoutAdmission';
+import { checkoutNavigationTarget } from '@/features/checkout/storefrontTenantNavigation';
+import { useCartStore, selectCartIsConfirmed } from '@/store/cartStore';
 
 interface CartSummaryProps {
     /** Cart subtotal (before discount) */
@@ -81,6 +83,9 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
     isClearing = false,
 }) => {
     const { t } = useTranslation();
+    const cartIsConfirmed = useCartStore(selectCartIsConfirmed);
+    const requiresCartRefresh = useCartStore(state => state.requiresRefresh);
+    const isRefreshingCart = useCartStore(state => state.isLoading);
 
     // Auth state for checkout guard
     const isAuthenticated = useAuthStore(selectIsAuthenticated);
@@ -99,12 +104,8 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
      * Handle checkout click
      */
     const handleCheckoutClick = () => {
-        if (canProceedToCheckout) {
-            window.location.href = '/checkout';
-        } else {
-            // Redirect to login with return URL
-            window.location.href = '/login?return=' + encodeURIComponent('/checkout');
-        }
+        if (!cartIsConfirmed) return;
+        window.location.href = checkoutNavigationTarget(canProceedToCheckout, window.location.search);
     };
 
     return (
@@ -232,7 +233,7 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
                 variant="primary"
                 size="lg"
                 fullWidth
-                disabled={isEmpty || (isAuthUncertain && !canCheckoutAsGuest)}
+                disabled={isEmpty || !cartIsConfirmed || (isAuthUncertain && !canCheckoutAsGuest)}
                 onClick={handleCheckoutClick}
             >
                 {isAuthUncertain && !canCheckoutAsGuest ? (
@@ -255,6 +256,15 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
                     </>
                 )}
             </Button>
+
+            {requiresCartRefresh && (
+                <div className="mt-3 text-sm text-amber-800" role="status">
+                    <p>{t('cart.refreshRequired')}</p>
+                    <button type="button" disabled={isRefreshingCart} onClick={() => void useCartStore.getState().fetchCart()} className="mt-2 underline disabled:opacity-50">
+                        {t('common.retry')}
+                    </button>
+                </div>
+            )}
 
             {/* Guest user message */}
             {!isAuthenticated && !isAuthUncertain && !canCheckoutAsGuest && !isEmpty && (

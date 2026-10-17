@@ -42,10 +42,12 @@ public abstract class BaseModelAdapter : IModelAdapter
         
         try
         {
-            if (!IsEnabled || string.IsNullOrEmpty(ApiKey))
+            if (!IsEnabled || !AIProviderTransport.ValidConfiguration(Endpoint, ModelId, ApiKey, TimeoutMs / 1000, MaxTokens, Temperature))
             {
                 return ModelResponse.CreateFailure("Model not configured", 0, ModelId);
             }
+            if (!AIProviderTransport.WithinPromptBudget(systemPrompt, userPrompt))
+                return ModelResponse.CreateFailure("Context limit exceeded", 0, ModelId);
             
             // Build request body (OpenAI-compatible format)
             var requestBody = new
@@ -78,15 +80,13 @@ public abstract class BaseModelAdapter : IModelAdapter
             cts.CancelAfter(TimeSpan.FromMilliseconds(TimeoutMs));
             
             // Send request
-            var response = await HttpClient.SendAsync(request, cts.Token);
+            using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             stopwatch.Stop();
             
             if (!response.IsSuccessStatusCode)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
                 Logger.LogWarning(
-                    "Model request failed | Model: {Model} | Status: {Status} | Error: {Error}",
-                    ModelId, response.StatusCode, errorBody);
+                    "Model request failed | Model: {Model} | Status: {Status}", ModelId, response.StatusCode);
                     
                 return ModelResponse.CreateFailure(
                     $"HTTP {(int)response.StatusCode}",
@@ -95,7 +95,7 @@ public abstract class BaseModelAdapter : IModelAdapter
             }
             
             // Parse response
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseBody = await AIProviderTransport.ReadBoundedAsync(response.Content, cts.Token);
             var content = ParseResponse(responseBody, out var tokensUsed);
             
             if (string.IsNullOrEmpty(content))
@@ -116,6 +116,7 @@ public abstract class BaseModelAdapter : IModelAdapter
                 tokensUsed,
                 ModelId);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (OperationCanceledException)
         {
             stopwatch.Stop();
@@ -176,6 +177,7 @@ public abstract class BaseModelAdapter : IModelAdapter
                 choices.GetArrayLength() > 0)
             {
                 var firstChoice = choices[0];
+                if (firstChoice.TryGetProperty("finish_reason", out var finish) && finish.GetString() is "length" or "content_filter") return null;
                 if (firstChoice.TryGetProperty("message", out var message) &&
                     message.TryGetProperty("content", out var content))
                 {

@@ -92,7 +92,7 @@ export default function BarcodePrinting() {
     const [products, setProducts] = useState([])
     const [printQueue, setPrintQueue] = useState([])
     const [loading, setLoading] = useState(false)
-    const [searchTerm, setSearchTerm] = useState('')
+    const [searchTerm] = useState('')
     const [settings, setSettings] = useState({ currencySymbol: '$' })
     const [selectedProducts, setSelectedProducts] = useState(new Set())
 

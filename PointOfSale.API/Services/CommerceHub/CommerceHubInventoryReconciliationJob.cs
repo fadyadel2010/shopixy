@@ -93,6 +93,10 @@ public sealed class CommerceHubInventoryReconciliationJob
                 reservation.ExpiresAtUtc.HasValue &&
                 reservation.ExpiresAtUtc.Value <= nowUtc &&
                 reservation.ReservedQuantity > reservation.CommittedQuantity + reservation.ReleasedQuantity &&
+                // The shared reservation table also holds Storefront orders.
+                // Their payment/fulfillment-aware cleanup owns their expiry;
+                // a CommerceHub worker must never release them by TTL alone.
+                _dbContext.CommerceHubMarketplaceOrders.Any(order => order.Id == reservation.OrderId && !order.IsDeleted) &&
                 !_dbContext.CommerceHubSubOrderItems.Any(item =>
                     !item.IsDeleted &&
                     !item.SubOrder.IsDeleted &&

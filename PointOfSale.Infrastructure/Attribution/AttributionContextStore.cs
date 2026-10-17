@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -100,7 +102,11 @@ public class AttributionContextStore : IAttributionContextStore
         {
             // Store in MongoDB (append-only)
             var document = MapToDocument(context);
-            await _collection.InsertOneAsync(document, cancellationToken: cancellationToken);
+            // Stable Mongo identity permits attribution-stage retries without duplicate touchpoints.
+            if (context.SourceEventId.HasValue)
+                document.Id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{context.TenantId:D}:{context.SourceEventId:D}"))[..12]).ToLowerInvariant();
+            try { await _collection.InsertOneAsync(document, cancellationToken: cancellationToken); }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey) { }
 
             // Store in Redis (for quick lookup)
             var db = _redis.GetDatabase();
@@ -123,6 +129,7 @@ public class AttributionContextStore : IAttributionContextStore
             _logger.LogWarning(ex,
                 "[Attribution] Failed to store context | TenantId: {TenantId} | SessionId: {SessionId}",
                 context.TenantId, context.SessionId);
+            throw;
         }
     }
 
@@ -247,7 +254,7 @@ public class AttributionContextStore : IAttributionContextStore
             _logger.LogWarning(ex,
                 "[Attribution] Failed to get all contexts | TenantId: {TenantId} | SessionId: {SessionId}",
                 tenantId, sessionId);
-            return new List<AttributionContext>();
+            throw;
         }
     }
 

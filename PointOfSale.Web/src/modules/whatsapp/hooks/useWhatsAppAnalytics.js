@@ -21,6 +21,7 @@ export function useWhatsAppAnalytics() {
     const isMountedRef = useRef(true)
 
     useEffect(() => {
+        isMountedRef.current = true
         return () => {
             isMountedRef.current = false
             pendingRequestsRef.current = 0
@@ -83,7 +84,12 @@ export function useWhatsAppAnalytics() {
             if (dateTo) params.append('to', dateTo)
 
             const response = await api.get(`/admin/whatsapp/analytics?${params.toString()}`)
-            return response.data
+            return {
+                sentMessages: response.data.totalMessagesSent,
+                failedMessages: response.data.totalMessagesFailed,
+                successRate: response.data.successRate,
+                messagesByType: response.data.messagesByType,
+            }
         } catch (err) {
             const msg = err.response?.data?.message || 'Failed to fetch analytics'
             commitAnalyticsError(msg, requestId)
@@ -100,14 +106,25 @@ export function useWhatsAppAnalytics() {
             params.append('page', page)
             params.append('pageSize', pageSize)
 
-            if (filters.status) params.append('status', filters.status)
-            if (filters.type) params.append('type', filters.type)
+            if (filters.status) params.append('status', filters.status.toUpperCase())
+            if (filters.type) params.append('messageType', filters.type.toLowerCase() === 'orderconfirmation' ? 'ORDER_CONFIRMATION' : filters.type.toUpperCase())
             if (filters.phone) params.append('phone', filters.phone)
             if (filters.dateFrom) params.append('from', filters.dateFrom)
             if (filters.dateTo) params.append('to', filters.dateTo)
 
             const response = await api.get(`/admin/whatsapp/logs?${params.toString()}`)
-            return response.data
+            const data = response.data
+            return {
+                ...data,
+                totalPages: Math.ceil(data.totalCount / (data.pageSize || pageSize)),
+                items: data.items.map(item => ({
+                    ...item,
+                    phoneNumber: item.targetPhone,
+                    type: ({ OTP: 'Otp', ORDERCONFIRMATION: 'OrderConfirmation' })[item.messageType?.replaceAll('_', '').toUpperCase()] || item.messageType,
+                    status: ({ SENT: 'Sent', FAILED: 'Failed', DELIVERED: 'Delivered' })[item.status?.toUpperCase()] || item.status,
+                    errorMessage: item.failureReason,
+                })),
+            }
         } catch (err) {
             const msg = err.response?.data?.message || 'Failed to fetch message logs'
             commitLogsError(msg, requestId)

@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { HomepageImageField, isValidImageUrl } from './HomepageImageField'
+import { HomepageImageField } from './HomepageImageField'
+import { isValidImageUrl } from './homepageImageUrl'
 import en from '../../../../i18n/locales/en.json'
 import ar from '../../../../i18n/locales/ar.json'
+import { readTranslation } from '../../../../tests/readTranslation'
 
 const api = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn(), language: 'en' }))
 vi.mock('../../../../services/api', () => ({ default: api }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({
     i18n: { language: api.language },
-    t: (key: string) => key.split('.').reduce((value: any, part) => value?.[part], api.language === 'ar' ? ar : en) || key,
+    t: (key: string) => readTranslation(api.language === 'ar' ? ar : en, key),
 }) }))
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); api.language = 'en' })

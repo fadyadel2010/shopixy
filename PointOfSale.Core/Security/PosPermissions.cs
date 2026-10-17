@@ -34,6 +34,7 @@ public static class PosPermissions
     public const string ReportsOperationalView = "reports.operational.view";
     public const string ReportsFinancialView = "reports.financial.view";
     public const string StorefrontOrdersView = "storefront.orders.view";
+    public const string StorefrontOrderAttachmentsDownload = "storefront.orders.attachments.download";
     public const string StorefrontOrdersManage = "storefront.orders.manage";
     public const string StorefrontPaymentsView = "storefront.payments.view";
     public const string StorefrontPaymentsManage = "storefront.payments.manage";
@@ -73,7 +74,7 @@ public static class PosPermissions
         PurchasesView, PurchasesManage, PurchasesReturn,
         FinanceView, FinanceOperate, FinanceAdmin, FinanceInitialize,
         ReportsOperationalView, ReportsFinancialView,
-        StorefrontOrdersView, StorefrontOrdersManage,
+        StorefrontOrdersView, StorefrontOrdersManage, StorefrontOrderAttachmentsDownload,
         StorefrontPaymentsView, StorefrontPaymentsManage, StorefrontRefundsManage,
         StorefrontPromotionsManage,
         StorefrontAnalyticsView, StorefrontAnalyticsConfigure,

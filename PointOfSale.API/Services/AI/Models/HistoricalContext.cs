@@ -60,19 +60,19 @@ public class HistoricalContext
     /// Whether shipping integration was enabled when order was created.
     /// </summary>
     [JsonPropertyName("shippingIntegrationEnabled")]
-    public bool ShippingIntegrationEnabledAtCreation { get; set; } = true;
+    public bool? ShippingIntegrationEnabledAtCreation { get; set; }
 
     /// <summary>
     /// Whether payment integration was enabled when order was created.
     /// </summary>
     [JsonPropertyName("paymentIntegrationEnabled")]
-    public bool PaymentIntegrationEnabledAtCreation { get; set; } = true;
+    public bool? PaymentIntegrationEnabledAtCreation { get; set; }
 
     /// <summary>
     /// Whether event tracking was enabled when order was created.
     /// </summary>
     [JsonPropertyName("eventTrackingEnabled")]
-    public bool EventTrackingEnabledAtCreation { get; set; } = true;
+    public bool? EventTrackingEnabledAtCreation { get; set; }
 
     /// <summary>
     /// Whether the event trail is incomplete.

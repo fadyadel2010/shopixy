@@ -40,6 +40,7 @@ public class StorefrontSmartOffersController : ControllerBase
     }
 
     [HttpGet]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [EnableRateLimiting("PublicReadRateLimit")]
     [ProducesResponseType(typeof(List<StorefrontSmartOfferDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
@@ -55,6 +56,7 @@ public class StorefrontSmartOffersController : ControllerBase
 
         try
         {
+            var now = DateTime.UtcNow;
             var offers = await _dbContext.SmartOffers
                 .AsNoTracking()
                 .Where(x => 
@@ -67,8 +69,14 @@ public class StorefrontSmartOffersController : ControllerBase
                             c.Id == x.GeneratedCouponId && 
                             c.TenantId == tenantValidation.TenantId.Value &&
                             !c.IsDeleted && 
-                            c.IsActive))
+                             c.IsActive &&
+                             (!c.StartDate.HasValue || c.StartDate <= now) &&
+                             (!c.EndDate.HasValue || c.EndDate >= now) &&
+                             (!c.MaxUsage.HasValue ||
+                                 _dbContext.CouponUsages.Count(u => u.TenantId == c.TenantId && u.CouponId == c.Id && !u.IsDeleted) +
+                                 _dbContext.CouponReservations.Count(r => r.TenantId == c.TenantId && r.CouponId == c.Id && !r.IsDeleted && r.Status == CouponReservationStatus.Reserved) < c.MaxUsage.Value)))
                 .OrderByDescending(x => x.Priority)
+                .ThenBy(x => x.Id)
                 .Select(x => new StorefrontSmartOfferDto
                 {
                     Id = x.Id,
@@ -157,6 +165,7 @@ public class StorefrontSmartOffersController : ControllerBase
                     traceId));
             }
 
+            var now = DateTime.UtcNow;
             var couponIsActive = await _dbContext.Coupons
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -164,7 +173,12 @@ public class StorefrontSmartOffersController : ControllerBase
                     x.TenantId == tenantValidation.TenantId.Value &&
                     x.Id == offer.CouponId &&
                     !x.IsDeleted &&
-                    x.IsActive,
+                    x.IsActive &&
+                    (!x.StartDate.HasValue || x.StartDate <= now) &&
+                    (!x.EndDate.HasValue || x.EndDate >= now) &&
+                    (!x.MaxUsage.HasValue ||
+                        _dbContext.CouponUsages.Count(u => u.TenantId == x.TenantId && u.CouponId == x.Id && !u.IsDeleted) +
+                        _dbContext.CouponReservations.Count(r => r.TenantId == x.TenantId && r.CouponId == x.Id && !r.IsDeleted && r.Status == CouponReservationStatus.Reserved) < x.MaxUsage.Value),
                     cancellationToken);
 
             if (!couponIsActive)

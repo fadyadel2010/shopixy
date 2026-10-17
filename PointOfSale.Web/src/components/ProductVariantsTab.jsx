@@ -7,6 +7,7 @@ import VariantBulkActions from './VariantBulkActions'
 import VariantMatrixTable from './VariantMatrixTable'
 import { toProductAuthoringVariant } from '../utils/productAuthoringVariants'
 import { fallbackVariantSku, normalizeSkuPart, productSkuBase } from './productSku'
+import { containsNonAscii } from '../security/textCharacterPolicy'
 
 const SAFE_COMBINATION_LIMIT = 100
 const INFO_COMBINATION_LIMIT = 300
@@ -601,7 +602,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             setDeletedKeys(new Set())
             setSelectedKeys(new Set())
             setDefaultKey(currentDefault ? getCombinationKeyFromVariant(currentDefault) : null)
-        } catch (err) {
+        } catch {
             if (requestSequence !== fetchSequenceRef.current) {
                 return
             }
@@ -988,7 +989,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         // persisted product GUID (or a stable draft UUID) as the SKU namespace.
         // This also overrides a prefix-less custom pattern, so it cannot emit
         // the same bare candidate for several unrelated Arabic products.
-        if (/[^\x00-\x7F]/.test(productSkuPrefix) || (!normalizedProductName && !normalizeSkuPart(skuBuilder.prefix))) {
+        if (containsNonAscii(productSkuPrefix) || (!normalizedProductName && !normalizeSkuPart(skuBuilder.prefix))) {
             return fallbackVariantSku(productSkuBase(productId, skuDraftIdRef.current), index)
         }
         const prefix = normalizeSkuPart(skuBuilder.prefix || productSkuPrefix)
@@ -1163,7 +1164,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         return null
     }
 
-    const handleApplyBulkAction = async ({ type, value, warehouseId, reason }) => {
+    const handleApplyBulkAction = async ({ type, value }) => {
         setError('')
 
         const selectedRows = matrixRows.filter(row => selectedKeys.has(row.key))
@@ -1350,7 +1351,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                 try {
                     const response = await api.get(`/products/${productId}/variants/${row.id}/can-delete`)
                     return { row, data: response?.data }
-                } catch (preflightError) {
+                } catch {
                     // Fail closed: an unreadable protection state must not
                     // allow a potentially destructive save to proceed.
                     return { row, data: null, checkFailed: true }

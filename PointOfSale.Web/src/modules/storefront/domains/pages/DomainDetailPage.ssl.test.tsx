@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AuthoringButton, AuthoringEmptyState, AuthoringFeedback, AuthoringStatusBadge } from '../../authoringPlatform'
 
 const mockState = vi.hoisted(() => ({
     routeDomainId: '11111111-1111-1111-1111-111111111111',
@@ -37,16 +38,16 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('../../authoringPlatform', () => ({
-    AuthoringButton: ({ action, defaultLabel }: any) => action ? (
+    AuthoringButton: ({ action, defaultLabel }: Parameters<typeof AuthoringButton>[0]) => action ? (
         <button type="button" onClick={action.onClick} disabled={action.disabled || action.busy}>
             {action.label || defaultLabel}
         </button>
     ) : null,
     AuthoringConfirmDialog: () => null,
-    AuthoringEmptyState: ({ title }: any) => <section>{title}</section>,
-    AuthoringFeedback: ({ title, message }: any) => <section>{title}{message}</section>,
+    AuthoringEmptyState: ({ title }: Parameters<typeof AuthoringEmptyState>[0]) => <section>{title}</section>,
+    AuthoringFeedback: ({ title, message }: Parameters<typeof AuthoringFeedback>[0]) => <section>{title}{message}</section>,
     AuthoringLoadingState: () => <div>Loading</div>,
-    AuthoringStatusBadge: ({ children }: any) => <span>{children}</span>,
+    AuthoringStatusBadge: ({ children }: Parameters<typeof AuthoringStatusBadge>[0]) => <span>{children}</span>,
     useAuthoringGuard: () => ({ requestNavigation: mockState.navigate }),
 }))
 

@@ -203,7 +203,7 @@ describe('useBulkProductMutation — synchronous snapshot and duplicate lock', (
 
         expect(accepted).toBe(false)
         expect(result.current.status).toBe('failed')
-        expect(result.current.error.code).toBe(BULK_MUTATION_LOCAL_ERROR_CODES.INVALID_ACTION)
+        expect(result.current.error).toMatchObject({ code: BULK_MUTATION_LOCAL_ERROR_CODES.INVALID_ACTION })
         expect(result.current.action).toBeNull()
         expect(result.current.requestId).toBeNull()
         expect(bulkActivateMock).not.toHaveBeenCalled()
@@ -294,8 +294,7 @@ describe('useBulkProductMutation — synchronous snapshot and duplicate lock', (
 
         expect(accepted).toBe(false)
         expect(result.current.status).toBe('failed')
-        expect(result.current.error.code).toBe(BULK_MUTATION_LOCAL_ERROR_CODES.MISSING_ROW_VERSION)
-        expect(result.current.error.details).toEqual({ productId: 'p2' })
+        expect(result.current.error).toMatchObject({ code: BULK_MUTATION_LOCAL_ERROR_CODES.MISSING_ROW_VERSION, details: { productId: 'p2' } })
         expect(result.current.requestId).toBeNull()
         expect(bulkUnpublishMock).not.toHaveBeenCalled()
         // Missing version preserves selection: no canonical refetch is forced.
@@ -317,8 +316,7 @@ describe('useBulkProductMutation — synchronous snapshot and duplicate lock', (
 
         expect(accepted).toBe(false)
         expect(result.current.status).toBe('failed')
-        expect(result.current.error.code).toBe(BULK_MUTATION_LOCAL_ERROR_CODES.SELECTED_ROW_STALE)
-        expect(result.current.error.details).toEqual({ productId: 'ghost-id' })
+        expect(result.current.error).toMatchObject({ code: BULK_MUTATION_LOCAL_ERROR_CODES.SELECTED_ROW_STALE, details: { productId: 'ghost-id' } })
         expect(bulkActivateMock).not.toHaveBeenCalled()
 
         await waitFor(() => expect(refreshProducts).toHaveBeenCalledTimes(1))
@@ -336,7 +334,7 @@ describe('useBulkProductMutation — synchronous snapshot and duplicate lock', (
         })
 
         expect(result.current.status).toBe('failed')
-        expect(result.current.error.code).toBe(BULK_MUTATION_LOCAL_ERROR_CODES.EMPTY_SELECTION)
+        expect(result.current.error).toMatchObject({ code: BULK_MUTATION_LOCAL_ERROR_CODES.EMPTY_SELECTION })
         expect(bulkActivateMock).not.toHaveBeenCalled()
     })
 })
@@ -448,7 +446,7 @@ describe('useBulkProductMutation — transport failures, no retry, refresh error
 
         await waitFor(() => expect(result.current.status).toBe('failed'))
         expect(result.current.error).toBe(normalizedError)
-        expect(result.current.error.code).toBe('NETWORK_ERROR')
+        expect(result.current.error).toMatchObject({ code: 'NETWORK_ERROR' })
         expect(result.current.result).toBeNull()
         expect(bulkActivateMock).toHaveBeenCalledTimes(1)
         expect(refreshProducts).toHaveBeenCalledTimes(1)
@@ -479,9 +477,7 @@ describe('useBulkProductMutation — transport failures, no retry, refresh error
 
         await waitFor(() => expect(result.current.status).toBe('failed'))
         expect(result.current.error).toBe(conflictError)
-        expect(result.current.error.status).toBe(409)
-        expect(result.current.error.code).toBe('ROWVERSION_CONFLICT')
-        expect(result.current.error.correlationId).toBe('corr-409')
+        expect(result.current.error).toMatchObject({ status: 409, code: 'ROWVERSION_CONFLICT', correlationId: 'corr-409' })
         expect(bulkDeleteMock).toHaveBeenCalledTimes(1)
         expect(refreshProducts).toHaveBeenCalledTimes(1)
     })
@@ -504,7 +500,7 @@ describe('useBulkProductMutation — transport failures, no retry, refresh error
         await waitFor(() => expect(result.current.refreshError).toBeTruthy())
         expect(result.current.status).toBe('success')
         expect(result.current.result).toEqual(payload)
-        expect(result.current.refreshError.code).toBe(BULK_MUTATION_LOCAL_ERROR_CODES.REFRESH_FAILED)
+        expect(result.current.refreshError).toMatchObject({ code: BULK_MUTATION_LOCAL_ERROR_CODES.REFRESH_FAILED })
         expect(bulkActivateMock).toHaveBeenCalledTimes(1)
     })
 
@@ -743,7 +739,7 @@ describe('useBulkProductMutation — reducer state machine guards', () => {
         expect(state.action).toBe('delete')
         expect(state.requestId).toBe('req-1')
         expect(state.selectedItems).toEqual([{ productId: 'p1', expectedVersion: '7' }])
-        expect(state.error.message).toBe('boom')
+        expect(state.error).toMatchObject({ message: 'boom' })
         expect(state.result).toBeNull()
     })
 
@@ -756,7 +752,7 @@ describe('useBulkProductMutation — reducer state machine guards', () => {
         const refreshed = bulkMutationReducer(state, { type: 'REFRESH_FAILED', error: new Error('nope') })
         expect(refreshed.status).toBe('partial_success')
         expect(refreshed.result).toEqual({ failed: 1 })
-        expect(refreshed.refreshError.message).toBe('nope')
+        expect(refreshed.refreshError).toMatchObject({ message: 'nope' })
     })
 
     it('resets into a pristine idle snapshot from any retained terminal state', () => {

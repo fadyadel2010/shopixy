@@ -13,7 +13,7 @@
 
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import type { ApiErrorResponse } from '@/types';
-import { getRequestHeaders, isRequestContextReady } from '@/bootstrap';
+import { getRequestHeaders, isRequestContextReady } from '../../bootstrap/index';
 import { getAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
 import { useLanguageStore } from '@/i18n';
 import { getThemePreviewToken } from '@/storefront/preview/themePreviewMode';
@@ -31,6 +31,11 @@ export interface NormalizedError {
     isClientError: boolean;
     retryable: boolean;
     isAuthError: boolean;
+}
+
+/** Keep transport-specific error detection at the HTTP boundary. */
+export function isHttpClientError(error: unknown): error is AxiosError<ApiErrorResponse> {
+    return axios.isAxiosError<ApiErrorResponse>(error);
 }
 
 export function isRequestCanceled(error: unknown): boolean {
@@ -327,7 +332,7 @@ const createHttpClient = (): AxiosInstance => {
             }
 
             // Attach normalized error for easier handling
-            (error as any).normalized = normalized;
+            (error as AxiosError<ApiErrorResponse> & { normalized?: NormalizedError }).normalized = normalized;
 
             return Promise.reject(error);
         }

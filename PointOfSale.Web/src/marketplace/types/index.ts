@@ -24,6 +24,16 @@ export type MarketplaceProfile = Readonly<{
 }>;
 
 // Request type - mutable for form state
+export interface MarketplaceProfileInput {
+  displayName: string;
+  bio?: string;
+  location?: string;
+  skills?: string;
+  portfolioLinks?: string;
+  profileImageUrl?: string;
+  coverImageUrl?: string;
+}
+
 export interface ServiceSearchRequest {
   query?: string;
   category?: string;     // DS-1: primary category filter

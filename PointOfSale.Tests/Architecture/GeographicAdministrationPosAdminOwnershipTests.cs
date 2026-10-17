@@ -37,13 +37,16 @@ public sealed class GeographicAdministrationPosAdminOwnershipTests
     [Fact]
     public void SuperAdminArchitecture_MustRemainMarketplaceOnlyForGeographicRegression()
     {
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
+        // Retrospective context is not the normative ownership contract. Preserve that
+        // history rather than inserting old prose just to satisfy a documentation test.
+        var ownership = CertificationSource.ReadRepoFile("docs/architecture/GEO-6_GEOGRAPHIC_ADMINISTRATION_RUNTIME_IMPLEMENTATION.md");
+        var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AdminGeographicAdministrationController.cs");
 
-        Assert.Contains("POS Admin owns Geographic Administration", projectContext, StringComparison.Ordinal);
-        Assert.Contains("Super Admin owns ONLY CommerceHub Marketplace", projectContext, StringComparison.Ordinal);
-        Assert.Contains("POS Admin owns Geographic Administration", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("Super Admin owns ONLY CommerceHub Marketplace", architectureTruth, StringComparison.Ordinal);
+        Assert.Contains("POS Admin owns:", ownership, StringComparison.Ordinal);
+        Assert.Contains("- Geographic Catalog", ownership, StringComparison.Ordinal);
+        Assert.Contains("Super Admin owns only CommerceHub Marketplace management:", ownership, StringComparison.Ordinal);
+        Assert.Contains("[Route(\"api/admin/geographic\")]", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("api/super-admin", controller, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FindRepoRoot(string startDirectory)

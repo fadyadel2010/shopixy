@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
     FilePlus2,
     Loader2,
     PencilLine,
-    RefreshCcw,
     Trash2,
 } from 'lucide-react'
 import { cmsService } from '../services'
@@ -34,6 +33,7 @@ export function CmsPagesList() {
     const [notice, setNotice] = useState('')
     const [confirmAction, setConfirmAction] = useState(null)
     const currentUser = useAuthStore((state) => state.user)
+    const mutationInFlightRef = useRef(false)
 
     useEffect(() => {
         loadPages()
@@ -51,44 +51,52 @@ export function CmsPagesList() {
             }
 
             setPages(admittedPages)
+            return true
         } catch (err) {
             console.error('Failed to load CMS pages', err)
             setError(t('storefront.cms.pageList.loadFailed'))
+            return false
         } finally {
             setIsLoading(false)
         }
     }
 
     async function handleSeedDefaults() {
+        if (mutationInFlightRef.current) return
+        mutationInFlightRef.current = true
         setIsSeeding(true)
         setError('')
         setNotice('')
         try {
             await cmsService.seedDefaultPages()
-            await loadPages()
-            setNotice(t('storefront.cms.pageList.defaultsCreated'))
+            if (await loadPages()) setNotice(t('storefront.cms.pageList.defaultsCreated'))
+            else setError(t('storefront.cms.pageList.savedReadbackFailed', { defaultValue: 'The change was saved, but the page list could not be reloaded. Retry loading; do not repeat the mutation.' }))
         } catch (err) {
             console.error('Failed to seed CMS pages', err)
             const feedback = getAuthoringErrorFeedback(err)
             setError(`${feedback.title}: ${feedback.message}`)
         } finally {
+            mutationInFlightRef.current = false
             setIsSeeding(false)
         }
     }
 
     async function handleDelete(page) {
+        if (mutationInFlightRef.current) return
+        mutationInFlightRef.current = true
         setBusyPageId(page.id)
         setError('')
         setNotice('')
         try {
             await cmsService.deletePage(page.id, page.draftVersion ?? page.publishedVersion)
-            await loadPages()
-            setNotice(t('storefront.cms.pageList.deleted'))
+            if (await loadPages()) setNotice(t('storefront.cms.pageList.deleted'))
+            else setError(t('storefront.cms.pageList.savedReadbackFailed', { defaultValue: 'The change was saved, but the page list could not be reloaded. Retry loading; do not repeat the mutation.' }))
         } catch (err) {
             console.error('Failed to delete CMS page', err)
             const feedback = getAuthoringErrorFeedback(err)
             setError(`${feedback.title}: ${feedback.message}`)
         } finally {
+            mutationInFlightRef.current = false
             setBusyPageId(null)
         }
     }

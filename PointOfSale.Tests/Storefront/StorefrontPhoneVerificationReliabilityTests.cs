@@ -310,10 +310,29 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
         Assert.Null(await store.GetOtpAsync(tenantId, "session-1", "+201022174803"));
     }
 
+    [Fact]
+    public async Task Status_WhenAuthoritativeNormalizerRejectsPhone_DoesNotInventEgyptianVerifiedIdentity()
+    {
+        var tenantId = Guid.NewGuid();
+        var normalizer = new Mock<IPhoneNumberNormalizer>();
+        normalizer.Setup(n => n.NormalizeAsync(It.IsAny<string>(), tenantId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new PhoneNumberNormalizationException("Controlled invalid country input"));
+        var featureGate = new Mock<IWhatsAppFeatureGateService>();
+        featureGate.Setup(g => g.GetActiveAccountAsync(tenantId, PointOfSale.Core.Enums.WhatsAppUseCase.OtpVerification, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateConnectedAccount(tenantId));
+        var store = new InMemoryCheckoutPhoneOtpStore();
+        await store.SetVerifiedAsync(tenantId, "session", "+25512345678", TimeSpan.FromHours(1));
+        var service = CreateService(featureGate: featureGate.Object, otpStore: store, normalizer: normalizer.Object);
+        var result = await service.CheckVerificationRequiredAsync(tenantId, "session", "5512345678", null);
+        Assert.True(result.IsRequired);
+        Assert.False(result.IsVerified);
+    }
+
     private static StorefrontPhoneVerificationService CreateService(
         IWhatsAppFeatureGateService? featureGate = null,
         IEventPublisher? eventPublisher = null,
-        ICheckoutPhoneOtpStore? otpStore = null)
+        ICheckoutPhoneOtpStore? otpStore = null,
+        IPhoneNumberNormalizer? normalizer = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -338,7 +357,7 @@ public sealed class StorefrontPhoneVerificationReliabilityTests
             dbContext,
             featureGate ?? Mock.Of<IWhatsAppFeatureGateService>(),
             eventPublisher ?? Mock.Of<IEventPublisher>(),
-            phoneNormalizer.Object,
+            normalizer ?? phoneNormalizer.Object,
             Mock.Of<ICartService>(),
             otpStore ?? new InMemoryCheckoutPhoneOtpStore(),
             new CommerceReliabilityTelemetry(),

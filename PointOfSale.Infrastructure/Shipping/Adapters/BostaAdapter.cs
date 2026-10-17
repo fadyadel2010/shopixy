@@ -12,13 +12,13 @@ namespace PointOfSale.Infrastructure.Shipping.Adapters;
 /// Bosta is a popular shipping carrier in Egypt.
 /// API Documentation: https://developers.bosta.co/
 /// 
-/// NOTE: This is a production-ready adapter implementation.
-/// In real deployment, you would need:
+/// Installed contracts do not by themselves certify an account for production.
+/// Execution additionally requires:
 /// - Valid Bosta API credentials
 /// - Proper API URL (production vs sandbox)
 /// - Webhook secret for signature validation
 /// </summary>
-public class BostaAdapter : IShippingCarrierAdapter
+public partial class BostaAdapter : IShippingCarrierAdapter, IIdentityBoundCarrierCancellation, IBostaPickupLocationDiscovery, IBostaGeographyDiscovery
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<BostaAdapter> _logger;
@@ -37,54 +37,20 @@ public class BostaAdapter : IShippingCarrierAdapter
         _logger = logger;
     }
     
-    public async Task<ShippingQuoteResult> GetQuoteAsync(
+    public Task<ShippingQuoteResult> GetQuoteAsync(
         ShippingQuoteRequest request,
         CarrierCredentials credentials,
         CancellationToken cancellationToken = default)
     {
-        // Bosta uses zone-based pricing or fixed pricing
-        // For now, return service levels with typical pricing
-        // In production, you'd call the Bosta pricing API
-        
-        var quotes = new List<ShippingQuote>
+        // The implemented Bosta surface has no authenticated remote-rate operation.
+        // Merchant fixed prices belong to ShippingMethod/CarrierConfiguration and
+        // must never be presented as provider-verified Bosta quotes.
+        return Task.FromResult(new ShippingQuoteResult
         {
-            new ShippingQuote
-            {
-                CarrierCode = CarrierCode,
-                ServiceLevel = "standard",
-                ServiceName = "Bosta Standard Delivery",
-                Cost = request.IsCashOnDelivery ? 35m : 30m, // EGP
-                Currency = "EGP",
-                EstimatedDeliveryDaysMin = 2,
-                EstimatedDeliveryDaysMax = 4,
-                SupportsCod = true
-            },
-            new ShippingQuote
-            {
-                CarrierCode = CarrierCode,
-                ServiceLevel = "express",
-                ServiceName = "Bosta Next Day",
-                Cost = request.IsCashOnDelivery ? 55m : 50m, // EGP
-                Currency = "EGP",
-                EstimatedDeliveryDaysMin = 1,
-                EstimatedDeliveryDaysMax = 1,
-                SupportsCod = true
-            }
-        };
-        
-        // Filter by service level if specified
-        if (!string.IsNullOrEmpty(request.ServiceLevel))
-        {
-            quotes = quotes
-                .Where(q => q.ServiceLevel.Equals(request.ServiceLevel, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
-        
-        return new ShippingQuoteResult
-        {
-            Success = true,
-            Quotes = quotes
-        };
+            Success = false,
+            ErrorCode = "BOSTA_REMOTE_QUOTES_UNSUPPORTED",
+            ErrorMessage = "Bosta remote rate quotes are not implemented."
+        });
     }
     
     public async Task<CreateShipmentResult> CreateShipmentAsync(
@@ -96,6 +62,61 @@ public class BostaAdapter : IShippingCarrierAdapter
         
         try
         {
+            if (!string.Equals(request.ServiceLevel, "standard", StringComparison.OrdinalIgnoreCase))
+            {
+                return new CreateShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "BOSTA_SERVICE_LEVEL_UNSUPPORTED",
+                    ErrorMessage = "The Bosta request contract does not encode the selected service level."
+                };
+            }
+
+            if (!string.Equals(request.OriginCountry, "EG", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(request.RecipientCountry, "EG", StringComparison.OrdinalIgnoreCase))
+            {
+                return new CreateShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "BOSTA_DOMESTIC_EGYPT_ROUTE_REQUIRED",
+                    ErrorMessage = "The admitted Bosta integration supports Egypt domestic shipments only."
+                };
+            }
+
+            var hasExplicitPickup = credentials.ExtraConfig.TryGetValue("businessLocationId", out var configuredPickup);
+            if (hasExplicitPickup && !BostaPickupSelections.ValidId(configuredPickup))
+            {
+                return new CreateShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "BOSTA_BUSINESS_LOCATION_INVALID",
+                    ErrorMessage = "The explicit Bosta pickup selection is invalid; it cannot fall back to a default."
+                };
+            }
+            if (!hasExplicitPickup && request.BostaPickupOrigin == null)
+                return new() { ErrorCode = "BOSTA_VERIFIED_DEFAULT_ORIGIN_REQUIRED", ErrorMessage = "The account default must be verified and frozen before preparing the delivery request." };
+
+            if (!string.Equals(request.Currency, "EGP", StringComparison.Ordinal))
+            {
+                return new CreateShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "BOSTA_CURRENCY_UNSUPPORTED",
+                    ErrorMessage = "The admitted Bosta integration requires EGP currency."
+                };
+            }
+
+            if (request.IsCashOnDelivery &&
+                (!request.CodAmount.HasValue || request.CodAmount <= 0m || request.CodAmount > 30000m))
+            {
+                return new CreateShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "BOSTA_COD_AMOUNT_UNSUPPORTED",
+                    ErrorMessage = "Bosta COD amount must be greater than zero and no more than 30000 EGP."
+                };
+            }
+
             var hasDistrictId = !string.IsNullOrWhiteSpace(request.RecipientDistrictId);
             var hasDistrictNameAndCityId =
                 !string.IsNullOrWhiteSpace(request.RecipientDistrictName) &&
@@ -110,22 +131,55 @@ public class BostaAdapter : IShippingCarrierAdapter
                 };
             }
 
+            if (request.PackageCount != 1 || !ParcelMeasurements.IsMetricWeight(request.WeightKg) ||
+                !ParcelMeasurements.IsMetricDimension(request.LengthCm) || !ParcelMeasurements.IsMetricDimension(request.WidthCm) ||
+                !ParcelMeasurements.IsMetricDimension(request.HeightCm))
+                return new() { ErrorCode = "BOSTA_MEASURED_PARCEL_REQUIRED", ErrorMessage = "One measured parcel is required." };
+            if (request.BostaDestination != null && (string.IsNullOrWhiteSpace(request.RecipientName) ||
+                string.IsNullOrWhiteSpace(request.RecipientAddress) || request.RecipientAddress.Trim().Length <= 5 ||
+                string.IsNullOrWhiteSpace(request.RecipientCity) ||
+                !System.Text.RegularExpressions.Regex.IsMatch(NormalizePhone(request.RecipientPhone ?? ""), @"^01[0125][0-9]{8}$")))
+                return new() { ErrorCode = "BOSTA_RECIPIENT_ADDRESS_INVALID", ErrorMessage = "A real recipient, Egyptian mobile number and complete delivery address are required." };
+            if (!BostaParcelContents.IsDescription(request.PackageDescription) || request.PackageItemCount is not > 0)
+                return new() { ErrorCode = "BOSTA_PACKAGE_CONTENTS_REQUIRED", ErrorMessage = "Actual parcel contents and item count are required." };
+            if (!BostaParcelContents.IsValue(request.DeclaredValue))
+                return new() { ErrorCode = "BOSTA_GOODS_VALUE_REQUIRED", ErrorMessage = "An explicit positive goods value in EGP is required; COD is not goods value." };
+            if (!IsBoundedIdentifier(request.CarrierRequestId, 200) || request.CarrierRequestId != request.InternalShipmentId)
+                return new() { ErrorCode = "BOSTA_REQUEST_IDENTITY_REQUIRED", ErrorMessage = "A stable persisted shipment request identity is required." };
+
+            // Resolve selection against this exact authenticated account/environment.
+            // A free-text or stale pickup ID can never authorize a delivery POST.
+            var pickups = await GetPickupLocationsAsync(credentials, cancellationToken);
+            var selection = BostaPickupSelections.Resolve(credentials, pickups);
+            if (selection.Location is not { } verifiedPickup)
+                return new() { ErrorCode = selection.ErrorCode, ErrorMessage = "The explicit selection or unique provider default could not be verified for this account and environment." };
+            var businessLocationId = verifiedPickup.Id;
+            if (request.BostaPickupOrigin is { } origin && (origin.BusinessLocationId != businessLocationId ||
+                origin.UseSandbox != credentials.UseSandbox || origin.CountryCode != verifiedPickup.CountryCode ||
+                origin.CountryId != verifiedPickup.CountryId || origin.CityId != verifiedPickup.CityId || origin.DistrictId != verifiedPickup.DistrictId ||
+                origin.ObservedAtUtc < DateTime.UtcNow.AddMinutes(-10) || origin.ObservedAtUtc > DateTime.UtcNow))
+                return new() { ErrorCode = "BOSTA_PICKUP_CHANGED", ErrorMessage = "The provider pickup changed after the shipment intent was prepared." };
+
             // Build Bosta delivery request
+            if (request.BostaDestination is { } destination)
+            {
+                if (destination.Kind != BostaNativeDestination.SnapshotKind || destination.Version != 1 ||
+                    destination.UseSandbox != credentials.UseSandbox || destination.CredentialIdentityHash != BostaNativeDestination.CredentialHash(credentials) ||
+                    request.RecipientCityId != destination.City.Id || request.RecipientDistrictId != destination.District.Id)
+                    return new() { ErrorCode = "BOSTA_DESTINATION_ACCOUNT_CHANGED" };
+                var selected = BostaNativeDestination.Select(await GetGeographyAsync(credentials, destination.City.Id, cancellationToken), destination.City.Id, destination.District.Id);
+                if (selected.Country.Id != destination.Country.Id || selected.City.ParentId != destination.City.ParentId ||
+                    selected.District.ParentId != destination.District.ParentId)
+                    return new() { ErrorCode = "BOSTA_DESTINATION_CHANGED" };
+            }
             var bostaRequest = new BostaCreateDeliveryRequest
             {
                 Type = 10, // Delivery type: 10 = SEND
-                Specs = new BostaSpecs
-                {
-                    PackageType = "Parcel",
-                    Size = "SMALL",
-                    PackageDetails = new BostaPackageDetails
-                    {
-                        ItemsCount = request.PackageCount,
-                        Description = request.PackageDescription ?? "Package"
-                    }
-                },
                 Notes = request.Notes ?? "",
                 Cod = request.IsCashOnDelivery ? request.CodAmount ?? 0 : 0,
+                Specs = new BostaSpecs { PackageType = "Parcel", PackageDetails = new BostaPackageDetails {
+                    ItemsCount = request.PackageItemCount.Value, Description = request.PackageDescription } },
+                GoodsInfo = new BostaGoodsInfo { Amount = request.DeclaredValue.Value },
                 DropOffAddress = new BostaAddress
                 {
                     City = request.RecipientCity,
@@ -144,7 +198,11 @@ public class BostaAdapter : IShippingCarrierAdapter
                     Email = request.RecipientEmail
                 },
                 BusinessReference = request.InternalShipmentId,
-                AllowToOpenPackage = true
+                UniqueBusinessReference = request.CarrierRequestId,
+                BusinessLocationId = businessLocationId,
+                // Product-image authority is not represented by the carrier-neutral
+                // request, so open-package must remain disabled.
+                AllowToOpenPackage = false
             };
             
             // Set coordinates if available
@@ -168,21 +226,19 @@ public class BostaAdapter : IShippingCarrierAdapter
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             });
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError(
-                    "Bosta API error: {StatusCode} - {Body}",
-                    response.StatusCode, responseBody);
+                    "Bosta API error: {StatusCode}", response.StatusCode);
                     
-                var errorResponse = TryParseError(responseBody);
                 return new CreateShipmentResult
                 {
                     Success = false,
                     ErrorCode = "BOSTA_API_ERROR",
-                    ErrorMessage = errorResponse ?? $"HTTP {(int)response.StatusCode}",
+                    ErrorMessage = "Bosta rejected shipment creation. The provider outcome requires review.",
                     RawResponse = responseBody
                 };
             }
@@ -190,6 +246,9 @@ public class BostaAdapter : IShippingCarrierAdapter
             var bostaResponse = JsonSerializer.Deserialize<BostaCreateDeliveryResponse>(
                 responseBody, 
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (bostaResponse?.Success == false)
+                return new() { ErrorCode = "BOSTA_PROVIDER_DECLINED", ErrorMessage = "Bosta did not acknowledge shipment creation. Reconciliation is required.", RawResponse = responseBody };
             
             if (bostaResponse == null || bostaResponse.Data == null)
             {
@@ -202,32 +261,25 @@ public class BostaAdapter : IShippingCarrierAdapter
                 };
             }
             
-            var trackingNumber = bostaResponse.Data.TrackingNumber?.Trim();
-            
-            // Validate that we have at least one valid identifier
-            var deliveryId = bostaResponse.Data.DeliveryId?.Trim();
-            if (string.IsNullOrWhiteSpace(deliveryId) && string.IsNullOrWhiteSpace(trackingNumber))
+            var trackingNumber = bostaResponse.Data.TrackingNumber;
+            var providerDeliveryId = bostaResponse.Data.Id;
+            if (!IsBoundedIdentifier(providerDeliveryId, 200) || !IsBoundedIdentifier(trackingNumber, 100))
             {
                 return new CreateShipmentResult
                 {
                     Success = false,
-                    ErrorCode = "MISSING_IDENTIFIER",
-                    ErrorMessage = "Bosta response missing both DeliveryId and TrackingNumber",
+                    ErrorCode = "BOSTA_RESPONSE_IDENTITY_UNADMITTED",
+                    ErrorMessage = "Bosta response requires exact delivery and tracking identities.",
                     RawResponse = responseBody
                 };
             }
-            
-            // Determine ExternalReferenceId: prefer DeliveryId, fallback to TrackingNumber only if non-empty
-            var externalReferenceId = !string.IsNullOrWhiteSpace(deliveryId) 
-                ? deliveryId 
-                : trackingNumber;
             
             var trackingUrl = $"https://bosta.co/tracking?tracking_number={trackingNumber}";
             
             // Store Bosta-specific metadata
             var metadata = JsonSerializer.Serialize(new
             {
-                bostaId = bostaResponse.Data.Id,
+                bostaId = providerDeliveryId,
                 deliveryId = bostaResponse.Data.DeliveryId,
                 state = bostaResponse.Data.GetStateName()
             });
@@ -247,7 +299,7 @@ public class BostaAdapter : IShippingCarrierAdapter
             return new CreateShipmentResult
             {
                 Success = true,
-                ExternalReferenceId = externalReferenceId,
+                ExternalReferenceId = providerDeliveryId,
                 TrackingNumber = trackingNumber,
                 TrackingUrl = trackingUrl,
                 AwbNumber = bostaResponse.Data.DeliveryId,
@@ -256,67 +308,40 @@ public class BostaAdapter : IShippingCarrierAdapter
                 RawResponse = responseBody
             };
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (ArgumentException ex) when (ex.Message.StartsWith("BOSTA_", StringComparison.Ordinal))
+        { return new() { ErrorCode = ex.Message, ErrorMessage = "Bosta destination is no longer admissible; no delivery was submitted." }; }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Bosta HTTP request failed");
+            _logger.LogError("Bosta HTTP request failed ({FailureType})", ex.GetType().Name);
             return new CreateShipmentResult
             {
                 Success = false,
                 ErrorCode = "HTTP_ERROR",
-                ErrorMessage = $"Connection error: {ex.Message}"
+                ErrorMessage = "Bosta connection failed; the provider outcome is not established."
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error creating Bosta shipment");
+            _logger.LogError("Bosta creation failed ({FailureType})", ex.GetType().Name);
             return new CreateShipmentResult
             {
                 Success = false,
                 ErrorCode = "UNEXPECTED_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "Bosta creation could not be verified. Reconciliation is required before retry."
             };
         }
     }
     
-    public async Task<CancelShipmentResult> CancelShipmentAsync(
+    public Task<CancelShipmentResult> CancelShipmentAsync(
         string trackingNumber,
         CarrierCredentials credentials,
         CancellationToken cancellationToken = default)
     {
-        var baseUrl = credentials.UseSandbox ? SandboxUrl : ProductionUrl;
-        
-        try
-        {
-            using var request = new HttpRequestMessage(
-                HttpMethod.Delete, 
-                $"{baseUrl}/deliveries/business/{Uri.EscapeDataString(trackingNumber)}/terminate");
-            request.Headers.Add("Authorization", credentials.ApiKey);
-            
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                return new CancelShipmentResult
-                {
-                    Success = false,
-                    ErrorCode = "BOSTA_CANCEL_FAILED",
-                    ErrorMessage = TryParseError(errorBody) ?? $"HTTP {(int)response.StatusCode}"
-                };
-            }
-            
-            return new CancelShipmentResult { Success = true };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error cancelling Bosta shipment {TrackingNumber}", trackingNumber);
-            return new CancelShipmentResult
-            {
-                Success = false,
-                ErrorCode = "CANCEL_ERROR",
-                ErrorMessage = ex.Message
-            };
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        // A tracking string alone is not authority to mutate an external delivery.
+        return Task.FromResult(new CancelShipmentResult { ErrorCode = "BOSTA_CANCELLATION_TARGET_BINDING_REQUIRED",
+            ErrorMessage = "The original persisted delivery identity is required before cancellation." });
     }
     
     public async Task<ShipmentTrackingResult> GetTrackingAsync(
@@ -333,7 +358,7 @@ public class BostaAdapter : IShippingCarrierAdapter
                 $"{baseUrl}/deliveries/business/{Uri.EscapeDataString(trackingNumber)}");
             request.Headers.Add("Authorization", credentials.ApiKey);
             
-            var response = await _httpClient.SendAsync(request, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, request, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
@@ -342,7 +367,7 @@ public class BostaAdapter : IShippingCarrierAdapter
                 {
                     Success = false,
                     ErrorCode = "TRACKING_FAILED",
-                    ErrorMessage = TryParseError(responseBody) ?? $"HTTP {(int)response.StatusCode}",
+                    ErrorMessage = "Bosta tracking could not be verified.",
                     RawResponse = responseBody
                 };
             }
@@ -351,7 +376,7 @@ public class BostaAdapter : IShippingCarrierAdapter
                 responseBody,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             
-            if (trackingResponse == null || trackingResponse.Data == null)
+            if (trackingResponse == null || trackingResponse.Data == null || trackingResponse.Success == false)
             {
                 return new ShipmentTrackingResult
                 {
@@ -363,6 +388,17 @@ public class BostaAdapter : IShippingCarrierAdapter
             }
             
             var delivery = trackingResponse.Data;
+            if (!string.Equals(delivery.TrackingNumber, trackingNumber, StringComparison.Ordinal))
+            {
+                return new ShipmentTrackingResult
+                {
+                    Success = false,
+                    ErrorCode = "TRACKING_IDENTITY_MISMATCH",
+                    ErrorMessage = "Bosta tracking response does not match the requested shipment.",
+                    RawResponse = responseBody
+                };
+            }
+
             var currentState = delivery.GetStateName();
             if (!TryMapBostaStatus(currentState, out var status))
             {
@@ -389,6 +425,19 @@ public class BostaAdapter : IShippingCarrierAdapter
                 var events = new List<TrackingEvent>();
                 foreach (var history in delivery.StateHistory)
                 {
+                    if (!history.Timestamp.HasValue ||
+                        history.Timestamp.Value < DateTimeOffset.UnixEpoch ||
+                        history.Timestamp.Value > DateTimeOffset.UtcNow.AddMinutes(5))
+                    {
+                        return new ShipmentTrackingResult
+                        {
+                            Success = false,
+                            ErrorCode = "TRACKING_EVENT_TIME_UNADMITTED",
+                            ErrorMessage = "Bosta tracking history contains a missing or unsupported event timestamp.",
+                            RawResponse = responseBody
+                        };
+                    }
+
                     var historyState = history.GetStateName();
                     if (!TryMapBostaStatus(historyState, out var historyStatus))
                     {
@@ -403,7 +452,7 @@ public class BostaAdapter : IShippingCarrierAdapter
 
                     events.Add(new TrackingEvent
                     {
-                        Timestamp = history.Timestamp ?? DateTime.UtcNow,
+                        Timestamp = history.Timestamp.Value.UtcDateTime,
                         Status = historyStatus,
                         Description = history.Note ?? historyState,
                         CarrierStatusCode = historyState
@@ -419,12 +468,12 @@ public class BostaAdapter : IShippingCarrierAdapter
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error tracking Bosta shipment {TrackingNumber}", trackingNumber);
+            _logger.LogError("Bosta tracking failed ({FailureType})", ex.GetType().Name);
             return new ShipmentTrackingResult
             {
                 Success = false,
                 ErrorCode = "TRACKING_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "Bosta tracking response could not be verified."
             };
         }
     }
@@ -434,62 +483,42 @@ public class BostaAdapter : IShippingCarrierAdapter
         CancellationToken cancellationToken = default)
     {
         var baseUrl = credentials.UseSandbox ? SandboxUrl : ProductionUrl;
-        
+        if (string.IsNullOrWhiteSpace(credentials.ApiKey))
+            return CarrierConnectionDiagnostics.Failure("CREDENTIAL_APIKEY_MISSING");
         try
         {
-            // Try to get cities list - this endpoint is more reliable for validation
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/cities");
+            // Authenticated business read, unlike the public cities catalog.
+            // Official Businessgetpickup-locations; no pickup is created or changed.
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/pickup-locations");
             request.Headers.Add("Authorization", credentials.ApiKey);
-            
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            
-            // Success = API is reachable and credentials are valid
-            if (response.IsSuccessStatusCode)
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, request, cancellationToken);
+            var failure = CarrierConnectionDiagnostics.HttpFailure(response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (failure != null)
             {
-                return new CarrierValidationResult
+                try
                 {
-                    Success = true,
-                    AccountName = "Bosta Account" // Cities endpoint doesn't return account name
-                };
+                    using var error = JsonDocument.Parse(body);
+                    var code = CarrierConnectionDiagnostics.Code(error.RootElement, "errorCode", credentials);
+                    return code == null ? failure : CarrierConnectionDiagnostics.Failure($"{failure.ErrorCode}_{code}");
+                }
+                catch (JsonException) { return failure; }
             }
-            
-            // 401/403 = API is reachable, but credentials invalid
-            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                return new CarrierValidationResult
-                {
-                    Success = false,
-                    ErrorCode = "INVALID_CREDENTIALS",
-                    ErrorMessage = "API key is invalid or expired"
-                };
-            }
-            
-            // For other errors, assume connection works but some issue
-            return new CarrierValidationResult
-            {
-                Success = false,
-                ErrorCode = "API_ERROR",
-                ErrorMessage = $"Bosta API returned {(int)response.StatusCode}"
-            };
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var providerCode = CarrierConnectionDiagnostics.Code(root, "errorCode", credentials);
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("success", out var success) || success.ValueKind != JsonValueKind.True ||
+                !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object ||
+                !data.TryGetProperty("list", out var list) || list.ValueKind != JsonValueKind.Array ||
+                !data.TryGetProperty("total", out var total) || !total.TryGetInt32(out var count) || count != list.GetArrayLength() || count > 1000)
+                return CarrierConnectionDiagnostics.Failure(providerCode == null ? "PROVIDER_RESPONSE_INVALID" : $"BOSTA_{providerCode}");
+            // Pickup ownership is origin evidence, not API-key authentication.
+            return new CarrierValidationResult { Success = true };
         }
-        catch (HttpRequestException ex)
-        {
-            return new CarrierValidationResult
-            {
-                Success = false,
-                ErrorCode = "CONNECTION_ERROR",
-                ErrorMessage = $"Cannot reach Bosta API: {ex.Message}"
-            };
-        }
-        catch (Exception ex)
-        {
-            return new CarrierValidationResult
-            {
-                Success = false,
-                ErrorCode = "VALIDATION_ERROR",
-                ErrorMessage = ex.Message
-            };
-        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return CarrierConnectionDiagnostics.Failure("CONNECTION_TIMEOUT"); }
+        catch (HttpRequestException) { return CarrierConnectionDiagnostics.Failure("NETWORK_ERROR"); }
+        catch (JsonException) { return CarrierConnectionDiagnostics.Failure("PROVIDER_RESPONSE_INVALID"); }
     }
     
     public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels()
@@ -503,22 +532,6 @@ public class BostaAdapter : IShippingCarrierAdapter
                 Description = "Delivery within 2-4 business days",
                 TypicalDaysMin = 2,
                 TypicalDaysMax = 4
-            },
-            new ServiceLevelInfo
-            {
-                Code = "express",
-                Name = "Next Day Delivery",
-                Description = "Delivery next business day",
-                TypicalDaysMin = 1,
-                TypicalDaysMax = 1
-            },
-            new ServiceLevelInfo
-            {
-                Code = "same_day",
-                Name = "Same Day Delivery",
-                Description = "Delivery same day (limited areas)",
-                TypicalDaysMin = 0,
-                TypicalDaysMax = 0
             }
         }.AsReadOnly();
     }
@@ -530,9 +543,12 @@ public class BostaAdapter : IShippingCarrierAdapter
     {
         try
         {
-            // Bosta webhook payload structure
-            var doc = JsonDocument.Parse(payload);
+            using var doc = JsonDocument.Parse(payload);
             var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            // Official delivery status-change contract. Legacy aliases never supply money authority.
+            if (root.TryGetProperty("_id", out _) || root.TryGetProperty("trackingNumber", out _) || root.TryGetProperty("state", out _))
+                return ParseOfficialDeliveryWebhook(root);
             
             if (!root.TryGetProperty("EventType", out var eventType) ||
                 !root.TryGetProperty("TrackingNumber", out var trackingNumberProp))
@@ -570,6 +586,70 @@ public class BostaAdapter : IShippingCarrierAdapter
     }
     
     #region Helper Methods
+
+    private static WebhookParseResult? ParseOfficialDeliveryWebhook(JsonElement root)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in root.EnumerateObject())
+            if (!names.Add(property.Name)) return null; // duplicate/case-conflicting keys cannot choose an identity or amount
+        if (root.TryGetProperty("EventType", out _) || root.TryGetProperty("TrackingNumber", out _)) return null;
+        if (!root.TryGetProperty("_id", out var id) || id.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(id.GetString()) || id.GetString()!.Length > 200 || id.GetString() != id.GetString()!.Trim() ||
+            !root.TryGetProperty("trackingNumber", out var tracking) ||
+            !root.TryGetProperty("state", out var state) || state.ValueKind != JsonValueKind.Number || !state.TryGetInt32(out var stateCode) ||
+            !root.TryGetProperty("type", out var type) || !TryParseDeliveryType(type, out var typeCode) ||
+            !root.TryGetProperty("timeStamp", out var timestamp) || timestamp.ValueKind != JsonValueKind.Number || !timestamp.TryGetInt64(out var milliseconds)) return null;
+        var trackingNumber = tracking.ValueKind == JsonValueKind.String ? tracking.GetString() :
+            tracking.ValueKind == JsonValueKind.Number ? tracking.GetRawText() : null;
+        // Never round through floating point, strip leading zeroes, trim or expand exponents.
+        if (string.IsNullOrEmpty(trackingNumber) || trackingNumber.Length > 100 ||
+            !trackingNumber.All(c => c is >= '0' and <= '9') || trackingNumber.All(c => c == '0')) return null;
+        if (milliseconds < 946684800000L || milliseconds > DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds()) return null;
+        var eventAt = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds).UtcDateTime;
+        var status = stateCode switch
+        {
+            41 => ShipmentStatus.OutForDelivery,
+            45 => ShipmentStatus.Delivered,
+            46 => ShipmentStatus.Returned,
+            _ => (ShipmentStatus?)null
+        };
+        if (!status.HasValue) return null; // exception/termination semantics are not invented here
+        bool? confirmed = null;
+        if (root.TryGetProperty("isConfirmedDelivery", out var confirmation))
+        {
+            if (confirmation.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return null;
+            confirmed = confirmation.GetBoolean();
+        }
+        decimal? amount = null;
+        var amountCode = "COD_AMOUNT_ABSENT";
+        string? rejectedAmountHash = null;
+        if (root.TryGetProperty("cod", out var cod))
+        {
+            // The documented contract is a JSON number, not a localized or floating-point string.
+            if (cod.ValueKind == JsonValueKind.Number &&
+                System.Text.RegularExpressions.Regex.IsMatch(cod.GetRawText(), @"^(0|[1-9][0-9]{0,11})(\.[0-9]{1,6})?$") && cod.TryGetDecimal(out var value) &&
+                value >= 0m && value <= 999999999999.999999m && decimal.Round(value, 6) == value)
+            {
+                amount = value;
+                amountCode = value > 0m ? "COD_AMOUNT_OBSERVED" : "COD_AMOUNT_ZERO";
+            }
+            else
+            {
+                amountCode = "COD_AMOUNT_INVALID";
+                rejectedAmountHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(cod.GetRawText())));
+            }
+        }
+        const string contract = "bosta:delivery-status-webhook:v1";
+        var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { contract, delivery = id.GetString(), trackingNumber, stateCode, typeCode, milliseconds,
+                amount = amount?.ToString("G29", System.Globalization.CultureInfo.InvariantCulture), amountCode, rejectedAmountHash, confirmed }))));
+        return new WebhookParseResult
+        {
+            TrackingNumber = trackingNumber, Status = status.Value, EventTimestamp = eventAt,
+            StatusDescription = $"Bosta delivery state {stateCode}", CodCollected = false,
+            MoneyObservation = new(id.GetString()!, stateCode, typeCode, eventAt, amount, amountCode, confirmed, contract, fingerprint)
+        };
+    }
     
     private static bool TryMapBostaStatus(string bostaState, out ShipmentStatus status)
     {
@@ -591,6 +671,24 @@ public class BostaAdapter : IShippingCarrierAdapter
 
         return status != default;
     }
+
+    private static bool TryParseDeliveryType(JsonElement type, out int code)
+    {
+        if (type.ValueKind == JsonValueKind.Number && type.TryGetInt32(out code)) return true;
+        if (type.ValueKind == JsonValueKind.String && type.GetString() == "SEND")
+        {
+            code = 10;
+            return true;
+        }
+        code = 0;
+        return false;
+    }
+
+    private static bool IsBoundedIdentifier(string? value, int maximumLength) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= maximumLength &&
+        value == value.Trim() &&
+        !value.Any(char.IsControl);
     
     private static bool TryMapBostaWebhookEvent(string eventType, out ShipmentStatus status)
     {
@@ -678,6 +776,15 @@ internal class BostaCreateDeliveryRequest
     
     [JsonPropertyName("businessReference")]
     public string? BusinessReference { get; set; }
+
+    [JsonPropertyName("uniqueBusinessReference")]
+    public string? UniqueBusinessReference { get; set; }
+
+    [JsonPropertyName("goodsInfo")]
+    public BostaGoodsInfo? GoodsInfo { get; set; }
+
+    [JsonPropertyName("businessLocationId")]
+    public string? BusinessLocationId { get; set; }
     
     [JsonPropertyName("allowToOpenPackage")]
     public bool AllowToOpenPackage { get; set; }
@@ -702,6 +809,12 @@ internal class BostaPackageDetails
     
     [JsonPropertyName("description")]
     public string? Description { get; set; }
+}
+
+internal class BostaGoodsInfo
+{
+    [JsonPropertyName("amount")]
+    public decimal Amount { get; set; }
 }
 
 internal class BostaAddress
@@ -757,12 +870,14 @@ internal class BostaReceiver
 
 internal class BostaCreateDeliveryResponse
 {
+    public bool? Success { get; set; }
     public BostaDeliveryData? Data { get; set; }
     public string? Message { get; set; }
 }
 
 internal class BostaDeliveryResponse
 {
+    public bool? Success { get; set; }
     public BostaDeliveryData? Data { get; set; }
 }
 
@@ -801,6 +916,8 @@ internal class BostaDeliveryData
         {
             if (element.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
                 return nameProp.GetString() ?? "";
+            if (element.TryGetProperty("value", out var valueProp) && valueProp.ValueKind == JsonValueKind.String)
+                return valueProp.GetString() ?? "";
         }
         
         return "";
@@ -813,7 +930,7 @@ internal class BostaStateHistory
     /// State can be a string or an object.
     /// </summary>
     public JsonElement? State { get; set; }
-    public DateTime? Timestamp { get; set; }
+    public DateTimeOffset? Timestamp { get; set; }
     public string? Note { get; set; }
     
     public string GetStateName()
@@ -830,6 +947,8 @@ internal class BostaStateHistory
         {
             if (element.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
                 return nameProp.GetString() ?? "";
+            if (element.TryGetProperty("value", out var valueProp) && valueProp.ValueKind == JsonValueKind.String)
+                return valueProp.GetString() ?? "";
         }
         
         return "";

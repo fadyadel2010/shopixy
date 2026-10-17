@@ -15,6 +15,8 @@ import { useAuthStore } from '../store/authStore'
 import { useSettings } from '../contexts/SettingsContext'
 import { useRTL } from '../hooks/useRTL'
 import { formatDate } from '../utils/dateFormat'
+import { useOfferOperations } from '../hooks/useOfferOperations'
+import { offerDateInput, offerDatePayload } from '../utils/offerSchedule'
 
 /**
  * Promotions (Offers) Management Page
@@ -36,6 +38,7 @@ export default function Promotions() {
     const { formatCurrency } = useSettings()
     const { dir, isRTL, locale } = useRTL()
     const user = useAuthStore((state) => state.user)
+    const { busy, beginRead, beginMutation } = useOfferOperations(user)
     const [promotions, setPromotions] = useState([])
     const [selectedPromotion, setSelectedPromotion] = useState(null)
     const [detailsLoading, setDetailsLoading] = useState(false)
@@ -76,7 +79,6 @@ export default function Promotions() {
     const [success, setSuccess] = useState('')
 
     useEffect(() => {
-        fetchPromotions()
         fetchStats()
         fetchProducts()
         fetchCategories()
@@ -87,6 +89,7 @@ export default function Promotions() {
     }, [filter, user])
 
     const fetchPromotions = async () => {
+        const current = beginRead('list')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setPromotions([])
             setLoading(false)
@@ -96,15 +99,21 @@ export default function Promotions() {
         try {
             setLoading(true)
             const admittedPromotions = await listAdminPromotions(filter, user)
+            if (!current()) return false
             setPromotions(admittedPromotions)
-        } catch (err) {
+            setError('')
+            return true
+        } catch {
+            if (!current()) return false
             setError(t('common.failedToLoad'))
+            return false
         } finally {
-            setLoading(false)
+            if (current()) setLoading(false)
         }
     }
 
     const fetchStats = async () => {
+        const current = beginRead('stats')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setStats(null)
             return
@@ -112,9 +121,9 @@ export default function Promotions() {
 
         try {
             const admittedStats = await getAdminPromotionStats(user)
-            setStats(admittedStats)
-        } catch (err) {
-            console.error('Failed to load stats', err)
+            if (current()) setStats(admittedStats)
+        } catch {
+            if (current()) setStats(null)
         }
     }
 
@@ -128,6 +137,7 @@ export default function Promotions() {
     }
 
     const handleOpenDetails = async (promotionId) => {
+        const current = beginRead('details')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setSelectedPromotion(null)
             setError(t('common.failedToLoad'))
@@ -138,28 +148,31 @@ export default function Promotions() {
             setDetailsLoading(true)
             setError('')
             const admittedPromotion = await getAdminPromotion(promotionId, user)
-            setSelectedPromotion(admittedPromotion)
-        } catch (err) {
+            if (current()) setSelectedPromotion(admittedPromotion)
+        } catch {
+            if (!current()) return
             setSelectedPromotion(null)
             setError(t('common.failedToLoad'))
         } finally {
-            setDetailsLoading(false)
+            if (current()) setDetailsLoading(false)
         }
     }
 
     const fetchProducts = async () => {
+        const current = beginRead('products')
         try {
             const response = await api.get('/products?pageSize=100')
-            setProducts(response.data.items || response.data)
+            if (current()) setProducts(response.data.items || response.data)
         } catch (err) {
             console.error('Failed to load products', err)
         }
     }
 
     const fetchCategories = async () => {
+        const current = beginRead('categories')
         try {
             const response = await api.get('/categories')
-            setCategories(response.data)
+            if (current()) setCategories(response.data)
         } catch (err) {
             console.error('Failed to load categories', err)
         }
@@ -180,6 +193,9 @@ export default function Promotions() {
             return
         }
 
+        const operation = beginMutation()
+        if (!operation) return
+        setSuccess('')
         try {
             const data = {
                 ...formData,
@@ -188,24 +204,29 @@ export default function Promotions() {
                 minOrderAmount: formData.minOrderAmount ? parseFloat(formData.minOrderAmount) : null,
                 maxUsage: formData.maxUsage ? parseInt(formData.maxUsage) : null,
                 priority: parseInt(formData.priority) || 0,
-                appliesToId: formData.appliesToId || null
+                appliesToId: formData.appliesToId || null,
+                startDate: offerDatePayload(formData.startDate, editingPromotion?.startDate),
+                endDate: offerDatePayload(formData.endDate, editingPromotion?.endDate)
             }
 
             if (editingPromotion) {
                 await updateAdminPromotion(editingPromotion, data, user)
-                setSuccess(t('common.updatedSuccessfully'))
             } else {
                 await createAdminPromotion(data, user)
-                setSuccess(t('promotions.created'))
             }
 
+            if (!operation.current()) return
             setShowModal(false)
-            fetchPromotions()
+            const loaded = await fetchPromotions()
+            if (operation.current()) {
+                if (loaded) setSuccess(t(editingPromotion ? 'common.updatedSuccessfully' : 'promotions.created'))
+                else setError(t('offers.savedReloadFailed'))
+            }
             fetchStats()
             resetForm()
         } catch (err) {
-            setError(err.response?.data?.message || t('common.error'))
-        }
+            if (operation.current()) setError(err.response?.data?.message || t('common.error'))
+        } finally { operation.finish() }
     }
 
     const handleEdit = (promotion) => {
@@ -218,8 +239,8 @@ export default function Promotions() {
             maxDiscountAmount: promotion.maxDiscountAmount?.toString() || '',
             scope: promotion.scope,
             appliesToId: promotion.appliesToId || '',
-            startDate: promotion.startDate ? promotion.startDate.split('T')[0] : '',
-            endDate: promotion.endDate ? promotion.endDate.split('T')[0] : '',
+            startDate: offerDateInput(promotion.startDate),
+            endDate: offerDateInput(promotion.endDate),
             priority: promotion.priority.toString(),
             isActive: promotion.isActive,
             isExclusive: promotion.isExclusive,
@@ -231,6 +252,9 @@ export default function Promotions() {
     }
 
     const handleDelete = async (promotion) => {
+        const operation = beginMutation()
+        if (!operation) return
+        try {
         const confirmed = await confirm({
             confirmLabel: t('common.delete'),
             description: t('common.deleteConfirm', { item: t('promotions.promotion') }),
@@ -238,26 +262,32 @@ export default function Promotions() {
             variant: 'danger',
         })
 
-        if (!confirmed) return
+        if (!confirmed || !operation.current()) return
 
         try {
             await archiveAdminPromotion(promotion)
-            setSuccess(t('common.deletedSuccessfully'))
-            fetchPromotions()
+            if (!operation.current()) return
+            setSuccess('')
+            if (await fetchPromotions()) setSuccess(t('common.deletedSuccessfully'))
+            else setError(t('offers.savedReloadFailed'))
             fetchStats()
         } catch (err) {
-            setError(err.response?.data?.message || t('common.deleteFailed'))
+            if (operation.current()) setError(err.response?.data?.message || t('common.deleteFailed'))
         }
+        } finally { operation.finish() }
     }
 
     const handleToggle = async (promotion) => {
+        const operation = beginMutation()
+        if (!operation) return
         try {
             await toggleAdminPromotion(promotion, user)
-            fetchPromotions()
+            if (!operation.current()) return
+            if (!await fetchPromotions()) setError(t('offers.savedReloadFailed'))
             fetchStats()
         } catch (err) {
-            setError(err.response?.data?.message || t('common.error'))
-        }
+            if (operation.current()) setError(err.response?.data?.message || t('common.error'))
+        } finally { operation.finish() }
     }
 
     const resetForm = () => {
@@ -376,6 +406,7 @@ export default function Promotions() {
             {error && (
                 <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-600 rounded-lg">
                     {error}
+                    <button type="button" onClick={fetchPromotions}>{t('common.retry')}</button>
                     <button onClick={() => setError('')} className="float-right font-bold">&times;</button>
                 </div>
             )}
@@ -418,7 +449,7 @@ export default function Promotions() {
                         </label>
                     </div>
                     <button
-                        onClick={openAddModal}
+                        disabled={busy} onClick={openAddModal}
                         className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-md"
                     >
                         + {t('promotions.addPromotion')}
@@ -519,7 +550,7 @@ export default function Promotions() {
                                                 👁
                                             </button>
                                             <button
-                                                onClick={() => handleToggle(promotion)}
+                                                disabled={busy} onClick={() => handleToggle(promotion)}
                                                 className={`p-2 rounded-lg transition-colors ${promotion.isActive
                                                     ? 'bg-green-100 text-green-600 hover:bg-green-200'
                                                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -529,14 +560,14 @@ export default function Promotions() {
                                                 {promotion.isActive ? '✓' : '○'}
                                             </button>
                                             <button
-                                                onClick={() => handleEdit(promotion)}
+                                                disabled={busy} onClick={() => handleEdit(promotion)}
                                                 className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors"
                                                 title={t('common.edit')}
                                             >
                                                 ✏️
                                             </button>
                                             <button
-                                                onClick={() => handleDelete(promotion)}
+                                                disabled={busy} onClick={() => handleDelete(promotion)}
                                                 className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors"
                                                 title={t('common.delete')}
                                             >
@@ -571,15 +602,15 @@ export default function Promotions() {
                 </button>
             </div>
 
-            {selectedPromotion && (
+            {(selectedPromotion || detailsLoading) && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl p-6">
                         <div className="flex items-start justify-between border-b border-gray-100 pb-4 mb-4">
                             <div>
-                                <h2 className="text-xl font-bold text-gray-900">{selectedPromotion.name}</h2>
-                                <p className="text-sm text-gray-500">{selectedPromotion.eligibilitySummary}</p>
+                                <h2 className="text-xl font-bold text-gray-900">{selectedPromotion?.name || t('common.loading')}</h2>
+                                <p className="text-sm text-gray-500">{selectedPromotion?.eligibilitySummary}</p>
                             </div>
-                            <button onClick={() => setSelectedPromotion(null)} className="text-gray-500 hover:text-gray-700">&times;</button>
+                            <button onClick={() => { beginRead('details'); setDetailsLoading(false); setSelectedPromotion(null) }} className="text-gray-500 hover:text-gray-700">&times;</button>
                         </div>
                         {detailsLoading ? (
                             <div className="py-6 text-center text-gray-500">{t('common.loading')}</div>
@@ -612,6 +643,7 @@ export default function Promotions() {
                             </h2>
                         </div>
                         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                            <fieldset disabled={busy} className="space-y-6">
                             {/* Name & Description */}
                             <div className="grid grid-cols-1 gap-4">
                                 <div>
@@ -663,7 +695,8 @@ export default function Promotions() {
                                     <input
                                         type="number"
                                         required
-                                        min="0"
+                                        min="0.01"
+                                        max={formData.discountType === 'Percentage' ? 100 : 1000000}
                                         step="0.01"
                                         value={formData.discountValue}
                                         onChange={(e) => setFormData({ ...formData, discountValue: e.target.value })}
@@ -788,10 +821,10 @@ export default function Promotions() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        {t('coupons.startDate')} *
+                                        {t('coupons.startDate')} (UTC) *
                                     </label>
                                     <input
-                                        type="date"
+                                        type="datetime-local" step="0.001"
                                         required
                                         value={formData.startDate}
                                         onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
@@ -800,10 +833,10 @@ export default function Promotions() {
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        {t('coupons.endDate')} *
+                                        {t('coupons.endDate')} (UTC) *
                                     </label>
                                     <input
-                                        type="date"
+                                        type="datetime-local" step="0.001"
                                         required
                                         value={formData.endDate}
                                         onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
@@ -911,6 +944,7 @@ export default function Promotions() {
                                     {editingPromotion ? t('common.update') : t('common.create')}
                                 </button>
                             </div>
+                            </fieldset>
                         </form>
                     </div>
                 </div>

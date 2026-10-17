@@ -159,7 +159,7 @@ describe('ConfirmDialogProvider — awaited destructive actions', () => {
         await waitFor(() => expect(confirmButton.disabled).toBe(true))
         expect(screen.getByRole('dialog')).toBeTruthy()
         expect(screen.getByText('common.loading')).toBeTruthy()
-        expect((screen.getByRole('button', { name: 'common.cancel' })).disabled).toBe(true)
+        expect(screen.getByRole('button', { name: 'common.cancel' })).toBeDisabled()
         expect((screen.queryByLabelText('common.close')?.closest('button') as HTMLButtonElement | null)?.disabled ?? true)
             .toBe(true)
         expect(outcome).not.toHaveBeenCalled()

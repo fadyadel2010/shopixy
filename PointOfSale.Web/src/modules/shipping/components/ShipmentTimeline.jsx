@@ -45,7 +45,6 @@ export default function ShipmentTimeline({ shipment }) {
 
     const currentStatus = shipment.status
     const config = getStatusConfig(currentStatus)
-    const isTerminal = config.isTerminal
 
     // Find current step index
     const currentStepIndex = LIFECYCLE_STEPS.findIndex(s => s.status === currentStatus)
@@ -53,7 +52,7 @@ export default function ShipmentTimeline({ shipment }) {
 
     // Extract timestamps from shipment
     const timestamps = {
-        Pending: shipment.createdAt,
+        Pending: shipment.createdAtUtc,
         ReadyForPickup: shipment.readyForPickupAtUtc,
         PickedUp: shipment.pickedUpAtUtc,
         InTransit: shipment.inTransitAtUtc,
@@ -79,7 +78,7 @@ export default function ShipmentTimeline({ shipment }) {
         <div className="bg-white border border-gray-200 rounded-xl p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
                 <Clock size={20} className="text-gray-400" />
-                {t('shipping.timeline', 'Shipment Timeline')}
+                {t('shipping.closure.timeline')}
             </h3>
 
             {/* Main Timeline */}
@@ -91,9 +90,8 @@ export default function ShipmentTimeline({ shipment }) {
 
                 {LIFECYCLE_STEPS.map((step, index) => {
                     const timestamp = timestamps[step.status]
-                    const isPast = index < currentStepIndex || (index === currentStepIndex && !isTerminalState)
+                    const isPast = Boolean(timestamp)
                     const isCurrent = index === currentStepIndex && !isTerminalState
-                    const isFuture = index > currentStepIndex || isTerminalState
 
                     // If we're in a terminal state, only show steps up to where we were
                     if (isTerminalState && currentStatus !== 'Delivered') {
@@ -103,7 +101,8 @@ export default function ShipmentTimeline({ shipment }) {
                             timestamps.ReadyForPickup ? 1 : -1,
                             timestamps.PickedUp ? 2 : -1,
                             timestamps.InTransit ? 3 : -1,
-                            timestamps.OutForDelivery ? 4 : -1
+                            timestamps.OutForDelivery ? 4 : -1,
+                            timestamps.Delivered ? 5 : -1
                         )
                         if (index > lastGoodIndex + 1) {
                             // Skip steps that were never reached
@@ -139,10 +138,10 @@ export default function ShipmentTimeline({ shipment }) {
                                         className={`font-medium ${isPast || isCurrent ? 'text-gray-900' : 'text-gray-400'
                                             }`}
                                     >
-                                        {step.label}
+                                        {t(`shipping.closure.statuses.${step.status}`)}
                                         {isCurrent && (
-                                            <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
-                                                Current
+                                            <span className="ms-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
+                                                {t('shipping.closure.current')}
                                             </span>
                                         )}
                                     </span>
@@ -152,9 +151,9 @@ export default function ShipmentTimeline({ shipment }) {
                                         </span>
                                     )}
                                 </div>
-                                {!timestamp && isFuture && (
+                                {!timestamp && !isCurrent && (
                                     <span className="text-sm text-gray-400 italic">
-                                        Not reached
+                                        {t('shipping.closure.notObserved')}
                                     </span>
                                 )}
                             </div>
@@ -178,9 +177,9 @@ export default function ShipmentTimeline({ shipment }) {
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                                 <span className={`font-medium ${config.textColor}`}>
-                                    {TERMINAL_STATES[currentStatus].label}
-                                    <span className="ml-2 px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full">
-                                        Final
+                                    {t(`shipping.closure.statuses.${currentStatus}`)}
+                                    <span className="ms-2 px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full">
+                                        {t('shipping.closure.final')}
                                     </span>
                                 </span>
                                 {timestamps[currentStatus] && (
@@ -191,17 +190,17 @@ export default function ShipmentTimeline({ shipment }) {
                             </div>
                             {shipment.failureReason && currentStatus === 'Failed' && (
                                 <p className="text-sm text-red-600 mt-1">
-                                    Reason: {shipment.failureReason}
+                                     {t('shipping.closure.reason')}: {shipment.failureReason}
                                 </p>
                             )}
                             {shipment.cancellationReason && currentStatus === 'Cancelled' && (
                                 <p className="text-sm text-rose-600 mt-1">
-                                    Reason: {shipment.cancellationReason}
+                                     {t('shipping.closure.reason')}: {shipment.cancellationReason}
                                 </p>
                             )}
                             {shipment.returnReason && currentStatus === 'Returned' && (
                                 <p className="text-sm text-orange-600 mt-1">
-                                    Reason: {shipment.returnReason}
+                                     {t('shipping.closure.reason')}: {shipment.returnReason}
                                 </p>
                             )}
                         </div>

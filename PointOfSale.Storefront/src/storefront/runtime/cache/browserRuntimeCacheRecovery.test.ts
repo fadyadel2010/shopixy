@@ -162,6 +162,76 @@ beforeEach(() => {
 });
 
 describe('browser runtime cache recovery', () => {
+    it('rejects late Navigation and Footer responses after tenant identity changes', async () => {
+        let finishNavigation!: (value: Navigation) => void;
+        let finishFooter!: (value: StorefrontFooter) => void;
+        mocks.fetchNavigation.mockReturnValueOnce(new Promise<Navigation>(resolve => { finishNavigation = resolve; }));
+        mocks.fetchStorefrontFooter.mockReturnValueOnce(new Promise<StorefrontFooter>(resolve => { finishFooter = resolve; }));
+        const navigation = useNavigationStore.getState().loadNavigation();
+        const footer = useFooterStore.getState().loadFooter();
+        setResolvedTenant('33333333-3333-4333-8333-333333333333', { overwrite: true });
+        finishNavigation(createNavigation('Old store'));
+        finishFooter(createFooter('Old store'));
+        await Promise.all([navigation, footer]);
+        expect(useNavigationStore.getState().navigation).toBeNull();
+        expect(useFooterStore.getState().footer).toBeNull();
+    });
+
+    it('rejects late Footer responses after the requested language changes', async () => {
+        let finish!: (value: StorefrontFooter) => void;
+        mocks.fetchStorefrontFooter.mockReturnValueOnce(new Promise<StorefrontFooter>(resolve => { finish = resolve; }));
+        const pending = useFooterStore.getState().loadFooter();
+        mocks.languageStore.setState({ language: 'ar' });
+        finish(createFooter('English response'));
+        await pending;
+        expect(useFooterStore.getState().footer).toBeNull();
+    });
+
+    it('does not let pending public chrome overwrite a newer authenticated preview', async () => {
+        let finishNavigation!: (value: Navigation) => void;
+        let finishFooter!: (value: StorefrontFooter) => void;
+        mocks.fetchNavigation.mockReturnValueOnce(new Promise<Navigation>(resolve => { finishNavigation = resolve; }));
+        mocks.fetchStorefrontFooter.mockReturnValueOnce(new Promise<StorefrontFooter>(resolve => { finishFooter = resolve; }));
+        const navigation = useNavigationStore.getState().loadNavigation();
+        const footer = useFooterStore.getState().loadFooter();
+        const config = createStoreConfig('Draft');
+        config.previewChrome = {
+            runtimeUrl: 'https://store.example.test/draft-preview.html',
+            navigation: createNavigation('Draft header'),
+            footerByLanguage: { en: createFooter('Draft footer'), ar: createFooter('تذييل') },
+        };
+        useStoreConfigStore.getState().setConfig(config);
+        await useNavigationStore.getState().loadNavigation();
+        await useFooterStore.getState().loadFooter();
+        finishNavigation(createNavigation('Public live'));
+        finishFooter(createFooter('Public live'));
+        await Promise.all([navigation, footer]);
+        expect(useNavigationStore.getState().navigation).toEqual(config.previewChrome.navigation);
+        expect(useFooterStore.getState().footer).toEqual(config.previewChrome.footerByLanguage.en);
+    });
+
+    it('rejects an old tenant configuration that finishes after tenant resolution changes', async () => {
+        let finish!: (config: StoreConfig) => void;
+        mocks.fetchStoreConfig.mockReturnValueOnce(new Promise<StoreConfig>(resolve => { finish = resolve; }));
+        const pending = refreshStoreConfig();
+        setResolvedTenant('33333333-3333-4333-8333-333333333333', { overwrite: true });
+        finish(createStoreConfig('Old tenant'));
+        await pending;
+        expect(useStoreConfigStore.getState().config.storeName).not.toBe('Old tenant');
+        expect(mocks.applyTheme).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite a preview installed while a public configuration request is pending', async () => {
+        let finish!: (config: StoreConfig) => void;
+        mocks.fetchStoreConfig.mockReturnValueOnce(new Promise<StoreConfig>(resolve => { finish = resolve; }));
+        const pending = refreshStoreConfig();
+        useStoreConfigStore.getState().setConfig(createStoreConfig('New preview'));
+        finish(createStoreConfig('Public live'));
+        await pending;
+        expect(useStoreConfigStore.getState().config.storeName).toBe('New preview');
+        expect(mocks.applyTheme).not.toHaveBeenCalled();
+    });
+
     it('keeps authenticated draft chrome authoritative inside the isolated preview even on forced refresh and locale changes', async () => {
         const config = createStoreConfig('Draft');
         config.previewChrome = {

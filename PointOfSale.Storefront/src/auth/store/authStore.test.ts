@@ -8,6 +8,11 @@ const mocks = vi.hoisted(() => ({
     setCustomerId: vi.fn(),
     checkoutReset: vi.fn(),
     mergeCart: vi.fn().mockResolvedValue({ items: [], ownerType: 'customer' }),
+    cartSetState: vi.fn(),
+    fetchCart: vi.fn(),
+    getProviders: vi.fn(),
+    googleLogin: vi.fn(),
+    facebookLogin: vi.fn(),
 }));
 
 vi.mock('../api/authApi', () => ({
@@ -16,9 +21,9 @@ vi.mock('../api/authApi', () => ({
     logout: vi.fn(),
     getMe: mocks.getMe,
     refreshToken: mocks.refreshToken,
-    googleLogin: vi.fn(),
-    facebookLogin: vi.fn(),
-    getProviders: vi.fn().mockResolvedValue({ google: false, facebook: false }),
+    googleLogin: mocks.googleLogin,
+    facebookLogin: mocks.facebookLogin,
+    getProviders: mocks.getProviders,
     normalizeAuthError: mocks.normalizeAuthError,
 }));
 
@@ -43,8 +48,8 @@ vi.mock('@/store/checkoutStore', () => ({
 
 vi.mock('@/store/cartStore', () => ({
     useCartStore: {
-        setState: vi.fn(),
-        getState: () => ({ fetchCart: vi.fn() }),
+        setState: mocks.cartSetState,
+        getState: () => ({ fetchCart: mocks.fetchCart }),
     },
 }));
 
@@ -82,6 +87,47 @@ function deferred<T>() {
 }
 
 describe('storefront auth operation ordering', () => {
+    it('rejects a late old provider read after a newer authoritative read', async () => {
+        const first = deferred<{ google: boolean; facebook: boolean }>();
+        mocks.getProviders.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ google: false, facebook: false });
+        const old = useAuthStore.getState().loadProviders(); await useAuthStore.getState().loadProviders();
+        first.resolve({ google: true, facebook: true }); await old;
+        expect(useAuthStore.getState().availableProviders).toEqual({ google: false, facebook: false });
+    });
+
+    it('does not turn provider catalog failure into a successful disabled catalog', async () => {
+        mocks.getProviders.mockRejectedValueOnce(new Error('unavailable'));
+        await useAuthStore.getState().loadProviders();
+        expect(useAuthStore.getState().providersError).toBe('PROVIDERS_UNAVAILABLE');
+        mocks.getProviders.mockResolvedValueOnce({ google: false, facebook: false });
+        await useAuthStore.getState().loadProviders();
+        expect(useAuthStore.getState().providersError).toBeNull();
+    });
+
+    it('does not authenticate a cancelled social completion and forwards browser correlation state', async () => {
+        const pending = deferred<AuthResponse>(); mocks.googleLogin.mockReturnValueOnce(pending.promise);
+        const controller = new AbortController();
+        const login = useAuthStore.getState().googleLogin('synthetic-credential', 'synthetic-state', controller.signal);
+        controller.abort(); useAuthStore.getState().setUnauthenticated();
+        pending.resolve({ customer: loginCustomer, expiresAt: new Date().toISOString() }); expect(await login).toBe(false);
+        expect(mocks.googleLogin).toHaveBeenCalledWith('synthetic-credential', 'synthetic-state', controller.signal);
+        expect(useAuthStore.getState().status).toBe('unauthenticated');
+    });
+
+    it('releases global loading when a social transport resolves after cancellation', async () => {
+        const pending = deferred<AuthResponse>(); mocks.facebookLogin.mockReturnValueOnce(pending.promise);
+        const controller = new AbortController();
+        const login = useAuthStore.getState().facebookLogin('synthetic', 'state', controller.signal);
+        controller.abort(); pending.resolve({ customer: loginCustomer, expiresAt: new Date().toISOString() }); expect(await login).toBe(false);
+        expect(useAuthStore.getState().isLoading).toBe(false);
+        expect(useAuthStore.getState().status).not.toBe('authenticated');
+    });
+
+    it('reports an accepted social completion separately from a stale or cancelled response', async () => {
+        mocks.googleLogin.mockResolvedValueOnce({ customer: loginCustomer, expiresAt: new Date().toISOString() });
+        expect(await useAuthStore.getState().googleLogin('synthetic', 'state')).toBe(true);
+        expect(useAuthStore.getState().status).toBe('authenticated');
+    });
     beforeEach(() => {
         vi.clearAllMocks();
         useAuthStore.setState({
@@ -121,5 +167,22 @@ describe('storefront auth operation ordering', () => {
 
         expect(useAuthStore.getState().status).toBe('authenticated');
         expect(useAuthStore.getState().customer?.id).toBe(loginCustomer.id);
+    });
+
+    it('admits an accepted login merge instead of leaving the cart unconfirmed', async () => {
+        useAuthStore.getState().setAuthenticated({ customer: loginCustomer, expiresAt: '2099-01-01T00:00:00Z' });
+        await vi.waitFor(() => expect(mocks.cartSetState).toHaveBeenCalledWith(expect.objectContaining({
+            requiresRefresh: false, isInitialized: true, error: null,
+        })));
+    });
+
+    it('keeps the cart unconfirmed if both the login merge and its refresh fail', async () => {
+        mocks.mergeCart.mockRejectedValueOnce(new Error('Controlled merge failure'));
+        mocks.fetchCart.mockRejectedValueOnce(new Error('Controlled refresh failure'));
+        useAuthStore.getState().setAuthenticated({ customer: loginCustomer, expiresAt: '2099-01-01T00:00:00Z' });
+        await vi.waitFor(() => expect(mocks.cartSetState).toHaveBeenCalledWith(expect.objectContaining({
+            requiresRefresh: true, error: expect.any(String),
+        })));
+        expect(mocks.cartSetState).not.toHaveBeenCalledWith(expect.objectContaining({ requiresRefresh: false }));
     });
 });

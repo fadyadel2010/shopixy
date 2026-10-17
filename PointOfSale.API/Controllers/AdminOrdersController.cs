@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using PointOfSale.Core.Security;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Services.Admin;
@@ -374,7 +375,7 @@ public class AdminOrdersController : ControllerBase
     }
 
     [HttpGet("{orderId:guid}/checkout-attachments/{attachmentId:guid}/download")]
-    [Authorize(Roles = "Owner,Admin")]
+    [Authorize(Roles = "Owner,Admin", Policy = PosPermissions.StorefrontOrderAttachmentsDownload)]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<IActionResult> DownloadCheckoutAttachment(
         [FromRoute] Guid orderId,

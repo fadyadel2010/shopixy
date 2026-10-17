@@ -1,0 +1,4 @@
+import type { ReactElement, ReactNode } from 'react';
+export interface PosSettings { currencyCode: string; currencySymbol: string; enableTax: boolean; taxRate: number; companyName: string; companyLogo: string; companyAddress: string; companyPhone: string; companyEmail: string; receiptHeader: string; receiptFooter: string; showLogoOnReceipt: boolean; storefrontUrl: string; printFormat: string }
+export function SettingsProvider(props: { children: ReactNode }): ReactElement;
+export function useSettings(): { settings: PosSettings; loading: boolean; updateSettings(settings: Partial<PosSettings>): Promise<boolean>; updateLocalSettings<K extends keyof PosSettings>(key: K, value: PosSettings[K]): void; formatCurrency(amount: number | string | null | undefined, currency?: string): string; reloadSettings(): Promise<boolean> };

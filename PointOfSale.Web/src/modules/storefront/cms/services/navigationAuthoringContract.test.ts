@@ -28,7 +28,7 @@ const categoryId = '11111111-1111-4111-8111-111111111111'
 const productId = '22222222-2222-4222-8222-222222222222'
 const pageId = '33333333-3333-4333-8333-333333333333'
 
-const buildSnapshot = (rowVersion = '41') => ({
+const buildSnapshot = (rowVersion = '41'): import('./navigationAuthoringContract').NavigationSnapshot => ({
     rowVersion,
     draft: {
         header: [
@@ -221,7 +221,7 @@ describe('canonical Navigation authoring contract', () => {
     })
 
     it('fails closed when load or mutation responses omit backend RowVersion or target identity', () => {
-        const { rowVersion: _rowVersion, ...missingVersion } = buildSnapshot()
+        const missingVersion = Object.fromEntries(Object.entries(buildSnapshot()).filter(([key]) => key !== 'rowVersion'))
         expect(() => admitNavigationSnapshot(missingVersion)).toThrow('usable backend RowVersion')
 
         const missingIdentity = buildSnapshot()

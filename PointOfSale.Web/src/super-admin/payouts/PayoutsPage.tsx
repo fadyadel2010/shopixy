@@ -156,6 +156,10 @@ export default function PayoutsPage() {
                     throw new Error('Current backend payout completion authority is no longer available for this vendor.')
                 }
 
+                if (!activePayout.externalTransferHandoffToken?.trim()) {
+                    throw new Error('Current backend payout handoff authority is unavailable. Refresh before completing the payout.')
+                }
+
                 return completeSuperAdminVendorPayout(
                     currentExecuteItem.vendorId,
                     activePayout.payoutId,

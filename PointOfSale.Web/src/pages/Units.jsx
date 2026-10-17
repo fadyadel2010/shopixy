@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import api from '../services/api'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useToast } from '../components/Toast'
 import { useTranslation } from 'react-i18next'
 import { useRTL } from '../hooks/useRTL'
-import { useHasPermission } from '../components/PermissionGuard'
+import { useHasPermission } from '../hooks/usePosSessionPermission'
 
 export default function Units() {
     const { t } = useTranslation()
@@ -28,11 +28,7 @@ export default function Units() {
         isActive: true
     })
 
-    useEffect(() => {
-        fetchUnits()
-    }, [])
-
-    const fetchUnits = async () => {
+    const fetchUnits = useCallback(async () => {
         try {
             setLoading(true)
             const response = await api.get('/units?includeInactive=true')
@@ -43,7 +39,11 @@ export default function Units() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [showError, t])
+
+    useEffect(() => {
+        fetchUnits()
+    }, [fetchUnits])
 
     const handleAdd = () => {
         setEditingUnit(null)

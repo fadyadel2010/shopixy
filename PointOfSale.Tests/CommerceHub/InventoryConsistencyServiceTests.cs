@@ -742,6 +742,21 @@ public sealed class InventoryConsistencyServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task InventoryReconciliation_StillReleasesItsOwnExpiredOnlineReservationExactlyOnce()
+    {
+        var graph = await SeedInventoryGraphAsync(initialQuantity: 3m, orderQuantity: 2, onlinePayment: true);
+        Assert.True(await _service.ReserveOrderItemAsync(new InventoryReservationRequest(graph.TenantId, graph.OrderId, graph.SubOrderId,
+            graph.OrderItemId, graph.ProductId, graph.VariantId, 2m, null, DateTime.UtcNow.AddMinutes(-1),
+            InventoryEventIdFactory.Create("synthetic-expired-online", graph.OrderItemId), "synthetic-reconciliation", "test")));
+        var job = new CommerceHubInventoryReconciliationJob(_dbContext, _service, NullLogger<CommerceHubInventoryReconciliationJob>.Instance);
+        Assert.Equal(1, (await job.ExecuteAsync()).ExpiredReservationsReleasedCount);
+        Assert.Equal(0, (await job.ExecuteAsync()).ExpiredReservationsReleasedCount);
+        var reservation = await _dbContext.InventoryReservations.SingleAsync();
+        Assert.Equal(InventoryReservationStatus.Released, reservation.Status); Assert.Equal(2m, reservation.ReleasedQuantity);
+        Assert.Equal(0m, (await _dbContext.ProductVariantStocks.IgnoreQueryFilters().SingleAsync(stock => stock.VariantId == graph.VariantId)).ReservedQuantity);
+    }
+
+    [Fact]
     public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenOriginalWasReleased_ShouldRestoreOnce()
     {
         var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);

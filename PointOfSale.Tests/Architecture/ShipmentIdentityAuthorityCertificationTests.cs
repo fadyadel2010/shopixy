@@ -52,16 +52,6 @@ public sealed class ShipmentIdentityAuthorityCertificationTests
     {
         Assert.Contains("PASS M7-A Shipment Identity Authority", CertificationSource.ReadRepoFile("docs/architecture/shipment-identity-authority-certification-findings.md"), StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS M7-A", CertificationSource.ReadRepoFile(path), StringComparison.Ordinal);
-        }
+        HistoricalShippingCertificationBoundary.AssertPriorClosureConditional();
     }
 }

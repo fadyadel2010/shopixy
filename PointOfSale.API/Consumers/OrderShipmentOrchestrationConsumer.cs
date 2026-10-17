@@ -5,6 +5,7 @@ using PointOfSale.API.Services.Shipping;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Shipping;
 
 namespace PointOfSale.API.Consumers;
@@ -14,6 +15,7 @@ namespace PointOfSale.API.Consumers;
 /// </summary>
 public sealed class OrderShipmentOrchestrationConsumer :
     IConsumer<OrderConfirmedEvent>,
+    IConsumer<FulfillmentConfirmedEvent>,
     IConsumer<OrderPaidEvent>,
     IConsumer<OrderCollectionAccountingPostedEvent>,
     IConsumer<OrderCancelledEvent>
@@ -22,17 +24,27 @@ public sealed class OrderShipmentOrchestrationConsumer :
     private readonly IShipmentService _shipmentService;
     private readonly ICarrierShipmentService _carrierShipmentService;
     private readonly ILogger<OrderShipmentOrchestrationConsumer> _logger;
+    private readonly TenantContext? _tenantContext;
 
     public OrderShipmentOrchestrationConsumer(
         ApplicationDbContext dbContext,
         IShipmentService shipmentService,
         ICarrierShipmentService carrierShipmentService,
-        ILogger<OrderShipmentOrchestrationConsumer> logger)
+        ILogger<OrderShipmentOrchestrationConsumer> logger,
+        TenantContext? tenantContext = null)
     {
         _dbContext = dbContext;
         _shipmentService = shipmentService;
         _carrierShipmentService = carrierShipmentService;
         _logger = logger;
+        _tenantContext = tenantContext;
+    }
+
+    public Task Consume(ConsumeContext<FulfillmentConfirmedEvent> context)
+    {
+        var evt = context.Message;
+        return EnsureShipmentExistsAsync(evt.TenantId.GetValueOrDefault(), evt.OrderId, evt.CorrelationId,
+            nameof(FulfillmentConfirmedEvent), context.CancellationToken);
     }
 
     public Task Consume(ConsumeContext<OrderConfirmedEvent> context)
@@ -79,11 +91,38 @@ public sealed class OrderShipmentOrchestrationConsumer :
             return;
         }
 
+        // Events are not authority to switch tenants or cancel a still-active
+        // order. Verify persisted ownership/state before binding this consumer's
+        // scoped services; HTTP tenant middleware does not run for bus messages.
+        if (!await _dbContext.Orders.IgnoreQueryFilters().AsNoTracking().AnyAsync(
+                o => o.Id == evt.OrderId && o.TenantId == evt.TenantId.Value &&
+                     !o.IsDeleted && o.Status == OrderStatus.Cancelled, context.CancellationToken))
+            return;
+        await InVerifiedTenantScopeAsync(evt.TenantId.Value,
+            () => CompensateCancelledOrderShipmentAsync(evt, context.CancellationToken));
+    }
+
+    private async Task InVerifiedTenantScopeAsync(Guid tenantId, Func<Task> action)
+    {
+        var previousTenant = _tenantContext?.TenantId;
+        if (previousTenant.HasValue && previousTenant.Value != tenantId)
+            throw new InvalidOperationException("Shipment orchestration consumer tenant scope mismatch.");
+        _tenantContext?.SetTenantId(tenantId);
+        try { await action(); }
+        finally
+        {
+            if (previousTenant.HasValue) _tenantContext?.SetTenantId(previousTenant.Value);
+            else _tenantContext?.Clear();
+        }
+    }
+
+    private async Task CompensateCancelledOrderShipmentAsync(OrderCancelledEvent evt, CancellationToken cancellationToken)
+    {
         var shipment = await _shipmentService.GetShipmentByOrderIdAsync(
             evt.TenantId.Value,
             evt.OrderId,
             evt.CorrelationId,
-            context.CancellationToken);
+            cancellationToken);
 
         if (shipment == null)
         {
@@ -98,7 +137,7 @@ public sealed class OrderShipmentOrchestrationConsumer :
             evt.TenantId.Value,
             shipment.ShipmentId,
             evt.CancellationReason ?? "Order cancelled",
-            context.CancellationToken);
+            cancellationToken);
 
         if (cancelResult.Success)
         {
@@ -110,6 +149,15 @@ public sealed class OrderShipmentOrchestrationConsumer :
             return;
         }
 
+        if (cancelResult.Cancellation != null)
+        {
+            // Durable unresolved operation is operator work, not a reason for an
+            // infinite consumer retry that could repeat a provider mutation.
+            _logger.LogWarning("Shipment cancellation remains {Outcome} | OperationId: {OperationId} | ShipmentId: {ShipmentId}",
+                cancelResult.Cancellation.Outcome, cancelResult.Cancellation.OperationId, shipment.ShipmentId);
+            return;
+        }
+
         if (string.Equals(cancelResult.ErrorCode, "CANNOT_CANCEL", StringComparison.OrdinalIgnoreCase))
         {
             await MarkShipmentCancellationReconciliationRequiredAsync(
@@ -117,7 +165,7 @@ public sealed class OrderShipmentOrchestrationConsumer :
                 shipment.ShipmentId,
                 evt.OrderId,
                 evt.CancellationReason,
-                context.CancellationToken);
+                cancellationToken);
 
             _logger.LogCritical(
                 "Shipment cancellation compensation requires operator reconciliation because shipment is already operationally advanced | TenantId: {TenantId} | OrderId: {OrderId} | ShipmentId: {ShipmentId}",
@@ -132,6 +180,20 @@ public sealed class OrderShipmentOrchestrationConsumer :
     }
 
     private async Task EnsureShipmentExistsAsync(
+        Guid tenantId,
+        Guid orderId,
+        string? correlationId,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        if (tenantId == Guid.Empty || !await _dbContext.Orders.IgnoreQueryFilters().AsNoTracking().AnyAsync(
+                o => o.Id == orderId && o.TenantId == tenantId && !o.IsDeleted, cancellationToken))
+            return;
+        await InVerifiedTenantScopeAsync(tenantId,
+            () => EnsureShipmentExistsCoreAsync(tenantId, orderId, correlationId, source, cancellationToken));
+    }
+
+    private async Task EnsureShipmentExistsCoreAsync(
         Guid tenantId,
         Guid orderId,
         string? correlationId,
@@ -253,7 +315,7 @@ public sealed class OrderShipmentOrchestrationConsumer :
                         existingShipment.ServiceLevel,
                         cancellationToken);
 
-                    if (result.Success || result.Reconciled)
+                    if (result.Success)
                     {
                         _logger.LogInformation(
                             "External registration completed for existing shipment{Reconciled} | TenantId: {TenantId} | OrderId: {OrderId} | ShipmentId: {ShipmentId} | Source: {Source}",
@@ -263,7 +325,7 @@ public sealed class OrderShipmentOrchestrationConsumer :
                             existingShipment.Id,
                             source);
                     }
-                    else if (result.ExternalCallSkipped)
+                    else if (result.ExternalCallSkipped && !result.Reconciled)
                     {
                         _logger.LogInformation(
                             "External registration still skipped for existing shipment (payment may still be incomplete) | TenantId: {TenantId} | OrderId: {OrderId} | ShipmentId: {ShipmentId} | Source: {Source}",

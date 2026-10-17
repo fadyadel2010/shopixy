@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Net.Mail;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Financial;
@@ -58,6 +60,47 @@ public class AramexAdapter : IShippingCarrierAdapter
         CarrierCredentials credentials,
         CancellationToken cancellationToken = default)
     {
+        var credentialError = ValidateClientInfo(credentials);
+        if (credentialError != null || request.WeightKg <= 0 || request.PackageCount != 1 ||
+            string.IsNullOrWhiteSpace(request.OriginCity) || string.IsNullOrWhiteSpace(request.DestinationCity))
+            return new ShippingQuoteResult { ErrorCode = "ARAMEX_RATE_REQUEST_INVALID", ErrorMessage = "Aramex rating requires complete credentials, city addresses and one positively measured parcel." };
+        // The rate contract uses the same COD Money/Services members as creation.
+        // A quote candidate has no COD currency; neither country nor freight currency
+        // proves it. Do not substitute consignee-paid freight (C) for CODS.
+        if (request.IsCashOnDelivery)
+        {
+            return new ShippingQuoteResult
+            {
+                Success = false,
+                ErrorCode = "ARAMEX_COD_QUOTE_UNSUPPORTED",
+                ErrorMessage = "Aramex COD rating requires admitted COD currency and service/fee semantics that this quote contract does not establish."
+            };
+        }
+
+        if (!CountryCodeHelper.TryNormalizeCountryCode(request.OriginCountry, out var originCountry) ||
+            !CountryCodeHelper.TryNormalizeCountryCode(request.DestinationCountry, out var destinationCountry))
+        {
+            return new ShippingQuoteResult
+            {
+                Success = false,
+                ErrorCode = "ARAMEX_RATE_REQUEST_INVALID",
+                ErrorMessage = "Aramex rating requires valid origin and destination country codes."
+            };
+        }
+
+        var serviceLevel = request.ServiceLevel?.Trim().ToLowerInvariant() ??
+            (ResolveProductGroup(originCountry, destinationCountry) == "DOM" ? "standard" : "international");
+        var productType = MapServiceLevel(serviceLevel, originCountry, destinationCountry);
+        if (productType == null)
+        {
+            return new ShippingQuoteResult
+            {
+                Success = false,
+                ErrorCode = "ARAMEX_SERVICE_LEVEL_UNSUPPORTED",
+                ErrorMessage = "The requested service distinction is not established by the supported Aramex product pairing."
+            };
+        }
+
         var baseUrl = GetBaseUrl(credentials);
         
         try
@@ -69,44 +112,40 @@ public class AramexAdapter : IShippingCarrierAdapter
                 OriginAddress = new AramexAddress
                 {
                     City = request.OriginCity,
-                    CountryCode = request.OriginCountry,
+                    CountryCode = originCountry,
                     PostCode = request.OriginZipCode
                 },
                 DestinationAddress = new AramexAddress
                 {
                     City = request.DestinationCity,
-                    CountryCode = request.DestinationCountry,
+                    CountryCode = destinationCountry,
                     PostCode = request.DestinationZipCode
                 },
                 ShipmentDetails = new AramexShipmentDetails
                 {
                     ActualWeight = new AramexWeight { Value = request.WeightKg, Unit = "KG" },
                     NumberOfPieces = request.PackageCount,
-                    PaymentType = request.IsCashOnDelivery ? "C" : "P",
-                    ProductGroup = ResolveProductGroup(request.OriginCountry, request.DestinationCountry),
-                    ProductType = MapServiceLevel(
-                        request.ServiceLevel,
-                        request.OriginCountry,
-                        request.DestinationCountry)
+                    PaymentType = "P",
+                    ProductGroup = ResolveProductGroup(originCountry, destinationCountry),
+                    ProductType = productType
                 }
             };
             
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/RateCalculator/Service_1_0.svc/json/CalculateRate");
             httpRequest.Content = JsonContent.Create(aramexRequest, options: GetJsonOptions());
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Aramex rate calculation failed: {StatusCode} - {Body}", 
-                    response.StatusCode, responseBody);
+                _logger.LogError("Aramex rate calculation failed: {StatusCode}", response.StatusCode);
                     
                 return new ShippingQuoteResult
                 {
                     Success = false,
                     ErrorCode = "ARAMEX_RATE_ERROR",
-                    ErrorMessage = TryParseError(responseBody) ?? $"HTTP {(int)response.StatusCode}"
+                    ErrorMessage = "Aramex rate calculation could not be verified."
                 };
             }
             
@@ -118,7 +157,7 @@ public class AramexAdapter : IShippingCarrierAdapter
                 {
                     Success = false,
                     ErrorCode = "ARAMEX_RATE_ERROR",
-                    ErrorMessage = rateResponse.Notifications?.FirstOrDefault()?.Message ?? "Rate calculation failed"
+                    ErrorMessage = "Aramex rejected the rate calculation."
                 };
             }
             
@@ -140,22 +179,13 @@ public class AramexAdapter : IShippingCarrierAdapter
             quotes.Add(new ShippingQuote
             {
                 CarrierCode = CarrierCode,
-                ServiceLevel = request.ServiceLevel ?? "standard",
-                ServiceName = GetServiceName(request.ServiceLevel),
+                ServiceLevel = serviceLevel,
+                ServiceName = GetServiceName(serviceLevel),
                 Cost = rateResponse.TotalAmount.Value,
                 Currency = rateCurrency!,
-                EstimatedDeliveryDaysMin = GetEstimatedDays(request.ServiceLevel).Min,
-                EstimatedDeliveryDaysMax = GetEstimatedDays(request.ServiceLevel).Max,
-                SupportsCod = true
+                // CalculateRate does not establish a transit estimate or COD entitlement.
+                SupportsCod = false
             });
-            
-            // Filter by service level if specified
-            if (!string.IsNullOrEmpty(request.ServiceLevel))
-            {
-                quotes = quotes
-                    .Where(q => q.ServiceLevel.Equals(request.ServiceLevel, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-            }
             
             return new ShippingQuoteResult
             {
@@ -165,7 +195,7 @@ public class AramexAdapter : IShippingCarrierAdapter
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Aramex rate calculation HTTP error");
+            _logger.LogError("Aramex rating transport failed ({FailureType})", ex.GetType().Name);
             return new ShippingQuoteResult
             {
                 Success = false,
@@ -175,7 +205,7 @@ public class AramexAdapter : IShippingCarrierAdapter
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Aramex rate calculation unexpected error");
+            _logger.LogError("Aramex rating failed ({FailureType})", ex.GetType().Name);
             return new ShippingQuoteResult
             {
                 Success = false,
@@ -308,20 +338,19 @@ public class AramexAdapter : IShippingCarrierAdapter
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/Shipping/Service_1_0.svc/json/CreateShipments");
             httpRequest.Content = JsonContent.Create(aramexRequest, options: GetJsonOptions());
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError(
-                    "Aramex API error: {StatusCode} - {Body}",
-                    response.StatusCode, responseBody);
+                    "Aramex API error: {StatusCode}", response.StatusCode);
                     
                 return new CreateShipmentResult
                 {
                     Success = false,
                     ErrorCode = "ARAMEX_API_ERROR",
-                    ErrorMessage = TryParseError(responseBody) ?? $"HTTP {(int)response.StatusCode}",
+                    ErrorMessage = "Aramex rejected shipment creation. The provider outcome requires review.",
                     RawResponse = responseBody
                 };
             }
@@ -332,20 +361,32 @@ public class AramexAdapter : IShippingCarrierAdapter
                 aramexResponse?.Shipments == null ||
                 aramexResponse.Shipments.Count != 1)
             {
-                var errorMessage = aramexResponse?.Notifications?.FirstOrDefault()?.Message ?? "Shipment creation failed";
-                
-                _logger.LogError("Aramex shipment creation failed: {Error}", errorMessage);
+                _logger.LogError("Aramex shipment creation rejected by provider");
                 
                 return new CreateShipmentResult
                 {
                     Success = false,
                     ErrorCode = "ARAMEX_CREATE_ERROR",
-                    ErrorMessage = errorMessage,
+                    ErrorMessage = "Aramex did not confirm shipment creation.",
                     RawResponse = responseBody
                 };
             }
             
             var shipment = aramexResponse.Shipments.First();
+            // ProcessedShipment.HasErrors is required independently of the root flag.
+            // Notifications have no severity field; do not treat contradictory details
+            // as a successful creation or expose their AWB/label as admitted evidence.
+            if (shipment == null || shipment.HasErrors != false || shipment.Notifications?.Count > 0)
+            {
+                return new CreateShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "ARAMEX_CREATE_ERROR",
+                    ErrorMessage = "Aramex did not confirm successful processing of the shipment.",
+                    RawResponse = responseBody
+                };
+            }
+
             if ((!string.IsNullOrWhiteSpace(shipment.Reference1) &&
                  !string.Equals(shipment.Reference1.Trim(), request.OrderNumber.Trim(), StringComparison.Ordinal)) ||
                 (!string.IsNullOrWhiteSpace(shipment.Reference2) &&
@@ -426,22 +467,22 @@ public class AramexAdapter : IShippingCarrierAdapter
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Aramex HTTP request failed");
+            _logger.LogError("Aramex HTTP request failed ({FailureType})", ex.GetType().Name);
             return new CreateShipmentResult
             {
                 Success = false,
                 ErrorCode = "HTTP_ERROR",
-                ErrorMessage = $"Connection error: {ex.Message}"
+                ErrorMessage = "Aramex connection failed; the provider outcome is not established."
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error creating Aramex shipment");
+            _logger.LogError("Aramex creation failed ({FailureType})", ex.GetType().Name);
             return new CreateShipmentResult
             {
                 Success = false,
                 ErrorCode = "UNEXPECTED_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "Aramex creation could not be verified. Reconciliation is required before retry."
             };
         }
     }
@@ -459,6 +500,7 @@ public class AramexAdapter : IShippingCarrierAdapter
         {
             Success = false,
             ErrorCode = "ARAMEX_SHIPMENT_CANCELLATION_UNSUPPORTED",
+            Disposition = CarrierCancellationDisposition.Unsupported,
             ErrorMessage = "The public Aramex Shipping Services API supports pickup cancellation, not shipment cancellation."
         });
     }
@@ -476,13 +518,14 @@ public class AramexAdapter : IShippingCarrierAdapter
             {
                 ClientInfo = BuildClientInfo(credentials),
                 Shipments = new List<string> { trackingNumber },
-                GetLastTrackingUpdateOnly = false
+                GetLastTrackingUpdateOnly = false,
+                GetUpdateTimeZone = true
             };
             
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/Tracking/Service_1_0.svc/json/TrackShipments");
             httpRequest.Content = JsonContent.Create(trackRequest, options: GetJsonOptions());
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             
             if (!response.IsSuccessStatusCode)
@@ -491,7 +534,7 @@ public class AramexAdapter : IShippingCarrierAdapter
                 {
                     Success = false,
                     ErrorCode = "TRACKING_FAILED",
-                    ErrorMessage = TryParseError(responseBody) ?? $"HTTP {(int)response.StatusCode}",
+                    ErrorMessage = "Aramex tracking could not be verified.",
                     RawResponse = responseBody
                 };
             }
@@ -504,7 +547,7 @@ public class AramexAdapter : IShippingCarrierAdapter
                 {
                     Success = false,
                     ErrorCode = "TRACKING_ERROR",
-                    ErrorMessage = trackResponse.Notifications?.FirstOrDefault()?.Message ?? "Tracking failed",
+                    ErrorMessage = "Aramex rejected the tracking request.",
                     RawResponse = responseBody
                 };
             }
@@ -535,24 +578,47 @@ public class AramexAdapter : IShippingCarrierAdapter
                 };
             }
             
-            var trackingEvents = shipmentResults.Value
-                .OrderByDescending(t => t.UpdateDateTime)
-                .ToList();
-
-            if (trackingEvents.Any(trackingEvent =>
-                    !trackingEvent.UpdateDateTime.HasValue ||
-                    !TryMapAramexStatus(trackingEvent.UpdateCode, out _)))
+            if (shipmentResults.Value.Any(trackingEvent => trackingEvent == null ||
+                    !string.Equals(trackingEvent.WaybillNumber?.Trim(), trackingNumber.Trim(), StringComparison.Ordinal)))
             {
                 return new ShipmentTrackingResult
                 {
                     Success = false,
-                    ErrorCode = "TRACKING_STATUS_UNADMITTED",
-                    ErrorMessage = "Aramex tracking response contained an unknown status or missing event timestamp.",
+                    ErrorCode = "TRACKING_IDENTITY_MISMATCH",
+                    ErrorMessage = "Aramex returned an event without the requested waybill identity.",
                     RawResponse = responseBody
                 };
             }
+
+            var trackingEvents = new List<(AramexTrackingUpdate Update, DateTime Timestamp)>();
+            foreach (var update in shipmentResults.Value)
+            {
+                if (!TryMapAramexStatus(update.UpdateCode, out _))
+                {
+                    return new ShipmentTrackingResult
+                    {
+                        Success = false,
+                        ErrorCode = "TRACKING_STATUS_UNADMITTED",
+                        ErrorMessage = "Aramex tracking response contained an unknown status.",
+                        RawResponse = responseBody
+                    };
+                }
+
+                if (!TryAdmitTrackingTimestamp(update.UpdateDateTime, update.UpdateTimeZone, out var timestamp))
+                {
+                    return new ShipmentTrackingResult
+                    {
+                        Success = false,
+                        ErrorCode = "TRACKING_TIMESTAMP_UNADMITTED",
+                        ErrorMessage = "Aramex tracking response contained missing, malformed, ambiguous or conflicting timestamp/time-zone evidence.",
+                        RawResponse = responseBody
+                    };
+                }
+                trackingEvents.Add((update, timestamp));
+            }
+            trackingEvents = trackingEvents.OrderByDescending(t => t.Timestamp).ToList();
             
-            var latestEvent = trackingEvents.First();
+            var latestEvent = trackingEvents.First().Update;
             _ = TryMapAramexStatus(latestEvent.UpdateCode, out var currentStatus);
             
             var result = new ShipmentTrackingResult
@@ -564,38 +630,29 @@ public class AramexAdapter : IShippingCarrierAdapter
                 RawResponse = responseBody,
                 Events = trackingEvents.Select(t => new TrackingEvent
                 {
-                    Timestamp = t.UpdateDateTime!.Value,
-                    Status = MapAdmittedAramexStatus(t.UpdateCode!),
-                    Description = t.UpdateDescription ?? "",
-                    Location = t.UpdateLocation,
-                    CarrierStatusCode = t.UpdateCode
+                    Timestamp = t.Timestamp,
+                    Status = MapAdmittedAramexStatus(t.Update.UpdateCode!),
+                    Description = t.Update.UpdateDescription ?? "",
+                    Location = t.Update.UpdateLocation,
+                    CarrierStatusCode = t.Update.UpdateCode
                 }).ToList()
             };
             
-            // Check for COD collection
-            if (currentStatus == ShipmentStatus.Delivered)
-            {
-                // Aramex sends COD info in the delivery confirmation
-                var codEvent = trackingEvents.FirstOrDefault(t => 
-                    t.UpdateCode?.Contains("COD", StringComparison.OrdinalIgnoreCase) == true);
-                    
-                if (codEvent != null)
-                {
-                    result.CodCollected = true;
-                    result.CodCollectedAt = codEvent.UpdateDateTime;
-                }
-            }
+            // Tracking is logistics evidence only. No admitted Aramex contract in
+            // this integration establishes customer-money collection.
+            result.CodCollected = false;
+            result.CodCollectedAt = null;
             
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error tracking Aramex shipment {TrackingNumber}", trackingNumber);
+            _logger.LogError("Aramex tracking failed ({FailureType})", ex.GetType().Name);
             return new ShipmentTrackingResult
             {
                 Success = false,
                 ErrorCode = "TRACKING_ERROR",
-                ErrorMessage = ex.Message
+                ErrorMessage = "Aramex tracking response could not be verified."
             };
         }
     }
@@ -628,24 +685,36 @@ public class AramexAdapter : IShippingCarrierAdapter
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/Location/Service_1_0.svc/json/FetchCountries");
             httpRequest.Content = JsonContent.Create(testRequest, options: GetJsonOptions());
             
-            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-            
+            using var response = await CarrierHttpSafety.SendAsync(_httpClient, httpRequest, cancellationToken);
+            var httpFailure = CarrierConnectionDiagnostics.HttpFailure(response.StatusCode);
+            if (httpFailure != null) return httpFailure;
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            var providerHasErrors = false;
+            var providerValidated = false;
             if (!string.IsNullOrWhiteSpace(responseBody))
             {
                 using var document = JsonDocument.Parse(responseBody);
-                providerHasErrors =
-                    document.RootElement.TryGetProperty("HasErrors", out var hasErrors) &&
-                    hasErrors.ValueKind == JsonValueKind.True;
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("Notifications", out var notifications) && notifications.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var notification in notifications.EnumerateArray())
+                    {
+                        var code = CarrierConnectionDiagnostics.Code(notification, "Code", credentials);
+                        if (code != null) return CarrierConnectionDiagnostics.Failure($"ARAMEX_{code}");
+                    }
+                }
+                providerValidated = document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("HasErrors", out var hasErrors) && hasErrors.ValueKind == JsonValueKind.False &&
+                    document.RootElement.TryGetProperty("Countries", out var countries) && countries.ValueKind == JsonValueKind.Array &&
+                    countries.GetArrayLength() > 0 && countries.EnumerateArray().All(country => country.ValueKind == JsonValueKind.Object &&
+                        country.TryGetProperty("Code", out var code) && code.ValueKind == JsonValueKind.String &&
+                        CountryCodeHelper.TryNormalizeCountryCode(code.GetString(), out _));
             }
 
-            if (response.IsSuccessStatusCode && !providerHasErrors)
+            if (response.IsSuccessStatusCode && providerValidated)
             {
                 return new CarrierValidationResult
                 {
                     Success = true,
-                    AccountName = $"Aramex Account ({credentials.AccountId})"
                 };
             }
             
@@ -656,15 +725,9 @@ public class AramexAdapter : IShippingCarrierAdapter
                 ErrorMessage = "Aramex API credentials validation failed"
             };
         }
-        catch (Exception ex)
-        {
-            return new CarrierValidationResult
-            {
-                Success = false,
-                ErrorCode = "VALIDATION_ERROR",
-                ErrorMessage = ex.Message
-            };
-        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return CarrierConnectionDiagnostics.Failure("CONNECTION_TIMEOUT"); }
+        catch (HttpRequestException) { return CarrierConnectionDiagnostics.Failure("NETWORK_ERROR"); }
+        catch (JsonException) { return CarrierConnectionDiagnostics.Failure("PROVIDER_RESPONSE_INVALID"); }
     }
     
     public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels()
@@ -674,34 +737,20 @@ public class AramexAdapter : IShippingCarrierAdapter
             new ServiceLevelInfo
             {
                 Code = "standard",
-                Name = "Domestic Express",
-                Description = "Standard domestic delivery (2-5 business days)",
-                TypicalDaysMin = 2,
-                TypicalDaysMax = 5
-            },
-            new ServiceLevelInfo
-            {
-                Code = "express",
-                Name = "Priority Express",
-                Description = "Priority domestic delivery (1-2 business days)",
-                TypicalDaysMin = 1,
-                TypicalDaysMax = 2
+                Name = GetServiceName("standard"),
+                Description = "Domestic product DOM/OND; no separate priority tier or transit guarantee established."
             },
             new ServiceLevelInfo
             {
                 Code = "international",
-                Name = "International Express",
-                Description = "International delivery (5-10 business days)",
-                TypicalDaysMin = 5,
-                TypicalDaysMax = 10
+                Name = GetServiceName("international"),
+                Description = "International parcel product EXP/PPX; account entitlement requires certification."
             },
             new ServiceLevelInfo
             {
                 Code = "economy",
-                Name = "Economy Express",
-                Description = "Economy international delivery (7-14 business days)",
-                TypicalDaysMin = 7,
-                TypicalDaysMax = 14
+                Name = GetServiceName("economy"),
+                Description = "International parcel product EXP/EPX; account entitlement requires certification."
             }
         }.AsReadOnly();
     }
@@ -763,10 +812,6 @@ public class AramexAdapter : IShippingCarrierAdapter
                 return null;
             }
             
-            // Check for COD collection
-            var codCollected = statusCode.Contains("COD", StringComparison.OrdinalIgnoreCase) &&
-                               statusDescription?.Contains("collected", StringComparison.OrdinalIgnoreCase) == true;
-            
             _logger.LogInformation(
                 "Parsed Aramex webhook: TrackingNumber={TrackingNumber}, Status={Status}, Code={Code}",
                 trackingNumber, status, statusCode);
@@ -777,8 +822,10 @@ public class AramexAdapter : IShippingCarrierAdapter
                 Status = status,
                 StatusDescription = statusDescription,
                 EventTimestamp = eventTime,
-                CodCollected = codCollected,
-                CodCollectedAt = codCollected ? eventTime : null,
+                // This parser is retained only behind disabled webhook capability;
+                // ordinary tracking/delivery events never prove collection money.
+                CodCollected = false,
+                CodCollectedAt = null,
                 RawPayload = payload
             };
         }
@@ -912,21 +959,21 @@ public class AramexAdapter : IShippingCarrierAdapter
             : "ClientInfo.AccountCountryCode must be a valid ISO 3166-1 alpha-2 country code.";
     }
 
-    private static string MapServiceLevel(
+    private static string? MapServiceLevel(
         string? serviceLevel,
         string originCountry,
         string destinationCountry)
     {
         if (ResolveProductGroup(originCountry, destinationCountry) == "DOM")
         {
-            return "OND";
+            return serviceLevel?.Trim().ToLowerInvariant() == "standard" ? "OND" : null;
         }
 
-        return (serviceLevel?.ToLowerInvariant()) switch
+        return (serviceLevel?.Trim().ToLowerInvariant()) switch
         {
             "international" => "PPX", // Priority Parcel Express
             "economy" => "EPX", // Economy Parcel Express
-            _ => "PPX"
+            _ => null
         };
     }
 
@@ -1036,9 +1083,9 @@ public class AramexAdapter : IShippingCarrierAdapter
         }
 
         var serviceLevel = request.ServiceLevel?.Trim().ToLowerInvariant();
-        if (serviceLevel is not ("standard" or "express" or "international" or "economy"))
+        if (MapServiceLevel(serviceLevel, originCountry, recipientCountry) == null)
         {
-            return Invalid("Shipment.Details.ProductType cannot be resolved from the supplied service level.");
+            return Invalid("Shipment.Details.ProductType cannot establish the requested service distinction for this route.");
         }
 
         var currency = request.Currency?.Trim().ToUpperInvariant() ?? "";
@@ -1083,7 +1130,7 @@ public class AramexAdapter : IShippingCarrierAdapter
 
             if (!string.Equals(currency, "USD", StringComparison.Ordinal))
             {
-                return Invalid("The official Shipping Services contract requires USD for CashOnDeliveryAmount.");
+                return Invalid("Aramex COD shipment admission is limited to USD until account- and country-specific currency semantics are certified.");
             }
         }
         else if (request.CodAmount.HasValue)
@@ -1158,22 +1205,61 @@ public class AramexAdapter : IShippingCarrierAdapter
     {
         return (serviceLevel?.ToLowerInvariant()) switch
         {
-            "express" => "Aramex Priority Express",
-            "international" => "Aramex International Express",
-            "economy" => "Aramex Economy Express",
-            _ => "Aramex Domestic Express"
+            "international" => "Aramex International Parcel (PPX)",
+            "economy" => "Aramex International Parcel (EPX)",
+            _ => "Aramex Domestic (OND)"
         };
     }
-    
-    private static (int Min, int Max) GetEstimatedDays(string? serviceLevel)
+
+    private static bool TryAdmitTrackingTimestamp(JsonElement value, string? timeZone, out DateTime timestamp)
     {
-        return (serviceLevel?.ToLowerInvariant()) switch
+        timestamp = default;
+        TimeSpan? zoneOffset = null;
+        if (!string.IsNullOrWhiteSpace(timeZone))
         {
-            "express" => (1, 2),
-            "international" => (5, 10),
-            "economy" => (7, 14),
-            _ => (2, 5)
-        };
+            if (!TryReadTrackingOffset(timeZone.Trim(), out var offset)) return false;
+            zoneOffset = offset;
+        }
+
+        if (value.ValueKind != JsonValueKind.String) return false;
+        var text = value.GetString()!;
+        var wcf = Regex.Match(text, @"^/Date\((-?[0-9]+)([+-][0-9]{4})?\)/$", RegexOptions.CultureInvariant);
+        if (wcf.Success)
+        {
+            if (!long.TryParse(wcf.Groups[1].Value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var milliseconds) ||
+                (wcf.Groups[2].Success && !TryReadTrackingOffset(wcf.Groups[2].Value, out _))) return false;
+            try
+            {
+                // WCF DateTime milliseconds are already UTC. Its optional suffix is a
+                // Local-kind marker, not an offset to apply (Microsoft WCF wire format).
+                timestamp = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds).UtcDateTime;
+                return timestamp != DateTime.MinValue;
+            }
+            catch (ArgumentOutOfRangeException) { return false; }
+        }
+
+        // Preserve explicitly zoned ISO evidence without host-local conversion.
+        // A zone-less wall clock, or an opaque Aramex zone name, needs a documented
+        // account contract; UpdateTimeZone must not silently supply a guessed zone.
+        if (!Regex.IsMatch(text, @"(Z|[+-][0-9]{2}:[0-9]{2})$", RegexOptions.CultureInvariant) ||
+            !value.TryGetDateTimeOffset(out var instant) ||
+            (zoneOffset.HasValue && zoneOffset.Value != instant.Offset)) return false;
+
+        timestamp = instant.UtcDateTime;
+        return timestamp != DateTime.MinValue;
+    }
+
+    private static bool TryReadTrackingOffset(string value, out TimeSpan offset)
+    {
+        offset = default;
+        if (value is "UTC" or "GMT" or "Z") return true;
+        var match = Regex.Match(value, @"^([+-])([0-9]{2}):?([0-9]{2})$", RegexOptions.CultureInvariant);
+        if (!match.Success) return false;
+        var hours = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+        var minutes = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+        if (hours > 14 || minutes > 59 || (hours == 14 && minutes != 0)) return false;
+        offset = new TimeSpan(hours, minutes, 0) * (match.Groups[1].Value == "-" ? -1 : 1);
+        return true;
     }
     
     private static JsonSerializerOptions GetJsonOptions()
@@ -1336,6 +1422,7 @@ internal class AramexDimensions
 internal class AramexMoney
 {
     [JsonPropertyName("Value")]
+    [JsonRequired]
     public decimal Value { get; set; }
     
     [JsonPropertyName("CurrencyCode")]
@@ -1489,6 +1576,9 @@ internal class AramexTrackRequest
     
     [JsonPropertyName("GetLastTrackingUpdateOnly")]
     public bool GetLastTrackingUpdateOnly { get; set; }
+
+    [JsonPropertyName("GetUpdateTimeZone")]
+    public bool GetUpdateTimeZone { get; set; }
 }
 
 // Response models
@@ -1522,12 +1612,36 @@ internal class AramexCreateShipmentResponse
     public List<AramexNotification>? Notifications { get; set; }
     
     [JsonPropertyName("Shipments")]
-    public List<AramexShipment>? Shipments { get; set; }
+    public List<AramexProcessedShipment>? Shipments { get; set; }
     
+}
+
+// Response-only contract; error members must never leak into Shipment requests.
+internal class AramexProcessedShipment
+{
+    [JsonPropertyName("ID")]
+    public string? ID { get; set; }
+    [JsonPropertyName("Reference1")]
+    public string? Reference1 { get; set; }
+    [JsonPropertyName("Reference2")]
+    public string? Reference2 { get; set; }
+    [JsonPropertyName("ForeignHAWB")]
+    public string? ForeignHAWB { get; set; }
+    [JsonPropertyName("HasErrors")]
+    public bool? HasErrors { get; set; }
+    [JsonPropertyName("Notifications")]
+    public List<AramexNotification>? Notifications { get; set; }
+    [JsonPropertyName("ShipmentLabel")]
+    public AramexShipmentLabel? ShipmentLabel { get; set; }
+    [JsonPropertyName("ShipmentDetails")]
+    public AramexShipmentDetails? ShipmentDetails { get; set; }
 }
 
 internal class AramexTrackingUpdate
 {
+    [JsonPropertyName("WaybillNumber")]
+    public string? WaybillNumber { get; set; }
+
     [JsonPropertyName("UpdateCode")]
     public string? UpdateCode { get; set; }
     
@@ -1535,7 +1649,10 @@ internal class AramexTrackingUpdate
     public string? UpdateDescription { get; set; }
     
     [JsonPropertyName("UpdateDateTime")]
-    public DateTime? UpdateDateTime { get; set; }
+    public JsonElement UpdateDateTime { get; set; }
+
+    [JsonPropertyName("UpdateTimeZone")]
+    public string? UpdateTimeZone { get; set; }
     
     [JsonPropertyName("UpdateLocation")]
     public string? UpdateLocation { get; set; }

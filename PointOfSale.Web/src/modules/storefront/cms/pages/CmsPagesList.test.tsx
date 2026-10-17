@@ -76,4 +76,16 @@ describe('CmsPagesList authoring boundaries', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Delete page' }))
         expect(cmsService.deletePage).toHaveBeenCalledWith(listPage.id, 3)
     })
+
+    it('distinguishes a committed delete from failed readback without announcing full success', async () => {
+        cmsService.deletePage.mockResolvedValue(undefined)
+        cmsService.listPages.mockResolvedValueOnce([listPage]).mockRejectedValueOnce(new Error('Readback unavailable'))
+        render(<CmsPagesList />)
+        await screen.findByText('About')
+        fireEvent.click(screen.getByTitle('Delete'))
+        fireEvent.click(screen.getByRole('button', { name: 'Delete page' }))
+        await screen.findByText(/The change was saved, but the page list could not be reloaded/)
+        expect(screen.queryByText('storefront.cms.pageList.deleted')).not.toBeInTheDocument()
+        expect(cmsService.deletePage).toHaveBeenCalledTimes(1)
+    })
 })

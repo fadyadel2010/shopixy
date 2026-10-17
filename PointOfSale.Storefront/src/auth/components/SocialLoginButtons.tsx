@@ -6,9 +6,11 @@
  * Dynamically shown based on provider availability from backend.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '../hooks/useAuth';
+import { startSocialLogin } from '../api/authApi';
+import { useAuthStore } from '../store/authStore';
 
 interface SocialLoginButtonsProps {
     onSuccess?: () => void;
@@ -27,15 +29,33 @@ export const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
     disabled = false,
 }) => {
     const { t } = useTranslation();
-    const { providers, googleLogin, facebookLogin, isLoading } = useAuth();
+    const { providers, googleLogin, facebookLogin, isLoading, customer } = useAuth();
+    const providersError = useAuthStore(state => state.providersError);
+    const reloadProviders = useAuthStore(state => state.loadProviders);
 
     const [loadingProvider, setLoadingProvider] = useState<'google' | 'facebook' | null>(null);
+    const pending = useRef(false);
+    const attempt = useRef(0);
+    const controller = useRef<AbortController | null>(null);
+    const mounted = useRef(false);
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+    const scope = `${providers?.google}:${providers?.facebook}:${providers?.googleClientId}:${providers?.facebookAppId}:${customer?.id}`;
+    useEffect(() => {
+        setLoadingProvider(null);
+        return () => {
+            attempt.current += 1;
+            pending.current = false;
+            controller.current?.abort();
+            window.google?.accounts?.id.cancel?.();
+        };
+    }, [scope]);
 
     // Check if any providers are available
     const hasProviders = providers && (providers.google || providers.facebook);
 
     // Handle Google login
     const handleGoogleLogin = useCallback(async () => {
+        if (pending.current || disabled || isLoading) return;
         if (!window.google?.accounts?.id) {
             onError?.(t('auth.social.googleNotLoaded', {
                 defaultValue: 'Google Sign-In is not available. Please try again later.'
@@ -53,37 +73,60 @@ export const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
         }
 
         setLoadingProvider('google');
+        pending.current = true;
+        const current = ++attempt.current;
+        const operation = new AbortController();
+        controller.current = operation;
 
         try {
+            const challenge = await startSocialLogin('google', operation.signal);
+            if (current !== attempt.current) return;
             // Initialize Google Sign-In with dynamic Client ID
             window.google.accounts.id.initialize({
                 client_id: googleClientId,
+                nonce: challenge.nonce,
                 callback: async (response: { credential: string }) => {
+                    if (current !== attempt.current) return;
+                    attempt.current += 1; // SDK callback can only be completed once.
                     try {
-                        await googleLogin(response.credential);
-                        onSuccess?.();
-                    } catch (error) {
-                        onError?.(t('auth.social.googleFailed', {
+                        const accepted = await googleLogin(response.credential, challenge.state, operation.signal);
+                        // Accepting this identity itself changes the account scope.
+                        // The store distinguishes that success from a stale/aborted completion.
+                        if (accepted && mounted.current) onSuccess?.();
+                    } catch {
+                        if (mounted.current && controller.current === operation) onError?.(t('auth.social.googleFailed', {
                             defaultValue: 'Google Sign-In failed. Please try again.'
                         }));
                     } finally {
-                        setLoadingProvider(null);
+                        if (mounted.current && controller.current === operation) {
+                            pending.current = false;
+                            setLoadingProvider(null);
+                        }
                     }
                 },
             });
 
             // Prompt user to sign in
-            window.google.accounts.id.prompt();
-        } catch (error) {
+            window.google.accounts.id.prompt(moment => {
+                if (current !== attempt.current) return;
+                if (moment.isNotDisplayed?.() || moment.isSkippedMoment?.() || moment.isDismissedMoment?.()) {
+                    pending.current = false;
+                    setLoadingProvider(null);
+                }
+            });
+        } catch {
+            if (current !== attempt.current) return;
+            pending.current = false;
             setLoadingProvider(null);
             onError?.(t('auth.social.googleFailed', {
                 defaultValue: 'Google Sign-In failed. Please try again.'
             }));
         }
-    }, [providers?.googleClientId, googleLogin, onSuccess, onError, t]);
+    }, [providers?.googleClientId, googleLogin, onSuccess, onError, t, disabled, isLoading]);
 
     // Handle Facebook login
     const handleFacebookLogin = useCallback(async () => {
+        if (pending.current || disabled || isLoading) return;
         if (!window.FB) {
             onError?.(t('auth.social.facebookNotLoaded', {
                 defaultValue: 'Facebook Login is not available. Please try again later.'
@@ -101,8 +144,14 @@ export const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
         }
 
         setLoadingProvider('facebook');
+        pending.current = true;
+        const current = ++attempt.current;
+        const operation = new AbortController();
+        controller.current = operation;
 
         try {
+            const challenge = await startSocialLogin('facebook', operation.signal);
+            if (current !== attempt.current) return;
             // Initialize Facebook SDK with dynamic App ID
             window.FB.init({
                 appId: facebookAppId,
@@ -112,29 +161,37 @@ export const SocialLoginButtons: React.FC<SocialLoginButtonsProps> = ({
             });
 
             window.FB.login(async (response: { authResponse?: { accessToken: string } }) => {
+                if (current !== attempt.current) return;
+                attempt.current += 1;
                 if (response.authResponse?.accessToken) {
                     try {
-                        await facebookLogin(response.authResponse.accessToken);
-                        onSuccess?.();
-                    } catch (error) {
-                        onError?.(t('auth.social.facebookFailed', {
+                        const accepted = await facebookLogin(response.authResponse.accessToken, challenge.state, operation.signal);
+                        if (accepted && mounted.current) onSuccess?.();
+                    } catch {
+                        if (mounted.current && controller.current === operation) onError?.(t('auth.social.facebookFailed', {
                             defaultValue: 'Facebook Login failed. Please try again.'
                         }));
                     }
                 }
-                setLoadingProvider(null);
+                if (mounted.current && controller.current === operation) {
+                    pending.current = false;
+                    setLoadingProvider(null);
+                }
             }, { scope: 'email,public_profile' });
-        } catch (error) {
+        } catch {
+            if (current !== attempt.current) return;
+            pending.current = false;
             setLoadingProvider(null);
             onError?.(t('auth.social.facebookFailed', {
                 defaultValue: 'Facebook Login failed. Please try again.'
             }));
         }
-    }, [providers?.facebookAppId, facebookLogin, onSuccess, onError, t]);
+    }, [providers?.facebookAppId, facebookLogin, onSuccess, onError, t, disabled, isLoading]);
 
     // Don't render if no providers available
     if (!hasProviders) {
-        return null;
+        return providersError ? <div role="alert">{t('auth.social.unavailable', { defaultValue: 'Social sign-in options could not be loaded. Email sign-in is still available.' })}
+            <button type="button" onClick={() => { void reloadProviders(); }}>{t('common.retry', { defaultValue: 'Retry' })}</button></div> : null;
     }
 
     const isDisabled = disabled || isLoading || loadingProvider !== null;
@@ -240,9 +297,11 @@ declare global {
                 id: {
                     initialize: (config: {
                         client_id: string;
+                        nonce?: string;
                         callback: (response: { credential: string }) => void;
                     }) => void;
-                    prompt: () => void;
+                    prompt: (listener?: (moment: { isNotDisplayed?: () => boolean; isSkippedMoment?: () => boolean; isDismissedMoment?: () => boolean }) => void) => void;
+                    cancel?: () => void;
                 };
             };
         };

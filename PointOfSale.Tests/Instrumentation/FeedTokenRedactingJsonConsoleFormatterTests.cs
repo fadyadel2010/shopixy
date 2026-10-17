@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Net.Sockets;
+using Npgsql;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Console;
@@ -312,6 +314,130 @@ public class FeedTokenRedactingJsonConsoleFormatterTests
         Assert.DoesNotContain(rawToken, output);
         using var document = JsonDocument.Parse(output);
         Assert.Contains("/api/public/feeds/snapchat/<REDACTED>", document.RootElement.GetProperty("Exception").GetString());
+    }
+
+    [Fact]
+    public void Write_ExceptionWithUnsafeStackRenderer_DoesNotInvokeVirtualFormatting()
+    {
+        var exception = new UnsafeFormattingException("Original acquisition failure", new TimeoutException("Connection acquisition timed out"));
+        var output = RenderException(exception);
+        using var document = JsonDocument.Parse(output);
+        var rendered = document.RootElement.GetProperty("Exception").GetString()!;
+        Assert.Contains(nameof(UnsafeFormattingException), rendered);
+        Assert.Contains("Original acquisition failure", rendered);
+        Assert.Contains("Connection acquisition timed out", rendered);
+        Assert.Equal(0, exception.FormattingCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Write_NestedDatabaseFailure_PreservesProviderCodeAndAllCauses_AndRedacts(bool aggregate)
+    {
+        var token = ProductFeedTokenService.GenerateRawToken();
+        var database = new PostgresException($"Acquisition failed /api/public/feeds/meta/{token}", "ERROR", "ERROR", "40001");
+        Exception exception = new InvalidOperationException("An exception has been raised that is likely due to a transient failure.", database);
+        if (aggregate) exception = new AggregateException("Background dependency failures", exception,
+            new NpgsqlException("Failed to connect to isolated PostgreSQL", new SocketException((int)SocketError.ConnectionRefused)));
+        var output = RenderException(exception);
+        Assert.DoesNotContain(token, output);
+        using var document = JsonDocument.Parse(output);
+        var rendered = document.RootElement.GetProperty("Exception").GetString()!;
+        Assert.Contains(nameof(InvalidOperationException), rendered);
+        Assert.Contains(nameof(PostgresException), rendered);
+        Assert.Contains("40001", rendered);
+        Assert.Contains("Acquisition failed /api/public/feeds/meta/<REDACTED>", rendered);
+        if (aggregate)
+        {
+            Assert.Contains(nameof(NpgsqlException), rendered);
+            Assert.Contains(nameof(SocketException), rendered);
+            Assert.Contains("ConnectionRefused", rendered);
+        }
+    }
+
+    [Fact]
+    public async Task Write_RealUnavailableIsolatedPostgresConnection_PreservesFailureAndStaysUsable()
+    {
+        // Bound an unused loopback port for the duration, rather than guessing a
+        // merchant or disposable database endpoint. No PostgreSQL traffic can escape.
+        using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        listener.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0));
+        listener.Listen(1); // Accept TCP, but never answer a PostgreSQL handshake.
+        var port = ((System.Net.IPEndPoint)listener.LocalEndPoint!).Port;
+        await using var connection = new NpgsqlConnection($"Host=127.0.0.1;Port={port};Database=shipping_logger_failure;Username=shipping_logger;Timeout=1;Pooling=false");
+        var exception = await Assert.ThrowsAsync<NpgsqlException>(() => connection.OpenAsync());
+        Assert.IsType<TimeoutException>(exception.InnerException);
+        for (var i = 0; i < 20; i++)
+        {
+            using var document = JsonDocument.Parse(RenderException(exception));
+            var rendered = document.RootElement.GetProperty("Exception").GetString()!;
+            Assert.Contains(nameof(NpgsqlException), rendered);
+            Assert.Contains(nameof(TimeoutException), rendered);
+            Assert.Contains(exception.Message, rendered);
+        }
+        using var healthy = JsonDocument.Parse(Render(CreateFormatter(), new LogEntry<string>(LogLevel.Information,
+            "AfterDatabaseFailure", new EventId(0), "still responsive", null, (state, _) => state), null));
+        Assert.Equal("still responsive", healthy.RootElement.GetProperty("Message").GetString());
+    }
+
+    [Fact]
+    public void Write_ThrownAsyncGenericException_RetainsFrameLocationsWithoutSignatureFormatting()
+    {
+        Exception exception;
+        try { ThrowGenericAsync<Dictionary<string, List<Guid>>>().GetAwaiter().GetResult(); throw new Exception("unreachable"); }
+        catch (InvalidOperationException error) { exception = error; }
+        using var document = JsonDocument.Parse(RenderException(exception));
+        var rendered = document.RootElement.GetProperty("Exception").GetString()!;
+        Assert.Contains("Original async failure", rendered);
+        Assert.Contains("MoveNext", rendered);
+        Assert.Contains("IL", rendered);
+    }
+
+    [Fact]
+    public void Write_DeepInnerChain_RetainsDatabaseCauseWithoutRecursiveToString()
+    {
+        Exception exception = new PostgresException("original database cause", "ERROR", "ERROR", "53300");
+        for (var i = 0; i < 64; i++) exception = new InvalidOperationException($"wrapper-{i}", exception);
+        using var document = JsonDocument.Parse(RenderException(exception));
+        var rendered = document.RootElement.GetProperty("Exception").GetString()!;
+        Assert.Contains("wrapper-63", rendered);
+        Assert.Contains("wrapper-0", rendered);
+        Assert.Contains("original database cause", rendered);
+        Assert.Contains("53300", rendered);
+    }
+
+    [Fact]
+    public void Write_ExceptionInStructuredStateAndScope_UsesTheSameSafeRedactedFormatter()
+    {
+        var token = ProductFeedTokenService.GenerateRawToken();
+        var exception = new UnsafeFormattingException($"failure /api/public/feeds/meta/{token}", new TimeoutException("timeout"));
+        var state = new List<KeyValuePair<string, object?>> { new("Cause", exception) };
+        var scopes = new LoggerExternalScopeProvider();
+        using var scope = scopes.Push(exception);
+        var entry = new LogEntry<List<KeyValuePair<string, object?>>>(LogLevel.Error, "Database", new EventId(1), state,
+            exception, (_, _) => "Database failure");
+        var output = Render(CreateFormatter(), entry, scopes);
+        Assert.DoesNotContain(token, output);
+        using var document = JsonDocument.Parse(output);
+        Assert.Contains("<REDACTED>", document.RootElement.GetProperty("State").GetProperty("Cause").GetString());
+        Assert.Contains("timeout", document.RootElement.GetProperty("Scopes")[0].GetString());
+        Assert.Equal(0, exception.FormattingCalls);
+    }
+
+    private static string RenderException(Exception exception) => Render(CreateFormatter(),
+        new LogEntry<string>(LogLevel.Error, "Database", new EventId(1), "Database acquisition failed", exception, (state, _) => state), null);
+
+    private static async Task ThrowGenericAsync<T>()
+    {
+        await Task.Yield();
+        throw new InvalidOperationException("Original async failure");
+    }
+
+    private sealed class UnsafeFormattingException(string message, Exception inner) : Exception(message, inner)
+    {
+        public int FormattingCalls;
+        public override string ToString() { FormattingCalls++; throw new InvalidOperationException("Unsafe exception ToString invoked"); }
+        public override string StackTrace { get { FormattingCalls++; throw new InvalidOperationException("Unsafe exception StackTrace invoked"); } }
     }
 
     private static FeedTokenRedactingJsonConsoleFormatter CreateFormatter() =>

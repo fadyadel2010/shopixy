@@ -2255,6 +2255,18 @@ public class AffiliateService : IAffiliateService
         await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
 
         var order = await LoadAffiliateApprovalOrderAuthorityAsync(orderId, ct);
+        EnsureDeliveryEventEvidence(order, eventTenantId, sourceEvent, eventVersion, deliveryReference, proofOfDeliveryUrl);
+        if (order.FulfillmentMode == FulfillmentMode.Manual && order.ShippingMethodId.HasValue &&
+            !await _context.Shipments.IgnoreQueryFilters().AnyAsync(s => s.TenantId == order.TenantId && s.OrderId == order.Id &&
+                !s.IsDeleted && s.Status == ShipmentStatus.Delivered && s.CarrierCode == "manual", ct))
+            throw new InvalidOperationException("AFFILIATE_MANUAL_DELIVERY_EVIDENCE_REQUIRED: The original Manual shipment must be delivered.");
+        if (!await PointOfSale.Infrastructure.Fulfillment.ManualDeliveryAffiliateBoundary.HasObligationAsync(_context, order, ct))
+        {
+            // A broadcast logistics fact does not create an affiliate obligation.
+            // Validate the fact, but never enter financial approval or break-glass.
+            _logger.LogInformation("[Affiliate:Approve] No SQL affiliate obligation for Order {OrderId}; logistics event accepted without approval", orderId);
+            return;
+        }
         EnsureAffiliateDeliveryApprovalAuthority(
             order,
             eventTenantId,
@@ -2535,10 +2547,9 @@ public class AffiliateService : IAffiliateService
         return order;
     }
 
-    private void EnsureAffiliateDeliveryApprovalAuthority(
+    private static void EnsureDeliveryEventEvidence(
         Order order,
         Guid? eventTenantId,
-        DateTime deliveredAtUtc,
         string sourceEvent,
         int eventVersion,
         string? deliveryReference,
@@ -2559,11 +2570,19 @@ public class AffiliateService : IAffiliateService
         }
 
         if (order.FulfillmentMode == FulfillmentMode.Manual &&
-            (string.IsNullOrWhiteSpace(deliveryReference) || string.IsNullOrWhiteSpace(proofOfDeliveryUrl)))
+            (string.IsNullOrWhiteSpace(deliveryReference) || string.IsNullOrWhiteSpace(proofOfDeliveryUrl) ||
+             !string.Equals(deliveryReference, order.DeliveryReference, StringComparison.Ordinal) ||
+             !string.Equals(proofOfDeliveryUrl, order.ProofOfDeliveryUrl, StringComparison.Ordinal)))
         {
             throw new InvalidOperationException(
                 $"AFFILIATE_MANUAL_DELIVERY_EVIDENCE_REQUIRED: Manual fulfillment cannot approve affiliate commission without delivery reference and proof of delivery evidence. OrderId={order.Id}; SourceEvent={sourceEvent}; EventVersion={eventVersion}.");
         }
+    }
+
+    private void EnsureAffiliateDeliveryApprovalAuthority(Order order, Guid? eventTenantId, DateTime deliveredAtUtc,
+        string sourceEvent, int eventVersion, string? deliveryReference, string? proofOfDeliveryUrl)
+    {
+        EnsureDeliveryEventEvidence(order, eventTenantId, sourceEvent, eventVersion, deliveryReference, proofOfDeliveryUrl);
 
         if (order.FulfillmentMode == FulfillmentMode.Manual &&
             _settlementOptions.RequireVerifiedManualDeliveryEvidence)

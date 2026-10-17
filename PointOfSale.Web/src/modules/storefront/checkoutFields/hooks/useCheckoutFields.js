@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { getSafeApiErrorMessage, isRequestCanceled } from '../../../../services/api'
 import checkoutFieldsService from '../services/checkoutFieldsService'
@@ -6,7 +7,7 @@ import checkoutFieldsService from '../services/checkoutFieldsService'
 const sortFields = (fields = []) => [...fields].sort((a, b) => {
     const left = Number(a.displayOrder ?? 0)
     const right = Number(b.displayOrder ?? 0)
-    return left === right ? String(a.label || '').localeCompare(String(b.label || '')) : left - right
+    return left - right
 })
 
 export function hasSystemFields(fields = []) {
@@ -14,6 +15,7 @@ export function hasSystemFields(fields = []) {
 }
 
 export function useCheckoutFields() {
+    const { t } = useTranslation()
     const [fields, setFields] = useState([])
     const [state, setState] = useState('loading')
     const [error, setError] = useState(null)
@@ -24,6 +26,7 @@ export function useCheckoutFields() {
     const mountedRef = useRef(false)
     const loadSequenceRef = useRef(0)
     const orderingRef = useRef(false)
+    const mutatingRef = useRef(false)
 
     useEffect(() => {
         mountedRef.current = true
@@ -42,11 +45,14 @@ export function useCheckoutFields() {
 
         try {
             const response = await checkoutFieldsService.getFields()
-            const nextFields = sortFields(response?.fields || [])
+            if (!mountedRef.current || sequence !== loadSequenceRef.current) return null
+            if (!Array.isArray(response?.fields)) throw new Error('Invalid checkout field response.')
+            const nextFields = sortFields(response.fields)
 
             if (allowInitialize && !initializedRef.current && !hasSystemFields(nextFields)) {
                 initializedRef.current = true
                 const initialized = await checkoutFieldsService.initializeSystemFields()
+                if (!Array.isArray(initialized?.fields)) throw new Error('Invalid checkout field initialization response.')
                 if (mountedRef.current && sequence === loadSequenceRef.current) {
                     setFields(sortFields(initialized?.fields || []))
                     setState('success')
@@ -60,10 +66,11 @@ export function useCheckoutFields() {
             }
             return nextFields
         } catch (err) {
-            if (isRequestCanceled(err) || !mountedRef.current || sequence !== loadSequenceRef.current) return []
+            if (isRequestCanceled(err) || !mountedRef.current || sequence !== loadSequenceRef.current) return null
+            initializedRef.current = false
             setError(getSafeApiErrorMessage(err, 'Unable to load checkout fields.'))
             setState(err?.response?.status === 403 ? 'forbidden' : 'error')
-            return []
+            return null
         }
     }, [])
 
@@ -72,20 +79,28 @@ export function useCheckoutFields() {
     }, [loadFields])
 
     const executeMutation = useCallback(async (action, fallbackMessage) => {
+        if (mutatingRef.current || orderingRef.current) throw new Error('A checkout field operation is already in progress.')
+        mutatingRef.current = true
+        loadSequenceRef.current += 1
         setIsMutating(true)
         setMutationError(null)
         try {
             const result = await action()
-            await loadFields({ showLoading: false, allowInitialize: false })
-            return result
+            const readback = await loadFields({ showLoading: false, allowInitialize: false })
+            const readbackFailed = readback === null
+            if (readbackFailed && mountedRef.current) {
+                setMutationError(t('checkoutFields.savedReadbackFailed', 'The field was saved, but the list could not be reloaded. Retry loading before making another change.'))
+            }
+            return { result, readbackFailed }
         } catch (err) {
             const message = getSafeApiErrorMessage(err, fallbackMessage)
-            setMutationError(message)
+            if (mountedRef.current) setMutationError(message)
             throw err
         } finally {
-            setIsMutating(false)
+            mutatingRef.current = false
+            if (mountedRef.current) setIsMutating(false)
         }
-    }, [loadFields])
+    }, [loadFields, t])
 
     const createField = useCallback((request) => executeMutation(
         () => checkoutFieldsService.createField(request),
@@ -103,7 +118,7 @@ export function useCheckoutFields() {
     ), [executeMutation])
 
     const reorderFields = useCallback(async (orderedFields) => {
-        if (orderingRef.current) return null
+        if (orderingRef.current || mutatingRef.current) return null
 
         const previousFields = fields
         const nextFields = sortFields(orderedFields.map((field, index) => ({
@@ -113,6 +128,7 @@ export function useCheckoutFields() {
 
         setFields(nextFields)
         orderingRef.current = true
+        loadSequenceRef.current += 1
         setIsOrdering(true)
         setMutationError(null)
 
@@ -121,16 +137,19 @@ export function useCheckoutFields() {
                 id: field.id,
                 displayOrder: field.displayOrder,
             })))
-            const canonical = sortFields(response?.fields || nextFields)
-            setFields(canonical)
+            if (!Array.isArray(response?.fields)) throw new Error('Invalid checkout field order response. Reload to confirm the saved order.')
+            const canonical = sortFields(response.fields)
+            if (mountedRef.current) setFields(canonical)
             return canonical
         } catch (err) {
-            setFields(previousFields)
-            setMutationError(getSafeApiErrorMessage(err, 'Unable to reorder checkout fields.'))
+            if (mountedRef.current) {
+                setFields(previousFields)
+                setMutationError(getSafeApiErrorMessage(err, 'Unable to reorder checkout fields.'))
+            }
             throw err
         } finally {
             orderingRef.current = false
-            setIsOrdering(false)
+            if (mountedRef.current) setIsOrdering(false)
         }
     }, [fields])
 

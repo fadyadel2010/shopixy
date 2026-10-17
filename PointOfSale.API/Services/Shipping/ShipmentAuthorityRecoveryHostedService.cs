@@ -246,7 +246,7 @@ public sealed class ShipmentAuthorityRecoveryHostedService : BackgroundService
                     candidate.ServiceLevel,
                     cancellationToken);
 
-                if (result.Success || result.Reconciled)
+                if (result.Success)
                 {
                     recovered++;
                 }

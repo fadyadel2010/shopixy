@@ -138,6 +138,7 @@ public class OrderAttributionStore : IOrderAttributionStore
             _logger.LogError(ex,
                 "[Attribution] Failed to store order attribution | TenantId: {TenantId} | OrderId: {OrderId}",
                 attribution.TenantId, attribution.OrderId);
+            throw;
         }
     }
 
@@ -239,8 +240,6 @@ public class OrderAttributionStore : IOrderAttributionStore
             var filterBuilder = Builders<OrderAttributionDocument>.Filter;
             var filter = filterBuilder.And(
                 filterBuilder.Eq(x => x.TenantId, tenantId),
-                filterBuilder.Gte(x => x.AttributedAtUtc, startUtc),
-                filterBuilder.Lt(x => x.AttributedAtUtc, endUtc),
                 filterBuilder.In(x => x.OrderId, purchaseOrderIds));
 
             if (model.HasValue)
@@ -291,7 +290,7 @@ public class OrderAttributionStore : IOrderAttributionStore
             _logger.LogError(ex,
                 "[Attribution] Failed to get attributions by range | TenantId: {TenantId}",
                 tenantId);
-            return new OrderAttributionPage([], 0);
+            throw;
         }
     }
 
@@ -309,7 +308,7 @@ public class OrderAttributionStore : IOrderAttributionStore
                 startUtc,
                 endUtc,
                 model,
-                take: 10000,
+                take: int.MaxValue,
                 cancellationToken: cancellationToken);
 
             return attributions
@@ -329,7 +328,7 @@ public class OrderAttributionStore : IOrderAttributionStore
             _logger.LogError(ex,
                 "[Attribution] Failed to get revenue by source | TenantId: {TenantId}",
                 tenantId);
-            return new List<SourceRevenueSummary>();
+            throw;
         }
     }
 
@@ -347,7 +346,7 @@ public class OrderAttributionStore : IOrderAttributionStore
                 startUtc,
                 endUtc,
                 model,
-                take: 10000,
+                take: int.MaxValue,
                 cancellationToken: cancellationToken);
 
             return attributions
@@ -369,7 +368,7 @@ public class OrderAttributionStore : IOrderAttributionStore
             _logger.LogError(ex,
                 "[Attribution] Failed to get revenue by campaign | TenantId: {TenantId}",
                 tenantId);
-            return new List<CampaignRevenueSummary>();
+            throw;
         }
     }
 

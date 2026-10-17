@@ -33,6 +33,7 @@ import { useCartStore } from '@/store/cartStore';
 import { useCheckoutStore, validateAddress, validateCustomCheckoutFields } from '@/store/checkoutStore';
 import type { CheckoutFieldDefinition } from '@/types/checkout';
 import type { CartDto } from '@/types';
+import { ShippingStep } from './components/checkout/ShippingStep';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
@@ -371,6 +372,7 @@ beforeEach(() => {
         isLoading: false,
         error: null,
         isInitialized: true,
+        requiresRefresh: false,
         cartMergeInProgress: false,
     });
     useCheckoutStore.setState({
@@ -863,8 +865,8 @@ describe('commerce authority certification', () => {
         expect(calls.map(call => call.url)).toEqual([
             '/api/storefront/checkout-session',
             '/api/storefront/shipping-methods/preview',
-            '/api/storefront/shipping-methods/select',
         ]);
+        expect(useCheckoutStore.getState().shippingMethodId).toBeNull();
         expect(calls[0].data).toMatchObject({ cartId: CART_B });
         expect(calls[1].data).toEqual({ checkoutSessionId: SESSION_B });
         expect(calls[1].data).not.toHaveProperty('warehouseId');
@@ -872,7 +874,7 @@ describe('commerce authority certification', () => {
         expect(calls[1].data).not.toHaveProperty('tenantId');
         expect(useCheckoutStore.getState().checkoutSessionId).toBe(SESSION_B);
         expect(useCheckoutStore.getState().checkoutSessionCartId).toBe(CART_B);
-        expect(useCheckoutStore.getState().warehouseResolutionId).toBe(WAREHOUSE_RESOLUTION_ID);
+        expect(useCheckoutStore.getState().warehouseResolutionId).toBeNull();
     });
 
     it('does not reuse a checkout session from a previous cart id', async () => {
@@ -954,10 +956,11 @@ describe('commerce authority certification', () => {
 
         expect(previewCalls).toHaveLength(1);
         expect(previewCalls[0].aborted).toBe(false);
-        expect(selectCalls).toHaveLength(1);
+        expect(selectCalls).toHaveLength(0);
+        expect(useCheckoutStore.getState().shippingMethodId).toBeNull();
         expect(useCheckoutStore.getState().shippingMethodsStatus).toBe('AVAILABLE');
         expect(useCheckoutStore.getState().shippingMethods).toHaveLength(1);
-        expect(useCheckoutStore.getState().warehouseResolutionId).toBe(WAREHOUSE_RESOLUTION_ID);
+        expect(useCheckoutStore.getState().warehouseResolutionId).toBeNull();
     });
 
     it('supersedes an in-flight shipping preview when cart state identity changes', async () => {
@@ -993,7 +996,7 @@ describe('commerce authority certification', () => {
 
         expect(useCheckoutStore.getState().shippingMethods.map(method => method.id))
             .toEqual(['66666666-6666-4666-8666-666666666666']);
-        expect(useCheckoutStore.getState().shippingMethodId).toBe('66666666-6666-4666-8666-666666666666');
+        expect(useCheckoutStore.getState().shippingMethodId).toBeNull();
     });
 
     it('prevents a late stale preview response from overwriting the latest request', async () => {
@@ -1030,7 +1033,7 @@ describe('commerce authority certification', () => {
 
         expect(useCheckoutStore.getState().shippingMethods.map(method => method.id))
             .toEqual(['77777777-7777-4777-8777-777777777777']);
-        expect(useCheckoutStore.getState().shippingMethodId).toBe('77777777-7777-4777-8777-777777777777');
+        expect(useCheckoutStore.getState().shippingMethodId).toBeNull();
     });
 
     it('forces a fresh shipping preview for explicit retry on the same state', async () => {
@@ -1405,9 +1408,8 @@ describe('commerce authority certification', () => {
         expect(validateCustomCheckoutFields([customImageField], { [customImageField.id]: attachmentValue })).toEqual({});
     });
 
-    it('keeps upload UI resource-specific and avoids base64 checkout submission', async () => {
-        const source = await import('./components/checkout/ShippingStep');
-        expect(source).toBeTruthy();
+    it('keeps upload UI resource-specific and avoids base64 checkout submission', () => {
+        expect(typeof ShippingStep).toBe('function');
         const moduleText = readFileSync(new URL('./components/checkout/ShippingStep.tsx', import.meta.url), 'utf8');
         expect(moduleText).toContain("type=\"file\"");
         expect(moduleText).toContain('/api/storefront/checkout/attachments/upload-lease');

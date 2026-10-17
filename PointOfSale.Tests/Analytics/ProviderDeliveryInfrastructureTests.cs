@@ -411,12 +411,14 @@ public sealed class ProviderDeliveryInfrastructureTests
     private static ServiceProvider CreateSqliteProvider(CountingSender sender)
     {
         var services = new ServiceCollection();
-        var connection = new SqliteConnection("Data Source=:memory:");
+        // Keep the database alive, but give concurrent workers independent connections.
+        // SqliteConnection itself is not safe for concurrent commands/disposal.
+        var connectionString = $"Data Source=provider-lease-{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
+        var connection = new SqliteConnection(connectionString);
         connection.Open();
         CreateProviderDeliverySqliteSchema(connection);
         services.AddSingleton(connection);
-        services.AddDbContext<ApplicationDbContext>((sp, options) =>
-            options.UseSqlite(sp.GetRequiredService<SqliteConnection>()));
+        services.AddDbContext<ApplicationDbContext>(options => options.UseSqlite(connectionString));
         services.AddLogging();
         services.AddSingleton(Options.Create(new ProviderDeliveryOptions
         {

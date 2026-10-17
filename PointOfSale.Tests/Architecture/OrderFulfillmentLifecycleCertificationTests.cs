@@ -44,7 +44,16 @@ public sealed class OrderFulfillmentLifecycleCertificationTests
         Assert.Contains("IsFulfillmentSerializationFailure(ex)", source, StringComparison.Ordinal);
         Assert.Contains("PostgresErrorCodes.SerializationFailure", source, StringComparison.Ordinal);
         Assert.Contains("transaction.RollbackAsync(CancellationToken.None)", source, StringComparison.Ordinal);
-        Assert.Contains("_db.ChangeTracker.Clear()", source, StringComparison.Ordinal);
+        Assert.Contains("canReplayOwnedWork", source, StringComparison.Ordinal);
+        Assert.Contains("OwnedTransactionRetryState.Capture(_db)", source, StringComparison.Ordinal);
+        Assert.Contains("retryState!.ClearRolledBackAttempt()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_db.ChangeTracker.Clear()", source, StringComparison.Ordinal);
+        var retry = ReadRepoFile("PointOfSale.Infrastructure/EventBus/OwnedTransactionRetryState.cs");
+        Assert.Contains("context.Database.CurrentTransaction != null || context.ChangeTracker.HasChanges()", retry, StringComparison.Ordinal);
+        Assert.Contains("entry.Entity is OutboxState state", retry, StringComparison.Ordinal);
+        Assert.Contains("!_previousOutboxIds.Contains(state.OutboxId)", retry, StringComparison.Ordinal);
+        Assert.Contains("entry.State = EntityState.Added", retry, StringComparison.Ordinal);
+        Assert.Contains("entry.State = EntityState.Detached", retry, StringComparison.Ordinal);
         Assert.Contains("attempt + 1", source, StringComparison.Ordinal);
     }
 

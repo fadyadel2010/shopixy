@@ -20,7 +20,7 @@ using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Storefront;
 
-public sealed class HomepageMediaAuthoringTests
+public sealed partial class HomepageMediaAuthoringTests
 {
     [Fact]
     public void HistoricalUnknownSection_DoesNotGrantMediaDeliveryOrBreakOtherPublishedSections()

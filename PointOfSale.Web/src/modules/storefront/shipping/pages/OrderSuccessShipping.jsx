@@ -13,9 +13,9 @@ import CarrierBadge from '../components/CarrierBadge'
 import ShipmentStatusBadge from '../components/ShipmentStatusBadge'
 
 export default function OrderSuccessShipping({ orderId, orderNumber }) {
-    const { t, i18n } = useTranslation()
+    const { t } = useTranslation()
 
-    const { shipment, loading, error } = useShipmentTracking(orderId)
+    const { shipment, loading } = useShipmentTracking(orderId)
 
     // Loading
     if (loading) {

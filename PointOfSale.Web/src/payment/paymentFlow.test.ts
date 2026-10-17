@@ -33,6 +33,7 @@ describe('payment flow resolution', () => {
             status: 'PAID',
             orderStatus: 'Completed',
             paymentStatus: 'Fabricated',
+            canRetryPayment: false,
             totalAmount: 10,
             currency: 'EGP',
         })).toThrow(/valid payment lifecycle/i);

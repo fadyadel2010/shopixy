@@ -2,7 +2,6 @@
  * AF-15 + AF-21: Orders Tab — Commission orders table with expandable details + Order Lifecycle Status
  */
 import { useState, useEffect, useCallback, Fragment } from 'react'
-import { motion } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
 import { ShoppingBag, ChevronDown, Filter, Package, CreditCard, DollarSign, Truck } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'

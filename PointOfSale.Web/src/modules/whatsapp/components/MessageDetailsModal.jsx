@@ -16,7 +16,7 @@ export default function MessageDetailsModal({ message, onClose }) {
                 content = content.replace(/\d{4,8}/g, '****')
             }
             return content
-        } catch (e) {
+        } catch {
             return message.content
         }
     }

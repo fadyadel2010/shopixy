@@ -22,7 +22,9 @@ export type OrderStatus =
     | 'shipped'
     | 'out_for_delivery'
     | 'delivered'
-    | 'cancelled';
+    | 'cancelled'
+    | 'returned'
+    | 'failed';
 
 /**
  * Payment status enum
@@ -98,7 +100,7 @@ export interface OrderDto {
     orderNumber: string;
     status: OrderStatus;
     paymentStatus: PaymentStatus;
-    paymentMethod: 'cod' | 'online';
+    paymentMethod: 'cod' | 'online' | 'manual' | 'unknown';
 
     // Items
     items: OrderItemDto[];
@@ -134,6 +136,7 @@ export interface OrderDto {
     carrierName?: string;
     cancellationReason?: string;
     refunds?: OrderRefundDto[];
+    timeline?: OrderTimelineEvent[];
 }
 
 // ============================================================================
@@ -163,10 +166,18 @@ export interface OrderStatusDto {
  */
 export interface TimelineStep {
     id: OrderStatus;
+    /** A timeline event is not uniquely identified by its lifecycle status. */
+    eventKey?: string;
     label: string;
     icon: string;
     status: 'completed' | 'current' | 'upcoming';
     timestamp?: string;
+    description?: string;
+}
+
+export interface OrderTimelineEvent {
+    type: string;
+    at: string;
     description?: string;
 }
 
@@ -217,6 +228,7 @@ export interface CustomerOrder {
     itemCount: number;
     shippingMethodName?: string;
     paymentMethodName?: string;
+    paymentMethodCode?: string;
     createdAt: string;
     items: CustomerOrderItem[];
 }
@@ -323,4 +335,3 @@ export const PAYMENT_STATUS_CONFIG: Record<string, { color: string; bgColor: str
     Refunded: { color: 'text-gray-600', bgColor: 'bg-gray-50' },
     PartiallyRefunded: { color: 'text-orange-600', bgColor: 'bg-orange-50' },
 };
-

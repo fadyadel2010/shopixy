@@ -8,7 +8,7 @@ import {
     getManualPaymentActionErrorMessage,
     getRejectionReasonValidationMessage,
     isManualPaymentConfigurationError,
-} from './ManualPayments.jsx'
+} from './manualPaymentValidation'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const manualPaymentsPath = join(currentDir, 'ManualPayments.jsx')

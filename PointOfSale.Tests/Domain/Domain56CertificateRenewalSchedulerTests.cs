@@ -22,7 +22,9 @@ namespace PointOfSale.Tests.CustomDomains;
 
 public sealed class Domain56CertificateRenewalSchedulerTests
 {
-    private static readonly DateTime NowUtc = new(2026, 8, 9, 12, 0, 0, DateTimeKind.Utc);
+    // The renewal service uses the real UTC clock. A fixed August fixture made
+    // nominally valid certificates expire as the calendar advanced.
+    private static readonly DateTime NowUtc = DateTime.UtcNow;
 
     [Fact]
     public async Task CandidateQuery_SelectsDueActivePrimaryLinkedCertificatesOnly()

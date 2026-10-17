@@ -113,21 +113,21 @@ public class OrderAttributionResolver : IOrderAttributionResolver
         // Resolve FirstTouch
         if (!hasFirstTouch)
         {
-            var firstTouchContext = await _contextStore.GetFirstTouchContextAsync(
-                purchaseEvent.TenantId, sessionId, cancellationToken);
+            var firstTouchContext = await GetContextAtConversionAsync(purchaseEvent, AttributionModel.FirstTouch, cancellationToken);
 
             if (firstTouchContext != null)
             {
                 firstTouchAttribution = OrderAttribution.FromContext(
-                    firstTouchContext, orderId.Value, orderValue, currency, AttributionModel.FirstTouch);
+                    firstTouchContext, orderId.Value, orderValue, currency, AttributionModel.FirstTouch, purchaseEvent.OccurredAtUtc);
             }
             else
             {
                 // Default to direct traffic
                 var directContext = AttributionContext.CreateDirect(purchaseEvent.TenantId, sessionId);
+                directContext.CapturedAtUtc = purchaseEvent.OccurredAtUtc;
                 directContext.CustomerId = purchaseEvent.Actor?.CustomerId;
                 firstTouchAttribution = OrderAttribution.FromContext(
-                    directContext, orderId.Value, orderValue, currency, AttributionModel.FirstTouch);
+                    directContext, orderId.Value, orderValue, currency, AttributionModel.FirstTouch, purchaseEvent.OccurredAtUtc);
             }
 
             firstTouchAttribution.CustomerId = purchaseEvent.Actor?.CustomerId;
@@ -137,21 +137,21 @@ public class OrderAttributionResolver : IOrderAttributionResolver
         // Resolve LastTouch
         if (!hasLastTouch)
         {
-            var lastTouchContext = await _contextStore.GetLastTouchContextAsync(
-                purchaseEvent.TenantId, sessionId, cancellationToken);
+            var lastTouchContext = await GetContextAtConversionAsync(purchaseEvent, AttributionModel.LastTouch, cancellationToken);
 
             if (lastTouchContext != null)
             {
                 lastTouchAttribution = OrderAttribution.FromContext(
-                    lastTouchContext, orderId.Value, orderValue, currency, AttributionModel.LastTouch);
+                    lastTouchContext, orderId.Value, orderValue, currency, AttributionModel.LastTouch, purchaseEvent.OccurredAtUtc);
             }
             else
             {
                 // Default to direct traffic
                 var directContext = AttributionContext.CreateDirect(purchaseEvent.TenantId, sessionId);
+                directContext.CapturedAtUtc = purchaseEvent.OccurredAtUtc;
                 directContext.CustomerId = purchaseEvent.Actor?.CustomerId;
                 lastTouchAttribution = OrderAttribution.FromContext(
-                    directContext, orderId.Value, orderValue, currency, AttributionModel.LastTouch);
+                    directContext, orderId.Value, orderValue, currency, AttributionModel.LastTouch, purchaseEvent.OccurredAtUtc);
             }
 
             lastTouchAttribution.CustomerId = purchaseEvent.Actor?.CustomerId;
@@ -194,20 +194,28 @@ public class OrderAttributionResolver : IOrderAttributionResolver
         var orderValue = purchaseEvent.Payload?.Value ?? 0m;
         var currency = ResolveRequiredCurrency(purchaseEvent);
 
-        AttributionContext? context = model == AttributionModel.FirstTouch
-            ? await _contextStore.GetFirstTouchContextAsync(purchaseEvent.TenantId, sessionId, cancellationToken)
-            : await _contextStore.GetLastTouchContextAsync(purchaseEvent.TenantId, sessionId, cancellationToken);
+        AttributionContext? context = await GetContextAtConversionAsync(purchaseEvent, model, cancellationToken);
 
         if (context == null)
         {
             context = AttributionContext.CreateDirect(purchaseEvent.TenantId, sessionId);
+            context.CapturedAtUtc = purchaseEvent.OccurredAtUtc;
             context.CustomerId = purchaseEvent.Actor?.CustomerId;
         }
 
-        var attribution = OrderAttribution.FromContext(context, orderId.Value, orderValue, currency, model);
+        var attribution = OrderAttribution.FromContext(context, orderId.Value, orderValue, currency, model, purchaseEvent.OccurredAtUtc);
         attribution.CustomerId = purchaseEvent.Actor?.CustomerId;
 
         return attribution;
+    }
+
+    private async Task<AttributionContext?> GetContextAtConversionAsync(AnalyticsEvent purchaseEvent, AttributionModel model, CancellationToken ct)
+    {
+        // Event time, not delivery/cache-write order, defines first/last touch. Exclude later visits.
+        var contexts = await _contextStore.GetAllContextsForSessionAsync(purchaseEvent.TenantId, purchaseEvent.Actor.SessionId!, ct);
+        var eligible = contexts.Where(c => c.TenantId == purchaseEvent.TenantId && c.SessionId == purchaseEvent.Actor.SessionId && c.CapturedAtUtc <= purchaseEvent.OccurredAtUtc)
+            .OrderBy(c => c.CapturedAtUtc).ThenBy(c => c.Source, StringComparer.Ordinal).ThenBy(c => c.Campaign, StringComparer.Ordinal);
+        return model == AttributionModel.FirstTouch ? eligible.FirstOrDefault() : eligible.LastOrDefault();
     }
 
     private static string ResolveRequiredCurrency(AnalyticsEvent purchaseEvent)

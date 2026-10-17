@@ -1,6 +1,18 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+interface SslMetadata {
+    domainId?: string; certificateId: string | null; provider?: string; status: string; operationPhase?: string;
+    generation?: number; issuer?: string; serialNumber?: string; fingerprint?: string; thumbprint?: string;
+    notBeforeUtc?: string; notAfterUtc?: string; nextRenewalUtc?: string; renewalEligible?: boolean; retryable?: boolean;
+    failureCode?: string | null; lastOperationId?: string; lastOperationStatus?: string; lastOperationPhase?: string;
+    lastOperationUpdatedAtUtc?: string; degraded?: boolean; secretMaterial?: string;
+}
+interface SslOperations {
+    items: { operationId: string; certificateId?: string; operationType: string; status: string; phase: string;
+        retryable: boolean; failureCode: string | null; attemptCount: number; createdAtUtc: string; updatedAtUtc?: string; completedAtUtc?: string; retryAfterUtc?: string | null }[];
+    page: number; pageSize: number; totalCount: number; totalPages: number; hasNextPage?: boolean; hasPreviousPage?: boolean;
+}
 const mockState = vi.hoisted(() => ({
     routeDomainId: '11111111-1111-1111-1111-111111111111',
     navigate: vi.fn(),
@@ -32,7 +44,7 @@ const mockState = vi.hoisted(() => ({
                 status: 'Active',
                 thumbprint: 'safe-thumbprint',
                 notAfterUtc: '2026-12-01T00:00:00Z',
-            },
+            } satisfies SslMetadata as SslMetadata,
             state: 'success',
             error: null,
             isLoading: false,
@@ -64,9 +76,9 @@ const mockState = vi.hoisted(() => ({
                 lastOperationUpdatedAtUtc: '2026-08-01T00:00:00Z',
                 degraded: false,
                 secretMaterial: 'SHOULD_NOT_RENDER',
-            },
+            } satisfies SslMetadata as SslMetadata,
             state: 'success',
-            error: null,
+            error: null as string | null,
             isLoading: false,
             isError: false,
             isUnauthorized: false,
@@ -96,7 +108,7 @@ const mockState = vi.hoisted(() => ({
                 totalPages: 1,
                 hasNextPage: false,
                 hasPreviousPage: false,
-            },
+            } satisfies SslOperations as SslOperations,
             state: 'success',
             error: null,
             isLoading: false,
@@ -112,8 +124,8 @@ const mockState = vi.hoisted(() => ({
     mutations: {
         isMutating: false,
         mutationStatus: 'idle',
-        error: null,
-        errorCode: null,
+        error: null as string | null,
+        errorCode: null as string | null,
         provisionSslCertificate: vi.fn(),
         activateSslCertificate: vi.fn(),
         renewSslCertificate: vi.fn(),
@@ -146,7 +158,7 @@ vi.mock('../../../../components/Toast', () => ({
 }))
 
 vi.mock('../../authoringPlatform', () => ({
-    AuthoringButton: ({ action, defaultLabel }: any) => action ? (
+    AuthoringButton: ({ action, defaultLabel }: Parameters<typeof import('../../authoringPlatform').AuthoringButton>[0]) => action ? (
         <button
             type="button"
             onClick={action.onClick}
@@ -156,29 +168,29 @@ vi.mock('../../authoringPlatform', () => ({
             {action.busy ? action.busyLabel || defaultLabel : action.label || defaultLabel}
         </button>
     ) : null,
-    AuthoringDialog: ({ open, title, description, children }: any) => open ? (
+    AuthoringDialog: ({ open, title, description, children }: Parameters<typeof import('../../authoringPlatform').AuthoringDialog>[0]) => open ? (
         <section role="dialog" aria-label={title}>
             <h2>{title}</h2>
             <p>{description}</p>
             {children}
         </section>
     ) : null,
-    AuthoringEmptyState: ({ title, description, action }: any) => (
+    AuthoringEmptyState: ({ title, description, action }: Parameters<typeof import('../../authoringPlatform').AuthoringEmptyState>[0]) => (
         <section>
             <h2>{title}</h2>
             <p>{description}</p>
             {action ? <button type="button" onClick={action.onClick}>{action.label}</button> : null}
         </section>
     ),
-    AuthoringFeedback: ({ title, message, action }: any) => (
+    AuthoringFeedback: ({ title, message, action }: Parameters<typeof import('../../authoringPlatform').AuthoringFeedback>[0]) => (
         <section>
             <h2>{title}</h2>
             <p>{message}</p>
             {action ? <button type="button" onClick={action.onClick}>{action.label}</button> : null}
         </section>
     ),
-    AuthoringLoadingState: ({ label }: any) => <div>{label || 'Loading'}</div>,
-    AuthoringStatusBadge: ({ children }: any) => <span>{children}</span>,
+    AuthoringLoadingState: ({ label }: Parameters<typeof import('../../authoringPlatform').AuthoringLoadingState>[0]) => <div>{label || 'Loading'}</div>,
+    AuthoringStatusBadge: ({ children }: Parameters<typeof import('../../authoringPlatform').AuthoringStatusBadge>[0]) => <span>{children}</span>,
     useAuthoringGuard: () => ({ requestNavigation: mockState.navigate }),
 }))
 

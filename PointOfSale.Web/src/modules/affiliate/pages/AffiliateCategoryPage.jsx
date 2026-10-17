@@ -23,7 +23,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
     Search, Package, ArrowLeft, ArrowRight, RefreshCw,
-    AlertCircle, Sparkles, DollarSign,
+    AlertCircle, DollarSign,
     ChevronRight
 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'

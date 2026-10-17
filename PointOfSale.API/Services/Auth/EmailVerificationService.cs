@@ -446,9 +446,9 @@ public class LoggingEmailSender : IEmailSender
     {
         _logger.LogInformation(
             "Email delivery skipped because no sender is configured | To: {To} | Subject: {Subject}",
-            to,
+            "[redacted]",
             subject);
         
-        return Task.CompletedTask;
+        throw new InvalidOperationException("Email delivery is unavailable because no sender is configured.");
     }
 }

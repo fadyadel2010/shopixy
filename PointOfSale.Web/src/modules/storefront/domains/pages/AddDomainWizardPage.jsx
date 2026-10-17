@@ -7,14 +7,14 @@
  * No validation logic — all steps are interactive and navigable.
  */
 
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, Check, Globe, Server, Shield, RefreshCw, Link, FileText } from 'lucide-react'
 
 import {
     AuthoringButton,
     AuthoringValidationSummary,
+    UnsavedChangesDialog,
     useAuthoringGuard,
 } from '../../authoringPlatform'
 import domainManagementService from '../services/domainManagementService'
@@ -239,7 +239,7 @@ function WizardStep7({ formData }) {
                 </div>
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-700/50">
                     <span className="text-xs font-medium text-gray-500 uppercase dark:text-gray-400">
-                        {t('storefront.domains.ssl', 'SSL')}
+                        {t('storefront.domains.sslLabel', 'SSL')}
                     </span>
                     <p className="mt-1 text-sm text-gray-900 dark:text-gray-100">{formData.sslProvider || '—'}</p>
                 </div>
@@ -264,7 +264,6 @@ function WizardStep7({ formData }) {
 
 export function AddDomainWizardPage() {
     const { t } = useTranslation()
-    const navigate = useNavigate()
     const [currentStep, setCurrentStep] = useState(1)
     const [formData, setFormData] = useState({
         domainType: 'alias',
@@ -275,11 +274,19 @@ export function AddDomainWizardPage() {
     })
     const [serverErrors, setServerErrors] = useState([])
     const [isCreating, setIsCreating] = useState(false)
+    const [createdDomain, setCreatedDomain] = useState(null)
+    const [completedPath, setCompletedPath] = useState(null)
+    const creatingRef = useRef(false)
+    const createdDomainRef = useRef(null)
 
-    const { requestNavigation } = useAuthoringGuard({
-        isDirty: Boolean(formData.hostname?.trim()),
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty: Boolean(formData.hostname?.trim()) && !createdDomain,
         isBusy: isCreating,
     })
+
+    useEffect(() => {
+        if (completedPath && !isCreating) requestNavigation(completedPath)
+    }, [completedPath, isCreating, requestNavigation])
 
     const updateField = (key, value) => {
         setFormData((prev) => ({ ...prev, [key]: value }))
@@ -298,8 +305,9 @@ export function AddDomainWizardPage() {
     }
 
     const handleCreate = async () => {
-        if (isCreating) return
+        if (creatingRef.current) return
 
+        creatingRef.current = true
         setServerErrors([])
         setIsCreating(true)
 
@@ -338,7 +346,9 @@ export function AddDomainWizardPage() {
         }
 
         try {
-            const response = await domainManagementService.createDomain(request)
+            const response = createdDomainRef.current || await domainManagementService.createDomain(request)
+            createdDomainRef.current = response
+            setCreatedDomain(response)
             const verificationMethod = verificationMethodMap[formData.verificationMethod || 'txt'] ?? 0
 
             await domainManagementService.startDomainVerification(response.domainId, {
@@ -346,12 +356,14 @@ export function AddDomainWizardPage() {
                 expectedVersion: response.version,
             })
 
-            requestNavigation(`/storefront/domains/${response.domainId}/verification`)
+            setCompletedPath(`/storefront/domains/${response.domainId}/verification`)
         } catch (err) {
             const status = err?.response?.status
             const apiError = err?.response?.data
 
-            if (status === 409) {
+            if (createdDomainRef.current) {
+                setServerErrors([t('storefront.domains.verificationSetupFailed', 'The domain was saved, but verification setup could not be confirmed. Retry setup or open the saved domain to check its current state.')])
+            } else if (status === 409) {
                 setServerErrors([
                     t('storefront.domains.duplicateHostname',
                         'This hostname is already registered to your account or another tenant.'),
@@ -373,6 +385,7 @@ export function AddDomainWizardPage() {
                 ])
             }
         } finally {
+            creatingRef.current = false
             setIsCreating(false)
         }
     }
@@ -428,7 +441,7 @@ export function AddDomainWizardPage() {
             </div>
 
             {/* Step indicator */}
-            <nav aria-label="Wizard progress" className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+            <nav aria-label="Wizard progress" className="flex items-center justify-between overflow-x-auto rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
                 {STEPS.map((step) => {
                     const isActive = step.id === currentStep
                     const isCompleted = step.id < currentStep
@@ -438,7 +451,7 @@ export function AddDomainWizardPage() {
                             type="button"
                             onClick={() => goToStep(step.id)}
                             aria-current={isActive ? 'step' : undefined}
-                            className={`flex flex-col items-center gap-1 rounded-lg px-2 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                             className={`flex shrink-0 flex-col items-center gap-1 rounded-lg px-2 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                                 isActive
                                     ? 'text-indigo-600'
                                     : isCompleted
@@ -468,10 +481,15 @@ export function AddDomainWizardPage() {
                 <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
                     {t(currentStepData.titleKey, currentStepData.fallbackTitle)}
                 </h2>
-                {renderStepContent()}
+                <fieldset disabled={isCreating || Boolean(createdDomain)}>{renderStepContent()}</fieldset>
                 {serverErrors.length > 0 ? (
                     <AuthoringValidationSummary errors={serverErrors} />
                 ) : null}
+                {createdDomain && !completedPath ? <AuthoringButton action={{
+                    label: t('storefront.domains.openSavedDomain', 'Open saved domain'),
+                    onClick: () => requestNavigation(`/storefront/domains/${createdDomain.domainId}/verification`),
+                    disabled: isCreating,
+                }} /> : null}
             </div>
 
             {/* Navigation buttons */}
@@ -488,7 +506,7 @@ export function AddDomainWizardPage() {
                 {isLast ? (
                     <AuthoringButton
                         action={{
-                            label: t('storefront.domains.createDomain', 'Create Domain'),
+                            label: createdDomain ? t('storefront.domains.retryVerificationSetup', 'Retry verification setup') : t('storefront.domains.createDomain', 'Create Domain'),
                             icon: ArrowRight,
                             onClick: handleCreate,
                             disabled: isCreating,
@@ -508,6 +526,7 @@ export function AddDomainWizardPage() {
                     />
                 )}
             </div>
+            <UnsavedChangesDialog {...unsavedDialogProps} />
         </div>
     )
 }

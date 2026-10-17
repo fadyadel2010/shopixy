@@ -27,7 +27,7 @@ export function ProviderDashboard({
     const [filters, setFilters] = useState<ProviderDashboardFiltersState>(defaultProviderDashboardFilters)
     const [selectedProviderCode, setSelectedProviderCode] = useState<string | null>(null)
     const [expandedProviderCodes, setExpandedProviderCodes] = useState<Set<string>>(new Set())
-    const providers = dashboard?.providers ?? []
+    const providers = useMemo(() => dashboard?.providers ?? [], [dashboard?.providers])
     const filteredProviders = useMemo(
         () => filterDashboardProviders(providers, filters),
         [providers, filters],

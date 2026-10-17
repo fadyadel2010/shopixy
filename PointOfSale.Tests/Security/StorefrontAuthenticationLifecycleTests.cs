@@ -129,7 +129,8 @@ public sealed class StorefrontAuthenticationLifecycleTests
             new PasswordHasher<OnlineCustomer>(),
             publisher ?? Publisher().Object,
             Mock.Of<IPhoneRiskProfileService>(),
-            NullLogger<StorefrontAuthService>.Instance);
+            NullLogger<StorefrontAuthService>.Instance,
+            Mock.Of<IStorefrontEmailVerificationService>());
 
     private static Mock<IEventPublisher> Publisher()
     {

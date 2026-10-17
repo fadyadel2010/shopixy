@@ -10,7 +10,10 @@ using PointOfSale.Core.Exceptions;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Fulfillment;
 using PointOfSale.Core.Payments;
+using PointOfSale.Core.Policies;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Data.Repositories;
+using PointOfSale.Infrastructure.EventBus;
 
 namespace PointOfSale.Infrastructure.Fulfillment;
 
@@ -45,15 +48,19 @@ public class OrderFulfillmentService : IOrderFulfillmentService
     private readonly ApplicationDbContext _db;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<OrderFulfillmentService> _logger;
+    private readonly IProductVariantStockRepository _stockRepository;
 
     public OrderFulfillmentService(
         ApplicationDbContext db,
         IEventPublisher eventPublisher,
-        ILogger<OrderFulfillmentService> logger)
+        ILogger<OrderFulfillmentService> logger,
+        IProductVariantStockRepository? stockRepository = null)
     {
         _db = db;
         _eventPublisher = eventPublisher;
         _logger = logger;
+        _stockRepository = stockRepository ?? new ProductVariantStockRepository(db,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ProductVariantStockRepository>.Instance);
     }
 
     #region Transition Methods
@@ -203,6 +210,12 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         if (order == null)
             return OrderFulfillmentResult.Failed(orderId, "", FulfillmentStatus.Created, source, "Order not found", idempotencyKey);
 
+        // Replay/backfill is still a mutation authority boundary. Do not let the
+        // early delivered branch bypass the source ownership check below.
+        if (!source.IsAllowedFor(order.FulfillmentMode))
+            return OrderFulfillmentResult.Failed(orderId, order.OrderNumber, order.FulfillmentStatus, source,
+                "FULFILLMENT_SOURCE_MISMATCH: Delivery evidence requires the order's fulfillment owner.", idempotencyKey);
+
         if (order.FulfillmentStatus == FulfillmentStatus.Delivered)
         {
             var referenceConflicts = !string.IsNullOrWhiteSpace(order.DeliveryReference) &&
@@ -251,9 +264,6 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 // Persist the same evidence carried by the event. Payment/accounting can
                 // qualify later than delivery (notably COD), so approval replay must read
                 // durable SQL truth rather than depend on a one-shot event payload.
-                order.DeliveryReference = normalizedDeliveryReference;
-                order.ProofOfDeliveryUrl = normalizedProofOfDeliveryUrl;
-
                 return new FulfillmentDeliveredEvent
                 {
                     TenantId = order.TenantId,
@@ -631,7 +641,8 @@ public class OrderFulfillmentService : IOrderFulfillmentService
             TargetStatus = target,
             RequiresConfirmation = target == FulfillmentStatus.Cancelled || 
                                    target == FulfillmentStatus.Returned,
-            RequiredFields = GetRequiredFields(target),
+            RequiredFields = target == FulfillmentStatus.OutForDelivery && order.ShippingMethodId.HasValue
+                ? new List<string> { "trackingNumber" } : GetRequiredFields(target),
             IconHint = GetIconHint(target)
         }).ToList();
 
@@ -656,14 +667,63 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         string? idempotencyKey,
         Func<Order, FulfillmentStatus, FulfillmentStatus, TEvent> eventFactory,
         CancellationToken ct,
-        int attempt = 1)
+        int attempt = 1,
+        OwnedTransactionRetryState? retryState = null)
         where TEvent : OrderFulfillmentEventBase
     {
         var ownsTransaction = _db.Database.IsRelational() && _db.Database.CurrentTransaction == null;
-        await using IDbContextTransaction? transaction = ownsTransaction
-            ? await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
-            : null;
+        var canReplayOwnedWork = ownsTransaction && (retryState != null || !_db.ChangeTracker.HasChanges());
+        if (canReplayOwnedWork && retryState == null) retryState = OwnedTransactionRetryState.Capture(_db);
+        IDbContextTransaction? transaction = null;
 
+        try
+        {
+            if (ownsTransaction)
+                transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+
+            // Serializable conflicts can occur during SELECT FOR UPDATE, before
+            // mutation. Retry the entire owned SQL unit, not only SaveChanges.
+            return await TransitionCoreAsync(orderId, source, targetStatus, transitionedBy,
+                idempotencyKey, eventFactory, transaction, ct);
+        }
+        catch (Exception ex) when (
+            canReplayOwnedWork &&
+            attempt < FulfillmentCommitMaxAttempts &&
+            IsFulfillmentSerializationFailure(ex))
+        {
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                await transaction.DisposeAsync();
+                transaction = null;
+            }
+            retryState!.ClearRolledBackAttempt();
+            _logger.LogWarning(
+                ex,
+                "Retrying fulfillment transition after serializable race | OrderId: {OrderId} | TargetStatus: {TargetStatus} | Attempt: {Attempt}/{MaxAttempts}",
+                orderId, targetStatus, attempt, FulfillmentCommitMaxAttempts);
+            await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct);
+            return await TransitionAsync(orderId, source, targetStatus, transitionedBy,
+                idempotencyKey, eventFactory, ct, attempt + 1, retryState);
+        }
+        finally
+        {
+            if (transaction != null)
+                await transaction.DisposeAsync();
+        }
+    }
+
+    private async Task<OrderFulfillmentResult> TransitionCoreAsync<TEvent>(
+        Guid orderId,
+        FulfillmentRequestSource source,
+        FulfillmentStatus targetStatus,
+        string? transitionedBy,
+        string? idempotencyKey,
+        Func<Order, FulfillmentStatus, FulfillmentStatus, TEvent> eventFactory,
+        IDbContextTransaction? transaction,
+        CancellationToken ct)
+        where TEvent : OrderFulfillmentEventBase
+    {
         var order = await LoadOrderForFulfillmentMutationAsync(orderId, ct);
 
         if (order == null)
@@ -735,6 +795,19 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 source,
                 $"Cannot advance fulfillment for terminal order status {order.Status}.",
                 idempotencyKey);
+        }
+
+        // Post-confirmation shipment creation is asynchronous. Do not let fast
+        // Manual commands advance a shipping order past the states in which its
+        // original shipment can legitimately be created; never reconstruct one
+        // after an unowned delivery assertion.
+        if (order.ShippingMethodId.HasValue &&
+            targetStatus is FulfillmentStatus.OutForDelivery or FulfillmentStatus.Delivered &&
+            !await _db.Shipments.IgnoreQueryFilters().AnyAsync(s =>
+                s.TenantId == order.TenantId && s.OrderId == order.Id && !s.IsDeleted, ct))
+        {
+            return OrderFulfillmentResult.Failed(orderId, order.OrderNumber, oldStatus, source,
+                "SHIPMENT_CREATION_PENDING: Wait for the original shipment before advancing delivery.", idempotencyKey);
         }
 
         if (IsOutboundFulfillmentProgression(targetStatus) &&
@@ -819,6 +892,16 @@ public class OrderFulfillmentService : IOrderFulfillmentService
             }
         }
 
+        // Operator-entered logistics proof is not independently verified affiliate
+        // approval authority. Deny attributed Manual delivery before SQL mutation
+        // or downstream facts, regardless of the legacy break-glass setting.
+        if (source == FulfillmentRequestSource.Manual && targetStatus == FulfillmentStatus.Delivered &&
+            await ManualDeliveryAffiliateBoundary.HasObligationAsync(_db, order, ct))
+        {
+            return OrderFulfillmentResult.Failed(orderId, order.OrderNumber, oldStatus, source,
+                "AFFILIATE_MANUAL_DELIVERY_VERIFIED_EVIDENCE_REQUIRED: Trusted delivery verification is required for an attributed Manual order.", idempotencyKey);
+        }
+
         // Validate transition
         if (!oldStatus.CanTransitionTo(targetStatus))
         {
@@ -831,15 +914,31 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 $"Cannot transition from {oldStatus} to {targetStatus}", idempotencyKey);
         }
 
-        try
         {
             // Enable authorized context for interceptor
             FulfillmentStatusSaveChangesInterceptor.EnableAuthorizedContext();
             using var orderStatusScope = OrderStatusSaveChangesInterceptor.BeginAuthorizedContext();
             try
             {
+                var domainEvent = eventFactory(order, oldStatus, targetStatus);
+                var shipmentError = await ProgressManualShipmentAsync(order, targetStatus, source, domainEvent, ct);
+                if (shipmentError != null)
+                    return OrderFulfillmentResult.Failed(orderId, order.OrderNumber, oldStatus, source, shipmentError, idempotencyKey);
+
+                if (domainEvent is FulfillmentDeliveredEvent delivered)
+                {
+                    order.DeliveryReference = delivered.DeliveryReference;
+                    order.ProofOfDeliveryUrl = delivered.ProofOfDeliveryUrl;
+                }
+
                 order.FulfillmentStatus = targetStatus;
                 order.AcceptFulfillmentStatusChange();
+
+                // An unpaid COD return still owns on-hand stock through an open
+                // reservation. Release only that unconsumed hold in this SQL unit;
+                // committed stock restoration remains the existing return/refund owner.
+                if (targetStatus == FulfillmentStatus.Returned)
+                    await _stockRepository.ReleaseOrderReservationsAsync(order.TenantId, order.Id, ct);
 
                 var oldOrderStatus = order.Status;
                 var newOrderStatus = ResolveOrderStatus(order.Status, targetStatus);
@@ -859,7 +958,6 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                     }, ct);
                 }
 
-                var domainEvent = eventFactory(order, oldStatus, targetStatus);
                 await _eventPublisher.PublishAsync(domainEvent, ct);
 
                 await _db.SaveChangesAsync(ct);
@@ -873,44 +971,67 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 FulfillmentStatusSaveChangesInterceptor.DisableAuthorizedContext();
             }
         }
-        catch (Exception ex) when (
-            ownsTransaction &&
-            attempt < FulfillmentCommitMaxAttempts &&
-            IsFulfillmentSerializationFailure(ex))
-        {
-            if (transaction != null)
-            {
-                await transaction.RollbackAsync(CancellationToken.None);
-                await transaction.DisposeAsync();
-            }
-
-            _db.ChangeTracker.Clear();
-            _logger.LogWarning(
-                ex,
-                "Retrying fulfillment transition after serializable race | OrderId: {OrderId} | TargetStatus: {TargetStatus} | Attempt: {Attempt}/{MaxAttempts}",
-                orderId,
-                targetStatus,
-                attempt,
-                FulfillmentCommitMaxAttempts);
-
-            await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct);
-            return await TransitionAsync(
-                orderId,
-                source,
-                targetStatus,
-                transitionedBy,
-                idempotencyKey,
-                eventFactory,
-                ct,
-                attempt + 1);
-        }
-
         _logger.LogInformation(
             "[Fulfillment] Status changed | OrderId: {OrderId} | OrderNumber: {OrderNumber} | " +
             "From: {OldStatus} | To: {NewStatus} | Source: {Source} | By: {TransitionedBy}",
             order.Id, order.OrderNumber, oldStatus, targetStatus, source, transitionedBy ?? "system");
 
         return OrderFulfillmentResult.Succeeded(orderId, order.OrderNumber, oldStatus, targetStatus, source, idempotencyKey);
+    }
+
+    private async Task<string?> ProgressManualShipmentAsync(Order order, FulfillmentStatus target,
+        FulfillmentRequestSource source, OrderFulfillmentEventBase fact, CancellationToken ct)
+    {
+        if (source != FulfillmentRequestSource.Manual || order.FulfillmentMode != FulfillmentMode.Manual ||
+            !order.ShippingMethodId.HasValue || target is not (FulfillmentStatus.Packed or FulfillmentStatus.OutForDelivery or FulfillmentStatus.Delivered or FulfillmentStatus.Returned)) return null;
+
+        // TransitionCore locks the order first. Never use a caller-selected shipment,
+        // create a replacement, or borrow carrier-managed authority.
+        var shipment = await _db.Shipments.SingleOrDefaultAsync(s => s.TenantId == order.TenantId && s.OrderId == order.Id && !s.IsDeleted, ct);
+        if (shipment == null) return "SHIPMENT_CREATION_PENDING: Wait for the original shipment.";
+        if (shipment.IsCarrierManaged) return "MANUAL_SHIPMENT_AUTHORITY_REQUIRED: Shipment is carrier managed.";
+        var dispatch = fact as OrderOutForDeliveryEvent;
+        if (dispatch?.ShipmentId is Guid requested && requested != shipment.Id) return "SHIPMENT_OWNERSHIP_MISMATCH: Dispatch target does not match the original shipment.";
+        var tracking = dispatch?.TrackingNumber?.Trim() ?? shipment.TrackingNumber;
+        if (target == FulfillmentStatus.OutForDelivery && (string.IsNullOrWhiteSpace(tracking) || tracking.Length > 100 || tracking.Any(char.IsControl)))
+            return "TRACKING_NUMBER_REQUIRED: Supply a supported local dispatch tracking reference.";
+        var path = target switch
+        {
+            FulfillmentStatus.Packed => new[] { ShipmentStatus.Pending, ShipmentStatus.ReadyForPickup },
+            FulfillmentStatus.OutForDelivery => new[] { ShipmentStatus.ReadyForPickup, ShipmentStatus.PickedUp, ShipmentStatus.InTransit, ShipmentStatus.OutForDelivery },
+            FulfillmentStatus.Returned => new[] { ShipmentStatus.Delivered, ShipmentStatus.Returned },
+            _ => new[] { ShipmentStatus.OutForDelivery, ShipmentStatus.Delivered }
+        };
+        // Shipment-first commands synchronize order authority in the same unit.
+        // An already advanced shipment is not a reason to replay older steps.
+        if (target == FulfillmentStatus.Packed && shipment.Status is ShipmentStatus.PickedUp or ShipmentStatus.InTransit or ShipmentStatus.OutForDelivery or ShipmentStatus.Delivered) return null;
+        if (target == FulfillmentStatus.OutForDelivery && shipment.Status == ShipmentStatus.Delivered) return null;
+        var index = Array.IndexOf(path, shipment.Status);
+        if (index < 0) return "MANUAL_SHIPMENT_TRANSITION_INVALID: Original shipment is not ready for this fulfillment command.";
+        if (dispatch != null) { dispatch.ShipmentId = shipment.Id; dispatch.TrackingNumber = tracking; }
+        order.UpdatedAt = DateTime.UtcNow; // All facts use the pending order mutation version.
+        for (var step = index + 1; step < path.Length; step++)
+        {
+            var previous = shipment.Status;
+            if (!ShipmentLifecycleTransitionPolicy.CanTransition(previous, path[step]))
+                throw new InvalidOperationException("Manual shipment transition policy rejected progression.");
+            var now = DateTime.UtcNow;
+            shipment.Status = path[step]; shipment.UpdatedAt = now;
+            if (target == FulfillmentStatus.OutForDelivery) shipment.TrackingNumber = tracking;
+            switch (shipment.Status)
+            {
+                case ShipmentStatus.ReadyForPickup: shipment.ReadyForPickupAtUtc = now; break;
+                case ShipmentStatus.PickedUp: shipment.PickedUpAtUtc = now; break;
+                case ShipmentStatus.InTransit: shipment.ShippedAtUtc = now; break;
+                case ShipmentStatus.OutForDelivery: shipment.OutForDeliveryAtUtc = now; break;
+                case ShipmentStatus.Delivered: shipment.DeliveredAtUtc = now; shipment.ActualDeliveryDate = now; break;
+                case ShipmentStatus.Returned: shipment.ReturnedAtUtc = now; shipment.ReturnReason = (fact as OrderReturnedEvent)?.Reason; break;
+            }
+            await _eventPublisher.PublishAsync(new ShipmentStatusChangedEvent { TenantId = order.TenantId, OrderId = order.Id,
+                OrderNumber = order.OrderNumber, ShipmentId = shipment.Id, ShipmentNumber = shipment.ShipmentNumber,
+                PreviousStatus = previous, NewStatus = shipment.Status, CarrierName = "manual", TrackingNumber = shipment.TrackingNumber }, ct);
+        }
+        return null;
     }
 
     private static bool IsFulfillmentSerializationFailure(Exception exception)

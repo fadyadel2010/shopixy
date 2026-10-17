@@ -9,6 +9,7 @@ namespace PointOfSale.API.DTOs.Admin;
 /// </summary>
 public class AdminShipmentListItemDto
 {
+    public PointOfSale.Infrastructure.Shipping.ShipmentCancellationResult? Cancellation { get; set; }
     /// <summary>
     /// Shipment ID (lowercase for frontend compatibility).
     /// </summary>
@@ -93,6 +94,35 @@ public class AdminShipmentListItemDto
 /// </summary>
 public class AdminShipmentDetailsDto
 {
+    public string? CarrierCode { get; set; }
+    public string? ServiceLevel { get; set; }
+    public string? AwbNumber { get; set; }
+    public string? LabelUrl { get; set; }
+    public string? LabelData { get; set; }
+    public string? LabelFormat { get; set; }
+    public bool IsCashOnDelivery { get; set; }
+    public decimal? CodAmount { get; set; }
+    public bool CodCollected { get; set; }
+    public DateTime? CodCollectedAtUtc { get; set; }
+    public DateTime? LastCarrierSyncAtUtc { get; set; }
+    public string? ExternalRegistrationState { get; set; }
+    public string? ExternalRegistrationError { get; set; }
+    public int ExternalRegistrationAttemptCount { get; set; }
+    public DateTime? ExternalRegistrationCompletedAtUtc { get; set; }
+    /// <summary>Derived caution from retained evidence, never a replacement registration state or retry authority.</summary>
+    public bool ExternalRegistrationRecoveryRequired { get; set; }
+    public DateTime? ReadyForPickupAtUtc { get; set; }
+    public DateTime? PickedUpAtUtc { get; set; }
+    public DateTime? InTransitAtUtc { get; set; }
+    public DateTime? OutForDeliveryAtUtc { get; set; }
+    public DateTime? FailedAtUtc { get; set; }
+    public DateTime? ReturnedAtUtc { get; set; }
+    public string? FailureReason { get; set; }
+    public string? ReturnReason { get; set; }
+    public int DeliveryAttempts { get; set; }
+    public int PackageCount { get; set; }
+    public decimal? WeightKg { get; set; }
+    public PointOfSale.Infrastructure.Shipping.ShipmentCancellationResult? Cancellation { get; set; }
     /// <summary>
     /// Shipment ID.
     /// </summary>
@@ -227,6 +257,8 @@ public class AdminShipmentRecipientDto
 /// </summary>
 public class AdminUpdateShipmentStatusRequest
 {
+    public string? DeliveryReference { get; set; }
+    public string? ProofOfDeliveryUrl { get; set; }
     /// <summary>
     /// New shipment status.
     /// </summary>
@@ -294,6 +326,9 @@ public class AdminTrackingUpdateResponse
 /// </summary>
 public class AdminCancelShipmentRequest
 {
+    public Guid? OperationId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Guid ActorUserId { get; set; }
     /// <summary>
     /// Cancellation reason (required).
     /// </summary>
@@ -305,11 +340,18 @@ public class AdminCancelShipmentRequest
 /// </summary>
 public class AdminShipmentCancellationResponse
 {
+    public Guid? OperationId { get; set; }
+    public string Outcome { get; set; } = "ReconciliationRequired";
+    public string? ConfirmationBasis { get; set; }
+    public DateTime? ConfirmedAtUtc { get; set; }
+    public ShipmentStatus CurrentStatus { get; set; }
+    public bool ExternalConfirmationExists { get; set; }
+    public string Code { get; set; } = string.Empty;
     public Guid ShipmentId { get; set; }
     public string ShipmentNumber { get; set; } = string.Empty;
     public ShipmentStatus OldStatus { get; set; }
     public ShipmentStatus NewStatus { get; set; }
-    public DateTime CancelledAtUtc { get; set; }
+    public DateTime? CancelledAtUtc { get; set; }
 }
 
 /// <summary>
@@ -317,6 +359,8 @@ public class AdminShipmentCancellationResponse
 /// </summary>
 public class AdminShipmentListQuery
 {
+    public bool? IsCod { get; set; }
+    public string? Search { get; set; }
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
     public ShipmentStatus? Status { get; set; }

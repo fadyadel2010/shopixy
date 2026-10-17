@@ -7,10 +7,10 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
-import { Link2, Copy, Check, ToggleLeft, ToggleRight, Loader2, ExternalLink, Sparkles } from 'lucide-react'
+import { Link2, Copy, Check, ToggleLeft, Sparkles } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 
-export default function LinksTab({ formatCurrency }) {
+export default function LinksTab() {
     const { t } = useLanguage()
     const [links, setLinks] = useState([])
     const [loading, setLoading] = useState(true)

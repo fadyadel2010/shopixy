@@ -16,11 +16,8 @@ import { useTranslation } from 'react-i18next'
 import {
     Heart,
     RefreshCw,
-    Package,
     Calendar,
     AlertCircle,
-    Loader2,
-    ExternalLink
 } from 'lucide-react'
 import { onlineCustomersApi } from '../services'
 import { format, formatDistanceToNow } from 'date-fns'
@@ -29,7 +26,7 @@ import { ar, enUS } from 'date-fns/locale'
 /**
  * Wishlist item with product details
  */
-function WishlistItem({ item, getDateLocale, isRtl, t }) {
+function WishlistItem({ item, getDateLocale, t }) {
     const placeholderImage = 'data:image/svg+xml,' + encodeURIComponent(`
         <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
             <rect width="64" height="64" fill="#f3f4f6"/>

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.Core.Constants;
@@ -8,17 +9,21 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Customs;
 using PointOfSale.Core.Interfaces.Fulfillment;
+using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Interfaces.Geographic;
 using PointOfSale.Core.Entities.Geographic;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Shipping;
+using PointOfSale.Infrastructure.Shipping.Adapters;
 
 namespace PointOfSale.Tests.Shipping;
 
-public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
+public sealed partial class ShipmentExternalRegistrationSafetyTests : IDisposable
 {
+    // Generic registration fixtures must not pretend to certify a blocked real provider.
+    private const string DeterministicCarrierCode = "test-registration";
     private readonly CommerceReliabilityTelemetry _telemetry = new();
 
     [Fact]
@@ -34,7 +39,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             tenantId,
             shipmentId,
             ShipmentStatus.PendingExternalRegistration,
-            CarrierCodes.Mylerz);
+            DeterministicCarrierCode);
 
         var service = CreateService(db, tenantId, adapter);
 
@@ -127,7 +132,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             tenantId,
             shipmentId,
             ShipmentStatus.PendingExternalRegistration,
-            CarrierCodes.Mylerz,
+            DeterministicCarrierCode,
             carrierRequestId: carrierRequestId,
             externalRegistrationAttemptCount: 1,
             externalRegistrationState: "PendingExternalCall");
@@ -153,10 +158,226 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         Assert.Equal(ShipmentStatus.ReadyForPickup, shipment.Status);
     }
 
+    [Fact]
+    public async Task Dhl_PriorAmbiguousAttemptUsesRealAdapterFailClosedLookupAndNeverReposts()
+    {
+        var tenantId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
+        await using var db = CreateDbContext(tenantId);
+        SeedOrderAndShipment(db, tenantId, shipmentId, ShipmentStatus.PendingExternalRegistration,
+            CarrierCodes.Dhl, carrierRequestId: $"ship-{tenantId:N}-{shipmentId:N}",
+            externalRegistrationAttemptCount: 1, externalRegistrationState: "PendingExternalCall");
+        var handler = new RejectDhlNetworkHandler();
+        var factory = new Mock<IHttpClientFactory>();
+        factory.Setup(f => f.CreateClient("DHL")).Returns(new HttpClient(handler));
+        var adapter = new DhlAdapter(factory.Object, NullLogger<DhlAdapter>.Instance);
+        var service = CreateService(db, tenantId, adapter);
+
+        var result = await service.ExecuteCarrierForExistingShipmentAsync(tenantId, shipmentId, "express");
+
+        Assert.False(result.Success);
+        Assert.Equal("CARRIER_ORIGINAL_REQUEST_REQUIRED_RECONCILIATION_REQUIRED", result.ErrorCode);
+        Assert.True(result.ExternalCallSkipped);
+        Assert.Equal(0, handler.CallCount);
+        var shipment = await db.Shipments.AsNoTracking().SingleAsync();
+        Assert.Equal(1, shipment.ExternalRegistrationAttemptCount);
+        Assert.Equal("PendingExternalCall", shipment.ExternalRegistrationState); // No replacement/rewrite of missing original evidence.
+        Assert.Null(shipment.ExternalRegistrationCompletedAtUtc);
+        Assert.Equal(ShipmentStatus.PendingExternalRegistration, shipment.Status);
+    }
+
+    private sealed class RejectDhlNetworkHandler : HttpMessageHandler
+    {
+        public int CallCount { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            throw new InvalidOperationException("Recovery must not invoke DHL without verified lookup authority.");
+        }
+    }
+
+    [Theory]
+    [InlineData("12345")]
+    [InlineData(null)]
+    public async Task Dhl_OriginAndRequestPreserveAdmittedPostcodeWithoutEnrichingRecovery(string? postalCode)
+    {
+        var tenantId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
+        await using var db = CreateDbContext(tenantId);
+        SeedOrderAndShipment(db, tenantId, shipmentId, ShipmentStatus.PendingExternalRegistration,
+            CarrierCodes.Dhl, originPostalCode: postalCode);
+        var evidence = await db.Set<AddressAdmissionEvidence>().SingleAsync();
+        var shipment = await db.Shipments.SingleAsync();
+        var order = await db.Orders.SingleAsync();
+        var adapter = new DeterministicCarrierAdapter();
+        var service = CreateService(db, tenantId, adapter);
+        // Exercise snapshot construction without bypassing the real DHL execution gate.
+        var resolver = typeof(CarrierShipmentService).GetMethod("ResolveOrRestoreShipmentOriginAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var origin = await (Task<ShipmentOriginDto?>)resolver.Invoke(service, new object[] { shipment, order, CancellationToken.None })!;
+        Assert.NotNull(origin);
+        Assert.Equal(postalCode, origin.PostalCode);
+        var snapshotJson = shipment.OriginSnapshotJson;
+
+        db.Set<AddressAdmissionEvidence>().Add(new AddressAdmissionEvidence
+        {
+            Id = Guid.NewGuid(), TenantId = tenantId, OwnerDomain = AddressAdmissionOwnerDomain.Warehouse,
+            OwnerId = evidence.OwnerId, AddressFingerprintSha256 = "new-test-origin-address",
+            Status = AddressAdmissionStatus.Admitted, CatalogReleaseId = evidence.CatalogReleaseId,
+            CountryPlaceId = evidence.CountryPlaceId, PostalCode = "99999",
+            AdmittedAtUtc = DateTime.UtcNow.AddMinutes(1), CreatedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var restored = await (Task<ShipmentOriginDto?>)resolver.Invoke(service, new object[] { shipment, order, CancellationToken.None })!;
+        Assert.Equal(postalCode, restored!.PostalCode);
+        Assert.Equal(snapshotJson, shipment.OriginSnapshotJson);
+
+        var builder = typeof(CarrierShipmentService).GetMethod("BuildDhlRequest",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        var parcel = new ParcelEvidence(1, tenantId, shipmentId, order.Id,
+            new ParcelMeasurement(10, 20, 30, "cm", 1, "kg", 1, "piece-1"),
+            10, 20, 30, 1, Array.Empty<ParcelContent>(), Guid.NewGuid(), DateTime.UtcNow);
+        var request = (CreateShipmentRequest)builder.Invoke(null,
+            new object?[] { shipment, order, restored, "EG", Array.Empty<ResolvedProviderGeography>(), null, parcel, "test-request", null })!;
+        Assert.Equal(postalCode, request.OriginZipCode);
+        Assert.Equal(0, adapter.CreateShipmentCallCount);
+    }
+
+    [Fact]
+    public async Task Dhl_NewAttemptCannotBypassLocalOnlyReadiness()
+    {
+        var tenantId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
+        await using var db = CreateDbContext(tenantId);
+        SeedOrderAndShipment(db, tenantId, shipmentId, ShipmentStatus.PendingExternalRegistration, CarrierCodes.Dhl);
+        var handler = new RejectDhlNetworkHandler();
+        var factory = new Mock<IHttpClientFactory>();
+        factory.Setup(f => f.CreateClient("DHL")).Returns(new HttpClient(handler));
+        var service = CreateService(db, tenantId, new DhlAdapter(factory.Object, NullLogger<DhlAdapter>.Instance));
+
+        var result = await service.ExecuteCarrierForExistingShipmentAsync(tenantId, shipmentId, "express");
+
+        Assert.False(result.Success);
+        Assert.Equal("CARRIER_NOT_CONFIGURED", result.ErrorCode);
+        Assert.Equal(0, handler.CallCount);
+        var shipment = await db.Shipments.AsNoTracking().SingleAsync();
+        Assert.Equal(0, shipment.ExternalRegistrationAttemptCount);
+        Assert.Null(shipment.ExternalRegistrationCompletedAtUtc);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TrackingCatchUp_RequiresActualHistoryAndDoesNotReenterProvider(bool includeHistory)
+    {
+        var tenantId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
+        await using var db = CreateDbContext(tenantId);
+        SeedOrderAndShipment(db, tenantId, shipmentId, ShipmentStatus.ReadyForPickup, DeterministicCarrierCode, trackingNumber: "TRACK-1");
+        var observedAt = DateTime.UtcNow.AddMinutes(-10);
+        var adapter = new DeterministicCarrierAdapter
+        {
+            TrackingResult = new ShipmentTrackingResult
+            {
+                Success = true, CurrentStatus = ShipmentStatus.InTransit, RawResponse = "synthetic-tracking",
+                CodCollected = true,
+                Events = includeHistory ? [
+                    new TrackingEvent { Status = ShipmentStatus.PickedUp, Timestamp = observedAt, Description = "Observed pickup" },
+                    new TrackingEvent { Status = ShipmentStatus.InTransit, Timestamp = observedAt.AddMinutes(1), Description = "Observed transit" }
+                ] : []
+            }
+        };
+        var service = CreateService(db, tenantId, adapter);
+        var result = await service.SyncTrackingAsync(tenantId, shipmentId);
+        var persisted = await db.Shipments.AsNoTracking().SingleAsync();
+        Assert.Equal(includeHistory, result.Success);
+        Assert.Equal(includeHistory, result.StatusChanged);
+        Assert.Equal(includeHistory ? ShipmentStatus.InTransit : ShipmentStatus.ReadyForPickup, persisted.Status);
+        Assert.Equal(1, adapter.TrackingCalls);
+        Assert.Equal(0, adapter.CreateShipmentCallCount);
+        Assert.False(persisted.CodCollected); // a non-COD shipment can never acquire money authority
+        if (includeHistory)
+        {
+            Assert.Equal(observedAt, persisted.PickedUpAtUtc);
+            Assert.Equal(observedAt.AddMinutes(1), persisted.ShippedAtUtc);
+        }
+        else
+        {
+            Assert.Equal("TRACKING_PROGRESSION_UNRESOLVED", result.ErrorCode);
+            Assert.Null(persisted.PickedUpAtUtc);
+            Assert.Null(persisted.ShippedAtUtc);
+            Assert.Equal("synthetic-tracking", persisted.CarrierTrackingResponse);
+        }
+    }
+
+    [Fact]
+    public async Task TrackingCatchUp_UnresolvedCodObservationCannotPublishCollection()
+    {
+        var tenant = Guid.NewGuid(); var id = Guid.NewGuid();
+        await using var db = CreateDbContext(tenant);
+        SeedOrderAndShipment(db, tenant, id, ShipmentStatus.ReadyForPickup, DeterministicCarrierCode, trackingNumber: "TRACK-1");
+        var shipment = await db.Shipments.SingleAsync();
+        shipment.IsCashOnDelivery = true; shipment.CodAmount = 150m;
+        await db.SaveChangesAsync(); db.ChangeTracker.Clear();
+        var adapter = new DeterministicCarrierAdapter { TrackingResult = new() { Success = true, CurrentStatus = ShipmentStatus.Delivered, CodCollected = true } };
+        var result = await CreateService(db, tenant, adapter).SyncTrackingAsync(tenant, id);
+        Assert.False(result.Success);
+        Assert.False((await db.Shipments.AsNoTracking().SingleAsync()).CodCollected);
+    }
+
     private CarrierShipmentService CreateService(
         ApplicationDbContext db,
         Guid tenantId,
-        DeterministicCarrierAdapter adapter)
+        IShippingCarrierAdapter adapter)
+        => CreateCarrierService(db, tenantId, adapter);
+
+    [Theory]
+    [InlineData("manual")]
+    [InlineData("bosta")]
+    [InlineData("aramex")]
+    [InlineData("dhl")]
+    [InlineData("fedex")]
+    [InlineData("mylerz")]
+    public async Task AdminReadProjectionAndFiltersPreserveStoredEvidenceAndTenantIsolation(string carrier)
+    {
+        var tenant = Guid.NewGuid(); var id = Guid.NewGuid();
+        await using var db = CreateDbContext(tenant);
+        SeedOrderAndShipment(db, tenant, id, ShipmentStatus.ReadyForPickup, carrier, trackingNumber: "TRACK-1", externalRegistrationState: "ReconciliationRequired");
+        var shipment = await db.Shipments.SingleAsync();
+        shipment.IsCashOnDelivery = true; shipment.CodAmount = 150m;
+        shipment.LabelData = "JVBERi0x"; shipment.LabelFormat = "pdf"; shipment.AwbNumber = "AWB-1";
+        shipment.ExternalRegistrationError = "Synthetic unresolved outcome";
+        await db.SaveChangesAsync(); db.ChangeTracker.Clear();
+        var service = new PointOfSale.API.Services.Admin.AdminShipmentService(db, new NoOpEventPublisher(),
+            Mock.Of<IOrderFulfillmentService>(), Mock.Of<IMarketplaceEventOutboxService>(),
+            NullLogger<PointOfSale.API.Services.Admin.AdminShipmentService>.Instance);
+        var details = await service.GetShipmentDetailsAsync(tenant, id, "closure-test");
+        Assert.NotNull(details);
+        Assert.Equal(carrier, details.CarrierCode);
+        Assert.Equal("AWB-1", details.AwbNumber);
+        Assert.Equal("JVBERi0x", details.LabelData);
+        Assert.Equal("pdf", details.LabelFormat);
+        Assert.Equal("Customer", details.Recipient.Name);
+        Assert.Equal("ReconciliationRequired", details.ExternalRegistrationState);
+        Assert.Equal(shipment.CreatedAt, details.CreatedAtUtc);
+        Assert.True(details.IsCashOnDelivery); Assert.Equal(150m, details.CodAmount); Assert.False(details.CodCollected);
+        var filter = new PointOfSale.API.DTOs.Admin.AdminShipmentListQuery { Carrier = carrier, IsCod = true, Search = "ORD-SHIP-1",
+            FromDate = DateTime.UtcNow.Date, ToDate = DateTime.UtcNow.Date };
+        Assert.Single((await service.ListShipmentsAsync(tenant, filter, "closure-test")).Items);
+        filter.IsCod = false;
+        Assert.Empty((await service.ListShipmentsAsync(tenant, filter, "closure-test")).Items);
+        filter.IsCod = true; filter.Carrier = carrier[..2];
+        Assert.Empty((await service.ListShipmentsAsync(tenant, filter, "closure-test")).Items);
+        Assert.Null(await service.GetShipmentDetailsAsync(Guid.NewGuid(), id, "closure-test"));
+    }
+
+    private CarrierShipmentService CreateCarrierService(
+        ApplicationDbContext db,
+        Guid tenantId,
+        IShippingCarrierAdapter adapter,
+        ICarrierIntegrationAuthority? authorityOverride = null,
+        ICarrierCredentialEncryptionService? encryptionOverride = null,
+        ICarrierGeographicMappingService? mappingOverride = null)
     {
         var registry = new Mock<IShippingCarrierRegistry>(MockBehavior.Strict);
         registry.Setup(x => x.GetAdapter(It.IsAny<string>())).Returns(adapter);
@@ -222,7 +443,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
                 new[] { new CarrierCredentialFieldDescriptor("apiKey", "API key", true, true, "ApiKey") },
                 EnvironmentSupported: true,
                 ConnectionTestSupported: false,
-                CarrierConnectionTestMode.Unsupported,
+                code == CarrierCodes.Dhl ? CarrierConnectionTestMode.LocalOnly : CarrierConnectionTestMode.Unsupported,
                 new[] { "standard", "express" },
                 RequiresOriginReadiness: false,
                 RequiresGeographyMapping: true,
@@ -238,22 +459,25 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         return new CarrierShipmentService(
             db,
             registry.Object,
-            encryption.Object,
+            encryptionOverride ?? encryption.Object,
             new NoOpEventPublisher(),
             fulfillmentService.Object,
             _telemetry,
             tenantContext,
             Mock.Of<ICustomsEvidenceAdmissionService>(),
-            geographicMapping.Object,
+            mappingOverride ?? geographicMapping.Object,
             NullLogger<CarrierShipmentService>.Instance,
-            authority);
+            authorityOverride ?? authority);
     }
 
-    private static ApplicationDbContext CreateDbContext(Guid tenantId)
+    private static ApplicationDbContext CreateDbContext(Guid tenantId, string? databaseName = null,
+        Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor? interceptor = null,
+        Microsoft.EntityFrameworkCore.Storage.InMemoryDatabaseRoot? storeRoot = null)
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase($"ShipmentExternalRegistrationSafety_{tenantId}_{Guid.NewGuid()}")
-            .Options;
+        var builder = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName ?? $"ShipmentExternalRegistrationSafety_{tenantId}_{Guid.NewGuid()}", storeRoot);
+        if (interceptor != null) builder.AddInterceptors(interceptor);
+        var options = builder.Options;
 
         var tenantContext = new TenantContext();
         tenantContext.SetTenantId(tenantId);
@@ -271,7 +495,9 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         string? trackingNumber = null,
         string? carrierRequestId = null,
         int externalRegistrationAttemptCount = 0,
-        string? externalRegistrationState = null)
+        string? externalRegistrationState = null,
+        string? originPostalCode = null,
+        Action<Shipment, Order>? beforeSave = null)
     {
         var orderId = Guid.NewGuid();
         var shippingMethodId = Guid.NewGuid();
@@ -348,6 +574,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             Status = AddressAdmissionStatus.Admitted,
             CatalogReleaseId = catalogReleaseId,
             CountryPlaceId = countryPlaceId,
+            PostalCode = originPostalCode,
             AdmittedAtUtc = now,
             CreatedAtUtc = now
         });
@@ -410,6 +637,22 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             CreatedAt = DateTime.UtcNow
         });
 
+        if (externalRegistrationAttemptCount > 0)
+        {
+            // A prior attempted call must carry its original retained v1 origin.
+            // Recovery may not construct it from the current Warehouse fixture.
+            var shipment = db.ChangeTracker.Entries<Shipment>().Single().Entity;
+            var admission = db.ChangeTracker.Entries<AddressAdmissionEvidence>().Single().Entity;
+            var original = new ShipmentOriginDto(warehouseId, admission.Id, catalogReleaseId, countryPlaceId, null, null, null, null,
+                "EG", "Egypt", "", "", "", "", "Warehouse", "02000000000", "Warehouse Address", now, 1) { PostalCode = originPostalCode };
+            shipment.OriginWarehouseId = warehouseId; shipment.OriginAddressAdmissionEvidenceId = admission.Id;
+            shipment.OriginGeographicCatalogReleaseId = catalogReleaseId; shipment.OriginCountryPlaceId = countryPlaceId;
+            shipment.OriginCountryIso2 = "EG"; shipment.OriginCountryDisplayName = "Egypt";
+            shipment.OriginContactName = original.ContactName; shipment.OriginContactPhone = original.ContactPhone; shipment.OriginStreet = original.Street;
+            shipment.OriginGeographicSnapshotVersion = 1; shipment.OriginGeographicSnapshotCreatedAtUtc = now;
+            shipment.OriginSnapshotJson = JsonSerializer.Serialize(original);
+        }
+
         // Current method state deliberately differs from the immutable order/shipment
         // snapshot and is inactive. Historical execution must not reload it.
         db.ShippingMethods.Add(new ShippingMethod
@@ -440,6 +683,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             CreatedAt = DateTime.UtcNow
         });
 
+        beforeSave?.Invoke(db.ChangeTracker.Entries<Shipment>().Single().Entity, db.ChangeTracker.Entries<Order>().Single().Entity);
         db.SaveChanges();
         db.ChangeTracker.Clear();
     }
@@ -449,13 +693,22 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         _telemetry.Dispose();
     }
 
-    private sealed class DeterministicCarrierAdapter : IShippingCarrierAdapter
+    private sealed class DeterministicCarrierAdapter : IShippingCarrierAdapter, IBostaPickupLocationDiscovery
     {
-        public string CarrierCode => CarrierCodes.Mylerz;
+        public string CarrierCode => DeterministicCarrierCode;
         public string DisplayName => "Deterministic Carrier";
         public int CreateShipmentCallCount { get; private set; }
         public int LookupByCarrierRequestIdCallCount { get; private set; }
+        public int TrackingCalls { get; private set; }
+        public CreateShipmentRequest? LastCreateRequest { get; private set; }
+        public ShipmentTrackingResult TrackingResult { get; init; } = new() { Success = true, CurrentStatus = ShipmentStatus.ReadyForPickup };
+        public Func<Task>? BeforeLookup { get; init; }
+        public Func<Task>? BeforeCreate { get; init; }
+        public CreateShipmentResult? CreateResult { get; init; }
         private readonly Dictionary<string, CreateShipmentResult> _shipmentsByCarrierRequestId = new(StringComparer.Ordinal);
+
+        public Task<BostaPickupLocationResult> GetPickupLocationsAsync(CarrierCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(new BostaPickupLocationResult(true, [new("synthetic-owned-pickup", true, "EG", "synthetic-city", "Synthetic city", "synthetic-district", "Synthetic district") {CountryId = "synthetic-country"}], null));
 
         public void AddExistingShipment(
             string carrierRequestId,
@@ -477,9 +730,11 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         public Task<ShippingQuoteResult> GetQuoteAsync(ShippingQuoteRequest request, CarrierCredentials credentials, CancellationToken cancellationToken = default) =>
             Task.FromResult(new ShippingQuoteResult { Success = false });
 
-        public Task<CreateShipmentResult> CreateShipmentAsync(CreateShipmentRequest request, CarrierCredentials credentials, CancellationToken cancellationToken = default)
+        public async Task<CreateShipmentResult> CreateShipmentAsync(CreateShipmentRequest request, CarrierCredentials credentials, CancellationToken cancellationToken = default)
         {
             CreateShipmentCallCount++;
+            LastCreateRequest = request;
+            if (BeforeCreate != null) await BeforeCreate();
 
             var result = new CreateShipmentResult
             {
@@ -497,26 +752,30 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
                 _shipmentsByCarrierRequestId[request.CarrierRequestId] = result;
             }
 
-            return Task.FromResult(result);
+            return CreateResult ?? result;
         }
 
-        public Task<CreateShipmentResult?> GetShipmentByCarrierRequestIdAsync(
+        public async Task<CreateShipmentResult?> GetShipmentByCarrierRequestIdAsync(
             string carrierRequestId,
             CarrierCredentials credentials,
             CancellationToken cancellationToken = default)
         {
             LookupByCarrierRequestIdCallCount++;
-            return Task.FromResult(
+            if (BeforeLookup != null) await BeforeLookup();
+            return
                 _shipmentsByCarrierRequestId.TryGetValue(carrierRequestId, out var result)
                     ? result
-                    : null);
+                    : null;
         }
 
         public Task<CancelShipmentResult> CancelShipmentAsync(string trackingNumber, CarrierCredentials credentials, CancellationToken cancellationToken = default) =>
             Task.FromResult(new CancelShipmentResult { Success = true });
 
-        public Task<ShipmentTrackingResult> GetTrackingAsync(string trackingNumber, CarrierCredentials credentials, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ShipmentTrackingResult { Success = true, CurrentStatus = ShipmentStatus.ReadyForPickup });
+        public Task<ShipmentTrackingResult> GetTrackingAsync(string trackingNumber, CarrierCredentials credentials, CancellationToken cancellationToken = default)
+        {
+            TrackingCalls++;
+            return Task.FromResult(TrackingResult);
+        }
 
         public Task<CarrierValidationResult> ValidateCredentialsAsync(CarrierCredentials credentials, CancellationToken cancellationToken = default) =>
             Task.FromResult(new CarrierValidationResult { Success = true });

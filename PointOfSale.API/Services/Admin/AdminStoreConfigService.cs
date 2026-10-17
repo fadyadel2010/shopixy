@@ -9,6 +9,7 @@ using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Services.Security;
+using PointOfSale.API.Services.Catalog;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
@@ -165,6 +166,9 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             ApplyExpectedRowVersion(config!, expectedRowVersion);
         }
 
+        var aiError = request.CommerceAi?.Validate();
+        if (request.CommerceAi == null || aiError != null) throw new ArgumentException(aiError ?? "CommerceAi is required");
+
         // Update config from request
         config!.StoreName = request.StoreName;
         config.StoreDescription = request.StoreDescription;
@@ -183,7 +187,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         config.CommerceAiWidgetStyle = request.CommerceAi.WidgetStyle;
         config.CommerceAiWidgetPosition = request.CommerceAi.WidgetPosition;
         config.CommerceAiAutoGreetingEnabled = request.CommerceAi.AutoGreetingEnabled;
-        config.CommerceAiAutoGreetingMessage = request.CommerceAi.AutoGreetingMessage;
+        config.CommerceAiAutoGreetingMessage = request.CommerceAi.AutoGreetingMessage ?? string.Empty;
         config.CommerceAiPersonality = request.CommerceAi.Personality;
         
         config.UpdatedAtUtc = DateTime.UtcNow;
@@ -198,6 +202,28 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             "StoreConfig {Operation} | TenantId: {TenantId} | ConfigId: {ConfigId} | ThemeId: {ThemeId} | TraceId: {TraceId}",
             isNew ? "CREATED" : "UPDATED", tenantId, config.Id, config.ThemeId, traceId);
 
+        return await MapToResponseAsync(config, cancellationToken);
+    }
+
+    public async Task<AdminStoreConfigResponse> UpdateCommerceAiAsync(Guid tenantId, AdminCommerceAiConfigDto request,
+        string traceId, CancellationToken cancellationToken = default, uint? expectedRowVersion = null)
+    {
+        var error = request.Validate();
+        if (error != null) throw new ArgumentException(error);
+        var config = await _dbContext.StoreConfigs.SingleOrDefaultAsync(c => c.TenantId == tenantId, cancellationToken)
+            ?? throw new InvalidOperationException("Store configuration must exist before editing the assistant.");
+        ApplyExpectedRowVersion(config, expectedRowVersion);
+        if (config.CommerceAiEnabled != request.Enabled)
+            config.CommerceAiEnabledAt = request.Enabled ? DateTime.UtcNow : null;
+        config.CommerceAiEnabled = request.Enabled;
+        config.CommerceAiWidgetStyle = request.WidgetStyle;
+        config.CommerceAiWidgetPosition = request.WidgetPosition;
+        config.CommerceAiAutoGreetingEnabled = request.AutoGreetingEnabled;
+        config.CommerceAiAutoGreetingMessage = request.AutoGreetingMessage ?? string.Empty;
+        config.CommerceAiPersonality = request.Personality;
+        config.CommerceAiUpdatedBy = _httpContextAccessor.HttpContext?.User.Identity?.Name ?? "POS Admin";
+        config.UpdatedAtUtc = DateTime.UtcNow;
+        await PersistStoreConfigChangeAsync(config, StoreConfigPublishAction.Updated, traceId, cancellationToken);
         return await MapToResponseAsync(config, cancellationToken);
     }
 
@@ -334,6 +360,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             if (pageId.Equals("home", StringComparison.OrdinalIgnoreCase))
             {
                 await ValidateCuratedProductsAsync(normalizedPage, tenantId, cancellationToken);
+                await ValidateCuratedCategoriesAsync(normalizedPage, tenantId, cancellationToken);
                 await ValidateHomepageMediaAsync(normalizedPage, tenantId, cancellationToken);
             }
             pageContent["draft"] = normalizedPage; // Replace draft entirely
@@ -426,6 +453,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             if (pageId.Equals("home", StringComparison.OrdinalIgnoreCase))
             {
                 await ValidateCuratedProductsAsync(normalizedDraft, tenantId, cancellationToken);
+                await ValidateCuratedCategoriesAsync(normalizedDraft, tenantId, cancellationToken);
                 await ValidateHomepageMediaAsync(normalizedDraft, tenantId, cancellationToken);
             }
 
@@ -696,6 +724,17 @@ public class AdminStoreConfigService : IAdminStoreConfigService
 
             // Capture before state for audit
             var beforeSnapshot = config.ThemeLiveOverridesJson;
+
+            // Replaying an already accepted draft must not manufacture another
+            // publication/version/outbox event. Still enforce the caller's revision:
+            // a no-op must not turn a stale If-Match into an accepted publication.
+            if (string.Equals(config.ThemeLivePresetKey, config.ThemePresetKey, StringComparison.Ordinal) &&
+                JsonNode.DeepEquals(JsonNode.Parse(config.ThemeLiveOverridesJson), JsonNode.Parse(config.ThemeDraftOverridesJson)))
+            {
+                if (expectedRowVersion.HasValue && config.RowVersion != expectedRowVersion.Value)
+                    throw new ConcurrencyConflictException("StoreConfig", config.Id);
+                return await MapToResponseAsync(config, cancellationToken);
+            }
 
             // Promote Draft -> Live
             // 1. ThemePresetKey is already saved in SelectThemePresetAsync, but checking consistency
@@ -2105,6 +2144,32 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         var count = await _dbContext.HomepageMediaAssets.AsNoTracking()
             .CountAsync(asset => asset.TenantId == tenantId && ids.Contains(asset.Id), cancellationToken);
         if (count != ids.Count) throw new ArgumentException("The selected homepage image is unavailable in this store. Upload it again.");
+    }
+
+    private async Task ValidateCuratedCategoriesAsync(
+        Dictionary<string, object> composition, Guid tenantId, CancellationToken cancellationToken)
+    {
+        var document = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(composition)) as JsonObject;
+        var ids = new HashSet<Guid>();
+        if (document?["sections"] is JsonArray sections)
+        {
+            foreach (var section in sections.OfType<JsonObject>())
+            {
+                if (section["type"]?.GetValue<string>() is not ("category-grid" or "subcategory-grid") ||
+                    section["settings"] is not JsonObject settings ||
+                    settings["source"]?.GetValue<string>() != "curated" ||
+                    settings["categoryIds"] is not JsonArray selectedIds)
+                    continue;
+
+                foreach (var selectedId in selectedIds)
+                    if (Guid.TryParse(selectedId?.GetValue<string>(), out var id)) ids.Add(id);
+            }
+        }
+
+        if (ids.Count == 0) return;
+        var lineage = await CategoryLineageAuthority.LoadTenantSnapshotAsync(_dbContext, tenantId, cancellationToken);
+        if (ids.Any(id => !lineage.IsLiveInLineage(id)))
+            throw new ArgumentException("Curated categories must belong to this store and have a live category lineage. Remove unavailable selections before saving or publishing.");
     }
 
     private async Task ValidateCuratedProductsAsync(

@@ -12,7 +12,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { affiliateAuthApi } from '../../../services/affiliateAuthApi'
 import {
-    Rocket, User, Mail, Lock, AlertCircle, Loader2, CheckCircle2,
+    Rocket, User, Mail, Lock, AlertCircle, Loader2,
     DollarSign, BarChart3, Link2
 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'

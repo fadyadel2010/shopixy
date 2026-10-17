@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { marketplaceApi } from '../../api/marketplaceApi'
-import { marketplaceKeys } from '../../queryKeys'
+import { useMarketplaceSearch } from '../../hooks/useMarketplaceSearch'
 import { ServiceCard } from '../../components/ServiceCard'
 import { useFormatting } from '../../../hooks/useFormatting'
 import type { ServiceSearchRequest } from '../../types'
-import { marketplaceAuthorityQueryOptions, useMarketplaceAuthorityScope } from '../../authority'
 
 function useDebounce<T>(value: T, delay: number): T {
     const [debouncedValue, setDebouncedValue] = useState(value)
@@ -50,9 +47,8 @@ const normalizePage = (value: string | null) => {
 
 export function DiscoverTab() {
     const { t } = useTranslation()
-    const { formatNumber, isRTL } = useFormatting()
+    const { formatCurrency, formatNumber, isRTL } = useFormatting()
     const [urlParams, setUrlParams] = useSearchParams()
-    const authorityScope = useMarketplaceAuthorityScope()
 
     const rawQuery = urlParams.get('q') || ''
     const urlQuery = rawQuery.slice(0, MAX_SEARCH_LENGTH)
@@ -139,11 +135,7 @@ export function DiscoverTab() {
         isError,
         isRefetchError,
         refetch,
-    } = useQuery({
-        queryKey: marketplaceKeys.search(request, authorityScope),
-        queryFn: () => marketplaceApi.searchServices(request),
-        ...marketplaceAuthorityQueryOptions,
-    })
+    } = useMarketplaceSearch(request)
     const authorityFailed = isError || isRefetchError
     const isValidating = isLoading || isFetching
     const data = authorityFailed || isValidating ? undefined : searchData
@@ -257,7 +249,7 @@ export function DiscoverTab() {
             {!isValidating && data && data.items.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {data.items.map((service) => (
-                        <ServiceCard key={service.serviceId} service={service} />
+                        <ServiceCard key={service.serviceId} service={service} formatCurrency={formatCurrency} formatNumber={formatNumber} isRTL={isRTL} />
                     ))}
                 </div>
             ) : null}

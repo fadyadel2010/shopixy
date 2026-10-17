@@ -67,7 +67,8 @@ public sealed class CouponValidationService : ICouponValidationService
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(
                 entity => entity.TenantId == tenantId &&
-                          entity.NormalizedCode == normalizedCode,
+                          entity.NormalizedCode == normalizedCode &&
+                          !entity.IsDeleted,
                 cancellationToken);
 
         if (coupon == null || coupon.IsDeleted)
@@ -609,7 +610,7 @@ public sealed class CouponValidationService : ICouponValidationService
         }
 
         var couponConfigurationError = DiscountValidation.GetCouponValidationError(
-            coupon.DiscountType == DiscountType.Percentage ? "percentage" : "fixed",
+            coupon.DiscountType,
             coupon.DiscountValue,
             coupon.MinOrderAmount,
             coupon.MaxDiscountAmount,

@@ -3,8 +3,11 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { I18nextProvider } from 'react-i18next'
 import i18n from 'i18next'
-import PaymentModal, { getMixedPaymentState, getSaleSubmissionErrorMessage, parseAmountInput } from './PaymentModal.jsx'
+import PaymentModal from './PaymentModal.jsx'
+import { getMixedPaymentState, getSaleSubmissionErrorMessage, parseAmountInput } from './paymentSubmission'
 import { SettingsProvider } from '../contexts/SettingsContext'
+
+type SubmissionFailure = { message?: string; code?: string; response?: { data?: { message?: string } } }
 
 const apiMock = vi.hoisted(() => ({
     get: vi.fn(),
@@ -14,8 +17,8 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../services/api', () => ({
     default: apiMock,
-    getSafeApiErrorMessage: (error: any) => error.message || error.response?.data?.message || 'Unknown error',
-    isRequestTimeout: (error: any) => error.code === 'ECONNABORTED' || error.message?.includes('timeout'),
+    getSafeApiErrorMessage: (error: SubmissionFailure) => error.message || error.response?.data?.message || 'Unknown error',
+    isRequestTimeout: (error: SubmissionFailure) => error.code === 'ECONNABORTED' || error.message?.includes('timeout'),
 }))
 
 // Initialize i18n for tests
@@ -71,7 +74,7 @@ afterEach(() => {
 })
 
 // Test wrapper with required providers
-const TestWrapper = ({ children }) => (
+const TestWrapper = ({ children }: { children: import('react').ReactNode }) => (
     <I18nextProvider i18n={i18n}>
         <SettingsProvider>
             {children}
@@ -241,8 +244,8 @@ describe('PaymentModal submission concurrency', () => {
 
     it('uses a synchronous confirmation lock before stock revalidation starts', async () => {
         const user = userEvent.setup()
-        let revalidateResolve
-        const mockRevalidateStock = vi.fn(() => new Promise(resolve => {
+        let revalidateResolve!: (value: boolean) => void
+        const mockRevalidateStock = vi.fn(() => new Promise<boolean>(resolve => {
             // Store resolve to control when promise completes
             revalidateResolve = resolve
         }))
@@ -414,7 +417,7 @@ describe('PaymentModal submission concurrency', () => {
             },
         ]
 
-        let rejectSubmission: (error: any) => void
+        let rejectSubmission: (error: unknown) => void
         const submissionPromise = new Promise((_, reject) => {
             rejectSubmission = reject
         })

@@ -44,7 +44,7 @@ const generateId = () => `section_${Date.now()}_${Math.random().toString(36).sub
 export function getDefaultSections(pageKey) {
     switch (pageKey) {
         case 'home':
-            return defaultHomeSections.map((s, i) => ({
+            return defaultHomeSections.map((s) => ({
                 ...s,
                 id: generateId(),
             }))

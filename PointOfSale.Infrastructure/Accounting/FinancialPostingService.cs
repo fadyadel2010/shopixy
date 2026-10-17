@@ -478,6 +478,11 @@ public class FinancialPostingService : IFinancialPostingService
         {
             throw new InvalidJournalException("Description is required");
         }
+        // Validate the dedicated source even if a substituted destination has no mapped cash inflow.
+        if (request.SourceType == ManualCodSettlementAuthority.SourceType)
+            await ValidateManualCodSettlementInflowAsync(request, ct);
+        if (request.SourceType == CarrierRemittanceAuthority.SourceType)
+            await ValidateCarrierRemittanceInflowAsync(request, ct);
     }
     
     /// <inheritdoc />
@@ -639,6 +644,8 @@ public class FinancialPostingService : IFinancialPostingService
 
         var authorizedAmount = request.SourceType switch
         {
+            "ManualCodSettlement" => await ValidateManualCodSettlementInflowAsync(request, ct),
+            "CarrierCashRemittance" => await ValidateCarrierRemittanceInflowAsync(request, ct),
             "SalesInvoice" => await _db.SalesInvoices
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -797,6 +804,28 @@ public class FinancialPostingService : IFinancialPostingService
         return cumulativeCashRefunds <= originalCashPaid
             ? returnRecord.CashRefundAmount
             : null;
+    }
+
+    private async Task<decimal?> ValidateManualCodSettlementInflowAsync(PostingRequest request, CancellationToken ct)
+    {
+        var authority = await ManualCodSettlementAuthority.BuildPostingAsync(_db, request.TenantId, request.SourceId, ct);
+        if (request.SourceReference != authority.SourceReference || request.IdempotencyKey != authority.IdempotencyKey ||
+            request.UserId != authority.UserId || request.JournalDate != authority.JournalDate || request.Lines.Count != 2 ||
+            !request.Lines.Select(l => (l.AccountId, l.DebitAmount, l.CreditAmount))
+                .SequenceEqual(authority.Lines.Select(l => (l.AccountId, l.DebitAmount, l.CreditAmount))))
+            throw new InvalidJournalException("Manual COD settlement does not match its SQL source authority.");
+        return authority.Lines[0].DebitAmount;
+    }
+
+    private async Task<decimal?> ValidateCarrierRemittanceInflowAsync(PostingRequest request, CancellationToken ct)
+    {
+        var source = await CarrierRemittanceAuthority.BuildPostingAsync(_db, request.TenantId, request.SourceId, ct);
+        if (request.SourceReference != source.SourceReference || request.IdempotencyKey != source.IdempotencyKey ||
+            request.UserId != source.UserId || request.JournalDate != source.JournalDate || request.Lines.Count != 2 ||
+            !request.Lines.Select(l => (l.AccountId, l.DebitAmount, l.CreditAmount))
+                .SequenceEqual(source.Lines.Select(l => (l.AccountId, l.DebitAmount, l.CreditAmount))))
+            throw new InvalidJournalException("Carrier remittance does not match dedicated SQL receipt authority.");
+        return source.Lines[0].DebitAmount;
     }
 
     private static decimal RoundCurrency(decimal value) =>
@@ -1051,17 +1080,7 @@ public class FinancialPostingService : IFinancialPostingService
                     (!expense.RequiresApproval || expense.IsApproved))
                 .Select(expense => (decimal?)expense.Amount)
                 .FirstOrDefaultAsync(ct),
-            "Order_Refund" => await _db.OrderRefunds
-                .IgnoreQueryFilters()
-                .AsNoTracking()
-                .Where(refund =>
-                    refund.OrderId == request.SourceId &&
-                    refund.TenantId == request.TenantId &&
-                    !refund.IsDeleted &&
-                    refund.Amount > 0m &&
-                    (refund.FinancialPostingStatus == FinancialPostingStatus.Pending ||
-                     refund.FinancialPostingStatus == FinancialPostingStatus.Posted))
-                .SumAsync(refund => (decimal?)refund.Amount, ct),
+            "Order_Refund" => await ResolveOrderRefundCashAuthorityAsync(request, cashAccountIds, ct),
             "CommerceHubFinancialTransaction" => await ResolveCommerceHubCashAuthorityAsync(
                 request,
                 CommerceHubFinancialTransactionDirection.Debit,
@@ -1110,6 +1129,32 @@ public class FinancialPostingService : IFinancialPostingService
             throw new InvalidJournalException(
                 $"Treasury outflow exceeds authoritative source amount for '{request.SourceType}' and source '{request.SourceId}'.");
         }
+    }
+
+    private async Task<decimal?> ResolveOrderRefundCashAuthorityAsync(
+        PostingRequest request, IReadOnlyCollection<Guid> cashAccountIds, CancellationToken ct)
+    {
+        var refunds = await _db.OrderRefunds.IgnoreQueryFilters().AsNoTracking()
+            .Where(refund => refund.OrderId == request.SourceId && refund.TenantId == request.TenantId &&
+                !refund.IsDeleted && refund.Amount > 0m && refund.IsPostSettlementRefund &&
+                (refund.FinancialPostingStatus == FinancialPostingStatus.Pending ||
+                 refund.FinancialPostingStatus == FinancialPostingStatus.Posted)).ToListAsync(ct);
+        var matches = refunds.Where(refund =>
+            request.IdempotencyKey == $"ECOM_REFUND:{refund.TenantId}:{refund.OrderId}:{refund.RefundId}").ToList();
+        if (matches.Count != 1)
+            return null;
+        var refund = matches[0];
+        var context = new EcommerceRefundAccountingContext(true, refund.SettlementBatchId,
+            refund.SettlementType, refund.SettlementId, refund.PayoutBatchId, refund.SettledAtUtc);
+        var destinationId = await SettlementRefundLineage.ResolveDestinationAccountAsync(
+            _db, refund.TenantId, refund.OrderId, context, ct);
+        var outflows = request.Lines.Where(line => cashAccountIds.Contains(line.AccountId) && line.CreditAmount > 0m).ToList();
+        if (outflows.Count != 1 || outflows[0].AccountId != destinationId || outflows[0].CreditAmount != refund.Amount)
+            return null;
+
+        // The cumulative order cap below still protects all its refund postings;
+        // this individual request must additionally match its immutable refund row.
+        return refunds.Sum(item => item.Amount);
     }
 
     private async Task<decimal?> ResolveCommerceHubCashAuthorityAsync(

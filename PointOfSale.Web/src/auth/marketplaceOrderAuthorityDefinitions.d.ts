@@ -1,0 +1,13 @@
+export type MarketplaceOrderStatus = 'Pending' | 'Awaiting Payment' | 'AwaitingPayment' | 'Payment Pending' | 'PaymentPending' | 'Confirmed' | 'Processing' | 'Packed' | 'Ready For Shipment' | 'ReadyForShipment' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Returned' | 'Refunded' | 'Failed' | 'OnHold';
+export type MarketplacePaymentStatus = 'Pending' | 'Authorized' | 'Collected' | 'Paid' | 'PartiallyPaid' | 'Failed' | 'Refunded' | 'PartiallyRefunded' | 'AwaitingVerification' | 'Rejected' | 'Settled' | 'CashOnDelivery' | 'Expired' | 'AmountMismatch';
+export const MARKETPLACE_ORDER_LIFECYCLE_STATUSES: Set<string>;
+export const MARKETPLACE_PAYMENT_STATUSES: Set<string>;
+export const MARKETPLACE_PAID_PAYMENT_STATUSES: Set<string>;
+export const MARKETPLACE_FAILED_PAYMENT_STATUSES: Set<string>;
+export const MARKETPLACE_REFUND_PAYMENT_STATUSES: Set<string>;
+export const MARKETPLACE_PAYMENT_PENDING_LIFECYCLES: Set<string>;
+export const MARKETPLACE_PAYMENT_PENDING_PAYMENT_STATUSES: Set<string>;
+export const MARKETPLACE_FULFILLED_LIFECYCLES: Set<string>;
+export const MARKETPLACE_ACTIVE_FULFILLMENT_LIFECYCLES: Set<string>;
+export function isMarketplaceOrderLifecycleStatus(value: unknown): value is MarketplaceOrderStatus;
+export function isMarketplacePaymentStatus(value: unknown): value is MarketplacePaymentStatus;

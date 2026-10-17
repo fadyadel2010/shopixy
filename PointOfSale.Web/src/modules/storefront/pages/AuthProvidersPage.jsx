@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FaGoogle, FaFacebook, FaCheck, FaTimes, FaKey, FaEye, FaEyeSlash, FaSync, FaExclamationTriangle } from 'react-icons/fa'
 import { useToast } from '../../../components/Toast'
@@ -32,12 +32,24 @@ export default function AuthProvidersPage() {
     const [disableReason, setDisableReason] = useState('')
     const [showRotateModal, setShowRotateModal] = useState(null)
     const [newSecret, setNewSecret] = useState('')
+    const [loadError, setLoadError] = useState(false)
+    const generation = useRef(0)
+    const readId = useRef(0)
+    const mutation = useRef(false)
+    const editing = useRef({})
+    const editRevision = useRef({})
+    const revision = provider => providers.find(p => p.provider === provider)?.revision ?? '0'
 
     const loadProviders = useCallback(async () => {
+        const current = generation.current
+        const id = ++readId.current
         try {
             setLoading(true)
             const data = await authProvidersApi.getAuthProviders()
-            setProviders(data.providers || [])
+            if (current !== generation.current || id !== readId.current) return false
+            if (!Array.isArray(data?.providers) || data.providers.length !== 2 || !data.providers.every(p => ['Google', 'Facebook'].includes(p.provider))) throw new Error('Invalid provider response')
+            setProviders(data.providers)
+            setLoadError(false)
 
             // Initialize form data for each provider
             const initialFormData = {}
@@ -48,17 +60,20 @@ export default function AuthProvidersPage() {
                     additionalScopes: provider.additionalScopes || ''
                 }
             }
-            setFormData(initialFormData)
-        } catch (error) {
-            showError(t('authProviders.errors.loadFailed'))
-            console.error('Failed to load auth providers:', error)
+            setFormData(previous => Object.fromEntries(Object.entries(initialFormData).map(([key, value]) => [key, editing.current[key] ? previous[key] : value])))
+            return true
+        } catch {
+            if (current !== generation.current || id !== readId.current) return false
+            setLoadError(true)
+            return false
         } finally {
-            setLoading(false)
+            if (current === generation.current && id === readId.current) setLoading(false)
         }
-    }, [showError, t])
+    }, [])
 
     useEffect(() => {
         loadProviders()
+        return () => { generation.current += 1; readId.current += 1 }
     }, [loadProviders])
 
     const getProviderIcon = (provider) => {
@@ -73,6 +88,9 @@ export default function AuthProvidersPage() {
     }
 
     const handleEditToggle = (provider) => {
+        if (mutation.current) return
+        editing.current[provider] = !editing.current[provider]
+        if (editing.current[provider]) editRevision.current[provider] = revision(provider)
         setEditMode(prev => ({
             ...prev,
             [provider]: !prev[provider]
@@ -102,12 +120,15 @@ export default function AuthProvidersPage() {
     }
 
     const handleSaveSettings = async (providerName) => {
+        if (mutation.current) return
+        mutation.current = true
+        const current = generation.current
         try {
             setSaving(prev => ({ ...prev, [providerName]: true }))
 
             const settings = {
-                clientId: formData[providerName]?.clientId || null,
-                additionalScopes: formData[providerName]?.additionalScopes || null
+                clientId: formData[providerName]?.clientId ?? '',
+                additionalScopes: formData[providerName]?.additionalScopes ?? ''
             }
 
             // Only include secret if it was changed
@@ -115,27 +136,36 @@ export default function AuthProvidersPage() {
                 settings.clientSecret = formData[providerName].clientSecret
             }
 
-            await authProvidersApi.updateAuthProvider(providerName, settings)
-            showSuccess(t('authProviders.messages.settingsSaved'))
+            await authProvidersApi.updateAuthProvider(providerName, settings, editRevision.current[providerName])
+            if (current !== generation.current) return
+            editing.current[providerName] = false
             setEditMode(prev => ({ ...prev, [providerName]: false }))
-            await loadProviders()
+            setFormData(prev => ({ ...prev, [providerName]: { ...prev[providerName], clientSecret: '' } }))
+            if (await loadProviders()) showSuccess(t('phase7.configurationSaved'))
+            else showError(t('phase7.savedReadbackFailed'))
         } catch (error) {
-            showError(error.response?.data?.message || t('authProviders.errors.saveFailed'))
+            if (current === generation.current) showError(error.response?.status === 409 ? t('phase7.conflict') : t('authProviders.errors.saveFailed'))
         } finally {
-            setSaving(prev => ({ ...prev, [providerName]: false }))
+            mutation.current = false
+            if (current === generation.current) setSaving(prev => ({ ...prev, [providerName]: false }))
         }
     }
 
     const handleEnableProvider = async (providerName) => {
+        if (mutation.current) return
+        mutation.current = true
+        const current = generation.current
         try {
             setSaving(prev => ({ ...prev, [providerName]: true }))
-            await authProvidersApi.enableAuthProvider(providerName)
-            showSuccess(t('authProviders.messages.providerEnabled', { provider: providerName }))
-            await loadProviders()
-        } catch (error) {
-            showError(error.response?.data?.message || t('authProviders.errors.enableFailed'))
+            await authProvidersApi.enableAuthProvider(providerName, revision(providerName))
+            if (current !== generation.current) return
+            if (await loadProviders()) showSuccess(t('authProviders.messages.providerEnabled', { provider: providerName }))
+            else showError(t('phase7.savedReadbackFailed'))
+        } catch {
+            if (current === generation.current) showError(t('authProviders.errors.enableFailed'))
         } finally {
-            setSaving(prev => ({ ...prev, [providerName]: false }))
+            mutation.current = false
+            if (current === generation.current) setSaving(prev => ({ ...prev, [providerName]: false }))
         }
     }
 
@@ -145,17 +175,22 @@ export default function AuthProvidersPage() {
     }
 
     const handleConfirmDisable = async () => {
+        if (mutation.current) return
+        mutation.current = true
+        const current = generation.current
         const providerName = showDisableModal
         try {
             setSaving(prev => ({ ...prev, [providerName]: true }))
-            await authProvidersApi.disableAuthProvider(providerName, disableReason || null)
-            showSuccess(t('authProviders.messages.providerDisabled', { provider: providerName }))
+            await authProvidersApi.disableAuthProvider(providerName, disableReason || null, revision(providerName))
+            if (current !== generation.current) return
             setShowDisableModal(null)
-            await loadProviders()
-        } catch (error) {
-            showError(error.response?.data?.message || t('authProviders.errors.disableFailed'))
+            if (await loadProviders()) showSuccess(t('authProviders.messages.providerDisabled', { provider: providerName }))
+            else showError(t('phase7.savedReadbackFailed'))
+        } catch {
+            if (current === generation.current) showError(t('authProviders.errors.disableFailed'))
         } finally {
-            setSaving(prev => ({ ...prev, [providerName]: false }))
+            mutation.current = false
+            if (current === generation.current) setSaving(prev => ({ ...prev, [providerName]: false }))
         }
     }
 
@@ -165,23 +200,28 @@ export default function AuthProvidersPage() {
     }
 
     const handleConfirmRotate = async () => {
+        if (mutation.current) return
         const providerName = showRotateModal
         if (!newSecret.trim()) {
             showError(t('authProviders.errors.secretRequired'))
             return
         }
+        mutation.current = true
+        const current = generation.current
 
         try {
             setSaving(prev => ({ ...prev, [providerName]: true }))
-            await authProvidersApi.rotateSecret(providerName, newSecret)
-            showSuccess(t('authProviders.messages.secretRotated'))
+            await authProvidersApi.rotateSecret(providerName, newSecret, revision(providerName))
+            if (current !== generation.current) return
             setShowRotateModal(null)
             setNewSecret('')
-            await loadProviders()
-        } catch (error) {
-            showError(error.response?.data?.message || t('authProviders.errors.rotateFailed'))
+            if (await loadProviders()) showSuccess(t('phase7.secretReplaced'))
+            else showError(t('phase7.savedReadbackFailed'))
+        } catch {
+            if (current === generation.current) showError(t('authProviders.errors.rotateFailed'))
         } finally {
-            setSaving(prev => ({ ...prev, [providerName]: false }))
+            mutation.current = false
+            if (current === generation.current) setSaving(prev => ({ ...prev, [providerName]: false }))
         }
     }
 
@@ -216,9 +256,12 @@ export default function AuthProvidersPage() {
             <div className="page-header">
                 <h1>{t('authProviders.title')}</h1>
                 <p className="page-description">{t('authProviders.description')}</p>
+                <p>{t('phase7.authScope')}</p>
+                <button type="button" disabled={mutation.current} onClick={loadProviders}>{t('common.refresh', 'Refresh')}</button>
             </div>
+            {loadError && <div role="alert">{t('phase7.loadFailed')} <button onClick={loadProviders}>{t('common.retry', 'Retry')}</button></div>}
 
-            <div className="providers-grid">
+            <fieldset disabled={Object.values(saving).some(Boolean)} className="providers-grid" style={{ border: 0, padding: 0, margin: 0 }}>
                 {providers.map(provider => (
                     <div key={provider.provider} className={`provider-card ${provider.isEnabled ? 'enabled' : 'disabled'}`}>
                         <div className="provider-header">
@@ -242,9 +285,10 @@ export default function AuthProvidersPage() {
                         <div className="provider-body">
                             {/* Client ID */}
                             <div className="field-group">
-                                <label>{t('authProviders.fields.clientId')}</label>
+                                <label htmlFor={`client-${provider.provider}`}>{t('authProviders.fields.clientId')}</label>
                                 {editMode[provider.provider] ? (
                                     <input
+                                        id={`client-${provider.provider}`} maxLength={256}
                                         type="text"
                                         value={formData[provider.provider]?.clientId || ''}
                                         onChange={(e) => handleInputChange(provider.provider, 'clientId', e.target.value)}
@@ -263,10 +307,11 @@ export default function AuthProvidersPage() {
 
                             {/* Client Secret */}
                             <div className="field-group">
-                                <label>{t('authProviders.fields.clientSecret')}</label>
+                                <label htmlFor={`secret-${provider.provider}`}>{t('authProviders.fields.clientSecret')}</label>
                                 {editMode[provider.provider] ? (
                                     <div className="secret-input-wrapper">
                                         <input
+                                            id={`secret-${provider.provider}`} maxLength={512} autoComplete="new-password"
                                             type={showSecrets[provider.provider] ? 'text' : 'password'}
                                             value={formData[provider.provider]?.clientSecret || ''}
                                             onChange={(e) => handleInputChange(provider.provider, 'clientSecret', e.target.value)}
@@ -274,6 +319,7 @@ export default function AuthProvidersPage() {
                                         />
                                         <button
                                             type="button"
+                                            aria-label={t('phase7.toggleSecret')}
                                             className="toggle-visibility-btn"
                                             onClick={() => toggleSecretVisibility(provider.provider)}
                                         >
@@ -296,8 +342,9 @@ export default function AuthProvidersPage() {
                             {/* Additional Scopes */}
                             {editMode[provider.provider] && (
                                 <div className="field-group">
-                                    <label>{t('authProviders.fields.additionalScopes')}</label>
+                                    <label htmlFor={`scopes-${provider.provider}`}>{t('authProviders.fields.additionalScopes')}</label>
                                     <input
+                                        id={`scopes-${provider.provider}`} maxLength={512}
                                         type="text"
                                         value={formData[provider.provider]?.additionalScopes || ''}
                                         onChange={(e) => handleInputChange(provider.provider, 'additionalScopes', e.target.value)}
@@ -375,7 +422,7 @@ export default function AuthProvidersPage() {
                         </div>
                     </div>
                 ))}
-            </div>
+            </fieldset>
 
             {/* Setup Guide Section */}
             <div className="setup-guide-section">
@@ -424,7 +471,7 @@ export default function AuthProvidersPage() {
             {/* Disable Confirmation Modal */}
             {showDisableModal && (
                 <div className="modal-overlay" onClick={() => setShowDisableModal(null)}>
-                    <div className="modal-content warning-modal" onClick={e => e.stopPropagation()}>
+                    <fieldset disabled={Object.values(saving).some(Boolean)} role="dialog" aria-modal="true" aria-label={t('authProviders.modals.disableTitle', { provider: showDisableModal })} className="modal-content warning-modal" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <FaExclamationTriangle className="warning-icon" />
                             <h3>{t('authProviders.modals.disableTitle', { provider: showDisableModal })}</h3>
@@ -457,14 +504,14 @@ export default function AuthProvidersPage() {
                                 {saving[showDisableModal] ? t('common.loading') : t('authProviders.actions.confirmDisable')}
                             </button>
                         </div>
-                    </div>
+                    </fieldset>
                 </div>
             )}
 
             {/* Rotate Secret Modal */}
             {showRotateModal && (
                 <div className="modal-overlay" onClick={() => setShowRotateModal(null)}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                    <fieldset disabled={Object.values(saving).some(Boolean)} role="dialog" aria-modal="true" aria-label={t('authProviders.modals.rotateTitle', { provider: showRotateModal })} className="modal-content" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <FaKey className="key-icon" />
                             <h3>{t('authProviders.modals.rotateTitle', { provider: showRotateModal })}</h3>
@@ -472,9 +519,10 @@ export default function AuthProvidersPage() {
                         <div className="modal-body">
                             <p>{t('authProviders.modals.rotateMessage')}</p>
                             <div className="field-group">
-                                <label>{t('authProviders.modals.newSecretLabel')}</label>
+                                <label htmlFor="rotate-secret">{t('authProviders.modals.newSecretLabel')}</label>
                                 <div className="secret-input-wrapper">
                                     <input
+                                        id="rotate-secret" maxLength={512} autoComplete="new-password"
                                         type={showSecrets['rotate'] ? 'text' : 'password'}
                                         value={newSecret}
                                         onChange={(e) => setNewSecret(e.target.value)}
@@ -482,6 +530,7 @@ export default function AuthProvidersPage() {
                                     />
                                     <button
                                         type="button"
+                                        aria-label={t('phase7.toggleSecret')}
                                         className="toggle-visibility-btn"
                                         onClick={() => toggleSecretVisibility('rotate')}
                                     >
@@ -505,7 +554,7 @@ export default function AuthProvidersPage() {
                                 {saving[showRotateModal] ? t('common.loading') : t('authProviders.actions.confirmRotate')}
                             </button>
                         </div>
-                    </div>
+                    </fieldset>
                 </div>
             )}
         </div>

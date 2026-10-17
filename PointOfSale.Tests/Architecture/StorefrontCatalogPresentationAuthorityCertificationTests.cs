@@ -31,7 +31,7 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
     }
 
     [Fact]
-    public void ProductDetailFieldsMustBeBackendComposedAndFrontendPresentationOnly()
+    public async Task ProductDetailFieldsMustBeBackendComposedAndFrontendPresentationOnly()
     {
         var storefrontProductService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontProductService.cs");
         var storefrontProductPage = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/pages/ProductDetailsPage.tsx");
@@ -49,7 +49,11 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         Assert.Contains("Variants = variants", storefrontProductService, StringComparison.Ordinal);
         Assert.Contains("HasVariants = document.HasVariants", storefrontProductService, StringComparison.Ordinal);
 
-        Assert.Contains("fetchProductBySlug(slug)", storefrontProductPage, StringComparison.Ordinal);
+        // Route identity now supports canonical slugs and historical by-ID cards.
+        // Verify cold/warm SQL recomposition, not the obsolete function spelling.
+        await PointOfSale.Tests.Infrastructure.ProductSearchSqlAuthorityBatchTests.VerifyResidualDetailAuthorityAsync(warm: false);
+        await PointOfSale.Tests.Infrastructure.ProductSearchSqlAuthorityBatchTests.VerifyResidualDetailAuthorityAsync(warm: true);
+        Assert.Contains("requireProductDetailAuthority(response.data, identifier)", CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/services/api/storefrontApi.ts"), StringComparison.Ordinal);
         Assert.Contains("sectionProps={{ product }}", storefrontProductPage, StringComparison.Ordinal);
         Assert.Contains("<RuntimeSectionContainer", sectionRenderer, StringComparison.Ordinal);
         Assert.Contains("sectionProps={{ ...section.data, sectionId: section.id, ...sectionProps }}", sectionRenderer, StringComparison.Ordinal);
@@ -71,7 +75,7 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
     }
 
     [Fact]
-    public void ProductVariantResolutionMustBeginAtBackendAuthorityAndFrontendSubmitsOptionCandidatesOnly()
+    public async Task ProductVariantResolutionMustBeginAtBackendAuthorityAndFrontendSubmitsOptionCandidatesOnly()
     {
         var storefrontController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/StorefrontProductsController.cs");
         var storefrontProductService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontProductService.cs");
@@ -80,7 +84,12 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         var productHero = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-hero.tsx");
 
         Assert.Contains("[HttpPost(\"by-id/{id:guid}/variant-resolution\")]", storefrontController, StringComparison.Ordinal);
-        Assert.Contains("ApplyNoStoreHeaders", storefrontController, StringComparison.Ordinal);
+        // Central Storefront HTTP middleware replaced controller-local headers.
+        // Exercise real MVC success/error responses over HTTP and exact SQL-owned
+        // resolution rather than requiring a removed private helper name.
+        await PointOfSale.Tests.Storefront.ResidualProductHttpContractTests.VerifyHttpContractAsync();
+        await PointOfSale.Tests.Infrastructure.ProductSearchSqlAuthorityBatchTests.VerifyResidualVariantAuthorityAsync("exact");
+        await PointOfSale.Tests.Infrastructure.ProductSearchSqlAuthorityBatchTests.VerifyResidualVariantAuthorityAsync("invalid");
         Assert.Contains("ResolveProductVariantAsync", storefrontProductService, StringComparison.Ordinal);
         Assert.Contains("GetProductByIdAsync(", storefrontProductService, StringComparison.Ordinal);
         Assert.Contains("ResolveExactOptionCombination", storefrontProductService, StringComparison.Ordinal);

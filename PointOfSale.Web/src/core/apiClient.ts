@@ -1,8 +1,10 @@
-import type { AxiosError } from 'axios';
 import api, {
   API_REQUEST_TIMEOUT_MESSAGE,
   isRequestTimeout,
 } from '../services/api';
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * Centralized API client for marketplace.
@@ -10,8 +12,9 @@ import api, {
  * NO business logic here.
  */
 class ApiClient {
-  private normalizeError(error: AxiosError): AppError {
-    if (isRequestTimeout(error) || error.message === API_REQUEST_TIMEOUT_MESSAGE) {
+  private normalizeError(value: unknown): AppError {
+    const error = isRecord(value) ? value : {};
+    if (isRequestTimeout(value) || error.message === API_REQUEST_TIMEOUT_MESSAGE) {
       return {
         message: 'Request timed out. Please try again.',
         status: 0,
@@ -19,11 +22,12 @@ class ApiClient {
       };
     }
 
-    if (error.response) {
+    if (isRecord(error.response)) {
+      const data = isRecord(error.response.data) ? error.response.data : {};
       return {
-        message: (error.response.data as any)?.error || 'An error occurred',
-        status: error.response.status,
-        code: (error.response.data as any)?.errorCode,
+        message: typeof data.error === 'string' && data.error ? data.error : 'An error occurred',
+        status: typeof error.response.status === 'number' && Number.isFinite(error.response.status) ? error.response.status : 0,
+        code: typeof data.errorCode === 'string' ? data.errorCode : undefined,
       };
     }
 
@@ -35,7 +39,7 @@ class ApiClient {
     }
 
     return {
-      message: error.message || 'Unknown error',
+      message: typeof error.message === 'string' && error.message ? error.message : 'Unknown error',
       status: 0,
     };
   }
@@ -44,11 +48,11 @@ class ApiClient {
     return api.get<T>(url).then((res) => res.data).catch((error) => Promise.reject(this.normalizeError(error)));
   }
 
-  public post<T>(url: string, data?: any): Promise<T> {
+  public post<T>(url: string, data?: unknown): Promise<T> {
     return api.post<T>(url, data).then((res) => res.data).catch((error) => Promise.reject(this.normalizeError(error)));
   }
 
-  public put<T>(url: string, data?: any): Promise<T> {
+  public put<T>(url: string, data?: unknown): Promise<T> {
     return api.put<T>(url, data).then((res) => res.data).catch((error) => Promise.reject(this.normalizeError(error)));
   }
 

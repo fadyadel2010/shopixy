@@ -8,6 +8,7 @@ import i18n from '../../../i18n/config'
 import Sidebar from '../../../components/Sidebar'
 import { useAuthStore } from '../../../store/authStore'
 import { StorefrontBreadcrumbs } from './StorefrontBreadcrumbs'
+import type { StorefrontNavigationNode } from './storefrontInformationArchitecture'
 import {
     STOREFRONT_NAVIGATION,
     STOREFRONT_ROUTE_COMPATIBILITY,
@@ -15,7 +16,7 @@ import {
     resolveStorefrontScreen,
 } from './storefrontInformationArchitecture'
 
-const flattenNodes = (nodes: any[]): any[] => nodes.flatMap((node) => [
+const flattenNodes = (nodes: StorefrontNavigationNode[]): StorefrontNavigationNode[] => nodes.flatMap((node) => [
     node,
     ...(node.children ? flattenNodes(node.children) : []),
 ])
@@ -79,7 +80,7 @@ describe('Storefront constitutional information architecture', () => {
         const groups = Object.fromEntries(
             STOREFRONT_NAVIGATION.children
                 .filter((node) => node.children)
-                .map((node) => [node.fallbackLabel, node.children.map((child) => child.fallbackLabel)]),
+                .map((node) => [node.fallbackLabel, (node.children ?? []).map((child) => child.fallbackLabel)]),
         )
         expect(groups).toEqual({
             Catalog: ['Product Template'],
@@ -195,8 +196,12 @@ describe('Storefront constitutional information architecture', () => {
         expect(appSource).toContain('<Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>')
         expect(STOREFRONT_ROUTE_COMPATIBILITY).toHaveLength(22)
 
-        const headerRoute = new URL(STOREFRONT_NAVIGATION.children[7].children[0].path, 'http://localhost')
-        const footerLinksRoute = new URL(STOREFRONT_NAVIGATION.children[7].children[1].path, 'http://localhost')
+        const navigationChildren = STOREFRONT_NAVIGATION.children[7].children
+        const headerPath = navigationChildren?.[0].path
+        const footerPath = navigationChildren?.[1].path
+        if (!headerPath || !footerPath) throw new Error('Expected both canonical navigation authoring paths')
+        const headerRoute = new URL(headerPath, 'http://localhost')
+        const footerLinksRoute = new URL(footerPath, 'http://localhost')
         expect(headerRoute.pathname).toBe('/storefront/navigation')
         expect(footerLinksRoute.pathname).toBe(headerRoute.pathname)
         expect(footerLinksRoute.search).not.toBe(headerRoute.search)
@@ -289,6 +294,7 @@ describe('Storefront constitutional information architecture', () => {
 
         const catalogButtons = screen.getAllByRole('button', { name: 'Catalog' })
         const catalogGroup = catalogButtons.find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-storefront-catalog')
+        if (!catalogGroup) throw new Error('Storefront Catalog navigation group is missing')
         catalogGroup.focus()
         await user.keyboard('{Enter}')
         expect(catalogGroup).toHaveAttribute('aria-expanded', 'true')

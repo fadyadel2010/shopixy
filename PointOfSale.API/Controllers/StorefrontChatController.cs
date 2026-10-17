@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
@@ -111,9 +112,14 @@ public class StorefrontChatController : ControllerBase
 
             // Extract customer ID from claims (if authenticated)
             Guid? customerId = null;
-            var customerIdClaim = User.FindFirst("CustomerId")?.Value;
+            var authentication = await HttpContext.AuthenticateAsync("StorefrontJwt");
+            var principal = authentication.Succeeded ? authentication.Principal : null;
+            var customerIdClaim = principal?.FindFirst("CustomerId")?.Value;
             if (!string.IsNullOrEmpty(customerIdClaim) && Guid.TryParse(customerIdClaim, out var parsedCustomerId))
             {
+                if (principal?.FindFirst("TenantId")?.Value != resolvedTenantId.ToString() ||
+                    !await _dbContext.OnlineCustomers.AnyAsync(c => c.TenantId == resolvedTenantId && c.Id == parsedCustomerId && c.IsActive, cancellationToken))
+                    return StatusCode(403, new { error = "Invalid customer authority" });
                 customerId = parsedCustomerId;
             }
 
@@ -123,7 +129,8 @@ public class StorefrontChatController : ControllerBase
                 message: request.Message,
                 customerId: customerId,
                 productIdsInView: request.ProductIdsInView,
-                cartSessionId: request.SessionId);
+                cartSessionId: Request.Headers["X-Session-Id"].FirstOrDefault());
+            cancellationToken.ThrowIfCancellationRequested();
 
             _logger.LogInformation(
                 "Processing chat message | TenantId: {TenantId} | CustomerId: {CustomerId} | MessageLength: {Length} | CorrelationId: {CorrelationId}",
@@ -136,12 +143,13 @@ public class StorefrontChatController : ControllerBase
                 "Chat response generated | TenantId: {TenantId} | Type: {Type} | IsFallback: {IsFallback} | CorrelationId: {CorrelationId}",
                 resolvedTenantId, response.Type, response.IsFallback, correlationId);
 
-            return Ok(response);
+            Response.Headers.CacheControl = "no-store";
+            return response.IsFallback ? StatusCode(503, response) : Ok(response);
         }
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Chat request cancelled | TenantId: {TenantId} | CorrelationId: {CorrelationId}", resolvedTenantId, correlationId);
-            return StatusCode(500, new ChatResponse
+            return StatusCode(cancellationToken.IsCancellationRequested ? 499 : 504, new ChatResponse
             {
                 Type = ChatResponseTypes.Message,
                 Message = "The request took too long. Please try again.",

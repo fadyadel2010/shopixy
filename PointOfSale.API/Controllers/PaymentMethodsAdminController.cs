@@ -143,6 +143,9 @@ public class PaymentMethodsAdminController : ControllerBase
         [FromBody] UpsertPaymentMethodDto request,
         CancellationToken cancellationToken)
     {
+        if (request.Validate() is { } validationError)
+            return BadRequest(new { error = "INVALID_PAYMENT_METHOD", message = validationError });
+
         var traceId = GetTraceId();
         var normalizedCode = code.Trim().ToUpperInvariant();
 
@@ -166,6 +169,7 @@ public class PaymentMethodsAdminController : ControllerBase
             .FirstOrDefaultAsync(m => m.Code == normalizedCode && m.TenantId == tenantId, cancellationToken);
 
         var isNew = method == null;
+        if (CheckReviewedVersion(method) is { } versionError) return versionError;
         if (method == null)
         {
             method = new TenantPaymentMethod
@@ -272,6 +276,7 @@ public class PaymentMethodsAdminController : ControllerBase
 
         // Auto-create payment method if it doesn't exist
         var isNew = method == null;
+        if (CheckReviewedVersion(method) is { } versionError) return versionError;
         if (method == null)
         {
             method = new TenantPaymentMethod
@@ -377,6 +382,7 @@ public class PaymentMethodsAdminController : ControllerBase
         // PHASE 10.4.D3: Auto-create payment method if it doesn't exist
         // This allows users to enable payment methods without having to configure them first
         var isNew = method == null;
+        if (CheckReviewedVersion(method) is { } versionError) return versionError;
         if (method == null)
         {
             method = new TenantPaymentMethod
@@ -480,6 +486,8 @@ public class PaymentMethodsAdminController : ControllerBase
             return Ok(MapToDto(method)); // Already disabled
         }
 
+        if (CheckReviewedVersion(method) is { } versionError) return versionError;
+
         method.IsEnabled = false;
         method.UpdatedAtUtc = NextPaymentMethodMutationTimestamp(method);
 
@@ -578,6 +586,18 @@ public class PaymentMethodsAdminController : ControllerBase
     }
 
     #region Helper Methods
+
+    private IActionResult? CheckReviewedVersion(TenantPaymentMethod? method)
+    {
+        // Legacy API callers remain compatible; the Admin sends the revision it
+        // actually reviewed. EF's concurrency token also protects simultaneous writes.
+        if (!Request.Headers.TryGetValue("If-Match", out var header)) return null;
+        if (!int.TryParse(header.ToString().Trim('"'), out var expected) || expected <= 0)
+            return BadRequest(new { error = "INVALID_VERSION", message = "If-Match must contain the reviewed payment-method version." });
+        return method == null || method.Version != expected
+            ? Conflict(new { error = "PAYMENT_METHOD_CONFLICT", message = "Payment method changed. Reload before saving." })
+            : null;
+    }
 
     private static bool IsValidCode(string code) =>
         SupportedPaymentMethodCodes.Contains(code, StringComparer.OrdinalIgnoreCase);
@@ -718,7 +738,8 @@ public class PaymentMethodsAdminController : ControllerBase
             UnsupportedReasonCode = isFawry ? FawryFinancialAuthorityPolicy.Code : null,
             UnsupportedMessage = isFawry ? FawryFinancialAuthorityPolicy.Message : null,
             CreatedAt = method.CreatedAt,
-            UpdatedAt = method.UpdatedAtUtc
+            UpdatedAt = method.UpdatedAtUtc,
+            Version = method.Version
         };
     }
 
@@ -1166,6 +1187,7 @@ public class PaymentMethodsAdminController : ControllerBase
 
 public class PaymentMethodResponseDto
 {
+    public int Version { get; set; }
     public Guid Id { get; set; }
     public string Code { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
@@ -1220,6 +1242,25 @@ public class PaymentMethodCatalogProviderDto
 
 public class UpsertPaymentMethodDto
 {
+    public string? Validate()
+    {
+        if (DisplayName != null && (string.IsNullOrWhiteSpace(DisplayName) || DisplayName.Length > 100))
+            return "Display name must contain 1 to 100 characters.";
+        if (DisplayNameAr?.Length > 100 || Description?.Length > 500 || DescriptionAr?.Length > 500 || Icon?.Length > 50)
+            return "Payment method text exceeds its supported length.";
+        if (SortOrder < 0) return "Sort order cannot be negative.";
+        if (Fee < 0 || MinOrderAmount < 0 || MaxOrderAmount < 0)
+            return "Payment fees and order limits cannot be negative.";
+        if (MinOrderAmount.HasValue && MaxOrderAmount.HasValue && MinOrderAmount > MaxOrderAmount)
+            return "Maximum order amount must be greater than or equal to minimum order amount.";
+        if (FeeType != null && FeeType is not ("fixed" or "percentage"))
+            return "Fee type must be fixed or percentage.";
+        const decimal max = 99999999999999.9999m;
+        if (Fee > max || MinOrderAmount > max || MaxOrderAmount > max)
+            return "Payment fee or order limit exceeds the supported amount.";
+        return null;
+    }
+
     public string? DisplayName { get; set; }
     public string? DisplayNameAr { get; set; }
     public string? Description { get; set; }

@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.DTOs.Customs;
@@ -100,6 +101,9 @@ public interface ICarrierShipmentService
         Guid shipmentId,
         string serviceLevel,
         CancellationToken cancellationToken = default);
+
+    Task<ShippingQuoteResult> QuoteExistingShipmentAsync(Guid tenantId, Guid shipmentId, CancellationToken cancellationToken = default)
+        => Task.FromResult(new ShippingQuoteResult { ErrorCode = "QUOTE_UNAVAILABLE" });
 }
 
 #region Result DTOs
@@ -123,6 +127,7 @@ public class CarrierShipmentResult
 
 public class CarrierCancelResult
 {
+    public ShipmentCancellationResult? Cancellation { get; set; }
     public bool Success { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
@@ -167,7 +172,7 @@ public class ShippingLabelResult
 /// <summary>
 /// Implementation of carrier shipment service.
 /// </summary>
-public class CarrierShipmentService : ICarrierShipmentService
+public partial class CarrierShipmentService : ICarrierShipmentService
 {
     private const string ExternalRegistrationStatePendingExternalCall = "PendingExternalCall";
     private const string ExternalRegistrationStateCompleted = "Completed";
@@ -177,6 +182,7 @@ public class CarrierShipmentService : ICarrierShipmentService
     private readonly ApplicationDbContext _dbContext;
     private readonly IShippingCarrierRegistry _carrierRegistry;
     private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
+    private readonly ICarrierCredentialEncryptionService _credentialEncryption;
     private readonly IEventPublisher _eventPublisher;
     private readonly IOrderFulfillmentService _fulfillmentService;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
@@ -184,6 +190,8 @@ public class CarrierShipmentService : ICarrierShipmentService
     private readonly ICustomsEvidenceAdmissionService _customsEvidenceAdmissionService;
     private readonly ICarrierGeographicMappingService _carrierGeographicMappingService;
     private readonly ILogger<CarrierShipmentService> _logger;
+    private readonly IShipmentCancellationService _cancellation;
+    private readonly bool _webhookClaimsEnabled;
     
     public CarrierShipmentService(
         ApplicationDbContext dbContext,
@@ -196,18 +204,24 @@ public class CarrierShipmentService : ICarrierShipmentService
         ICustomsEvidenceAdmissionService customsEvidenceAdmissionService,
         ICarrierGeographicMappingService carrierGeographicMappingService,
         ILogger<CarrierShipmentService> logger,
-        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null,
+        IShipmentCancellationService? cancellation = null,
+        IOptions<ShippingWebhookClaimOptions>? webhookClaimOptions = null)
     {
         _dbContext = dbContext;
         _carrierRegistry = carrierRegistry;
+        _credentialEncryption = credentialEncryption;
         _carrierIntegrationAuthority = carrierIntegrationAuthority ?? NullCarrierIntegrationAuthority.Instance;
         _eventPublisher = eventPublisher;
         _fulfillmentService = fulfillmentService;
         _reliabilityTelemetry = reliabilityTelemetry;
         _tenantContext = tenantContext;
+        _webhookClaimsEnabled = webhookClaimOptions?.Value.Enabled == true;
         _customsEvidenceAdmissionService = customsEvidenceAdmissionService;
         _carrierGeographicMappingService = carrierGeographicMappingService;
         _logger = logger;
+        _cancellation = cancellation ?? new ShipmentCancellationService(dbContext, carrierRegistry,
+            _carrierIntegrationAuthority, eventPublisher, tenantContext);
     }
     
     public async Task<CarrierShipmentResult> CreateShipmentWithCarrierAsync(
@@ -319,7 +333,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                     ErrorMessage = $"Shipment already exists for order {orderId}"
                 };
             }
-            
+
             var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
                 tenantId,
                 authoritativeCarrierCode,
@@ -353,7 +367,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                 
                 CarrierCode = authoritativeCarrierCode,
                 ServiceLevel = authoritativeServiceLevel,
-                Status = ShipmentStatus.Pending, // Will be updated after carrier call
+                Status = authoritativeCarrierCode is CarrierCodes.Dhl or CarrierCodes.FedEx || RequiresAccountBoundIntent(authoritativeCarrierCode)
+                    ? ShipmentStatus.PendingExternalRegistration : ShipmentStatus.Pending,
                 
                 ShippingCost = order.ShippingCost,
                 Currency = order.Currency,
@@ -404,6 +419,11 @@ public class CarrierShipmentService : ICarrierShipmentService
             _dbContext.Shipments.Add(shipment);
             await _dbContext.SaveChangesAsync(cancellationToken);
 
+            // Measured carriers require actual parcel evidence against the committed intent.
+            // Use the canonical durable worker path rather than the legacy nominal request.
+            if (authoritativeCarrierCode is CarrierCodes.Dhl or CarrierCodes.FedEx || RequiresAccountBoundIntent(authoritativeCarrierCode))
+                return await ExecuteCarrierForExistingShipmentAsync(tenantId, shipment.Id, authoritativeServiceLevel, cancellationToken);
+
             var origin = await ResolveOrRestoreShipmentOriginAsync(shipment, order, cancellationToken);
             if (origin is null)
             {
@@ -442,7 +462,11 @@ public class CarrierShipmentService : ICarrierShipmentService
             
             // CRITICAL: Persist idempotency claim BEFORE external carrier call
             // This ensures the DB shows the idempotency claim even if the process dies during the carrier call
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            if (await ClaimShipmentForExternalCallAsync(shipment.Id, tenantId, 0, 1,
+                shipment.ExternalRegistrationLastAttemptAtUtc.Value, authoritativeServiceLevel,
+                carrierRequestId, cancellationToken) == 0)
+                return new CarrierShipmentResult { Success = false, ErrorCode = "CANCELLATION_BARRIER", ExternalCallSkipped = true };
+            await _dbContext.Entry(shipment).ReloadAsync(cancellationToken);
             
             _logger.LogInformation(
                 "Persisted idempotency claim for shipment {ShipmentId} | CarrierRequestId: {CarrierRequestId} | AttemptCount: {AttemptCount}",
@@ -524,7 +548,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                     serviceLevel,
                     result,
                     isReconciliationAttempt: false,
-                    cancellationToken);
+                    cancellationToken,
+                    credentialsResolution);
             }
             catch (OperationCanceledException)
             {
@@ -575,6 +600,10 @@ public class CarrierShipmentService : ICarrierShipmentService
 
         try
         {
+            if (tenantId == Guid.Empty || _tenantContext.TenantId != tenantId)
+                return new CarrierShipmentResult { ErrorCode = "TENANT_MISMATCH", ExternalCallSkipped = true };
+            if (_dbContext.Database.CurrentTransaction != null || _dbContext.ChangeTracker.HasChanges())
+                return new CarrierShipmentResult { ErrorCode = "REGISTRATION_PERSISTENCE_CONTEXT_BUSY", ExternalCallSkipped = true };
             shipment = await _dbContext.Shipments
                 .FirstOrDefaultAsync(s => s.Id == shipmentId && s.TenantId == tenantId && !s.IsDeleted, cancellationToken);
             
@@ -590,6 +619,8 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
             
             var carrierCode = shipment.CarrierCode;
+            if (await _dbContext.ShipmentCancellationOperations.AnyAsync(x => x.TenantId == tenantId && x.ShipmentId == shipmentId, cancellationToken))
+                return new CarrierShipmentResult { Success = false, ErrorCode = "CANCELLATION_BARRIER", ExternalCallSkipped = true, Reconciled = true };
 
             _logger.LogInformation(
                 "Shipment external registration decision | ShipmentId: {ShipmentId} | CarrierCode: {CarrierCode} | IsCarrierManaged: {IsCarrierManaged} | Status: {Status}",
@@ -610,6 +641,24 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
 
             var authoritativeServiceLevel = shipment.ServiceLevel?.Trim().ToLowerInvariant();
+            if (CarrierCodes.Normalize(carrierCode) == CarrierCodes.Mylerz && HasUnresolvedMylerzRegistrationEvidence(shipment))
+                return await ContainMylerzRegistrationAsync(shipment, cancellationToken);
+
+            var retainedOutboundEvidence = HasOutboundRegistrationEvidence(shipment);
+            if ((RequiresAccountBoundIntent(carrierCode) || carrierCode is CarrierCodes.Dhl or CarrierCodes.FedEx) &&
+                retainedOutboundEvidence && !IsShipmentExternallyRegistered(shipment) &&
+                (string.IsNullOrWhiteSpace(shipment.CarrierRequestSnapshotJson) ||
+                 string.IsNullOrWhiteSpace(shipment.CarrierRequestFingerprint) || string.IsNullOrWhiteSpace(shipment.CarrierRequestId)))
+            {
+                // Missing original evidence is not permission to reconstruct an
+                // account/request from today's settings or to make another POST.
+                // Preserve the inconsistent record for independent reconciliation.
+                return new CarrierShipmentResult { ShipmentId = shipment.Id,
+                    ErrorCode = carrierCode == CarrierCodes.FedEx ? "EXTERNAL_REGISTRATION_RECONCILIATION_REQUIRED" :
+                        "CARRIER_ORIGINAL_REQUEST_REQUIRED_RECONCILIATION_REQUIRED",
+                    ExternalCallSkipped = true, Reconciled = true };
+            }
+
             if (string.IsNullOrWhiteSpace(authoritativeServiceLevel))
             {
                 return new CarrierShipmentResult
@@ -621,12 +670,15 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
 
             serviceLevel = authoritativeServiceLevel;
+            var fedExRecovery = carrierCode == CarrierCodes.FedEx && retainedOutboundEvidence;
+            var boundRecovery = (RequiresAccountBoundIntent(carrierCode) || carrierCode == CarrierCodes.Dhl) &&
+                shipment.CarrierRequestSnapshotJson != null && HasOutboundRegistrationEvidence(shipment);
             var serviceLevelReadiness = await _carrierIntegrationAuthority.GetServiceLevelReadinessAsync(
                 tenantId,
                 carrierCode,
                 serviceLevel,
                 cancellationToken);
-            if (!serviceLevelReadiness.CanExecute)
+            if (!serviceLevelReadiness.CanExecute && !fedExRecovery && !boundRecovery)
             {
                 return new CarrierShipmentResult
                 {
@@ -686,10 +738,24 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
+            if (carrierCode == CarrierCodes.FedEx)
+                return await ExecuteFedExRegistrationAsync(shipment, order, cancellationToken);
+
+            var accountBoundCarrier = RequiresAccountBoundIntent(carrierCode);
+            var priorBoundAttempt = (accountBoundCarrier || carrierCode == CarrierCodes.Dhl) && retainedOutboundEvidence;
+            if (accountBoundCarrier && priorBoundAttempt && shipment.CarrierRequestSnapshotJson == null)
+                return new CarrierShipmentResult { ErrorCode = "CARRIER_ORIGINAL_REQUEST_REQUIRED_RECONCILIATION_REQUIRED", ExternalCallSkipped = true, Reconciled = true };
+
+            // DHL activation gates new POSTs, not replay of already-owned registration
+            // evidence. Prior attempts must still reach fail-closed reconciliation.
+            var credentialPurpose = (carrierCode == CarrierCodes.Dhl || accountBoundCarrier) &&
+                                    retainedOutboundEvidence
+                ? CarrierIntegrationPurpose.Tracking
+                : CarrierIntegrationPurpose.ExternalRegistration;
             var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
                 tenantId,
                 carrierCode,
-                CarrierIntegrationPurpose.ExternalRegistration,
+                credentialPurpose,
                 cancellationToken);
 
             if (!credentialsResolution.Succeeded ||
@@ -708,6 +774,22 @@ public class CarrierShipmentService : ICarrierShipmentService
 
             var carrierConfig = credentialsResolution.Configuration;
 
+            if (accountBoundCarrier && shipment.CarrierRequestSnapshotJson != null)
+            {
+                await _dbContext.Entry(order).Collection(o => o.Items).LoadAsync(cancellationToken);
+                var failure = await ValidateAccountBoundIntentAsync(shipment, order, credentialsResolution, cancellationToken);
+                if (failure != null) return new CarrierShipmentResult { ErrorCode = failure, ExternalCallSkipped = true, Reconciled = true };
+            }
+
+            if (carrierCode == CarrierCodes.Dhl && shipment.CarrierRequestSnapshotJson != null)
+            {
+                await _dbContext.Entry(order).Collection(o => o.Items).LoadAsync(cancellationToken);
+                var identityFailure = await ValidateDhlIntentAsync(shipment, order, credentialsResolution, cancellationToken,
+                    requireCredentialIdentity: retainedOutboundEvidence && !IsShipmentExternallyRegistered(shipment));
+                if (identityFailure != null)
+                    return new CarrierShipmentResult { ErrorCode = identityFailure, ExternalCallSkipped = true, Reconciled = true };
+            }
+
             if (IsShipmentExternallyRegistered(shipment))
             {
                 return await ReconcileExistingExternalRegistrationAsync(
@@ -719,7 +801,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
 
             var isReconciliationAttempt =
-                shipment.ExternalRegistrationAttemptCount > 0 &&
+                retainedOutboundEvidence &&
                 !shipment.ExternalRegistrationCompletedAtUtc.HasValue;
 
             if (isReconciliationAttempt)
@@ -743,31 +825,38 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
 
             var credentials = credentialsResolution.Credentials;
-            var origin = await ResolveOrRestoreShipmentOriginAsync(shipment, order, cancellationToken);
-            if (origin is null)
+            if (priorBoundAttempt)
             {
+                // Lookup only under the original account/request binding. Never
+                // reconstruct mutable origin, geography or package inputs.
+                EnsureNoActiveLocalTransactionForExternalCarrierCall(carrierCode);
+                return await ReconcilePendingCarrierRequestAsync(shipment, order, adapter, credentials,
+                    carrierConfig.DisplayName, serviceLevel, shipment.CarrierRequestId!, cancellationToken);
+            }
+            ParcelEvidence? parcel = null;
+            if ((carrierCode == CarrierCodes.Dhl || accountBoundCarrier) && !isReconciliationAttempt)
+            {
+                await _dbContext.Entry(order).Collection(o => o.Items).LoadAsync(cancellationToken);
+                try
+                {
+                    parcel = ParcelMeasurements.Restore(shipment, order);
+                    if (carrierCode == CarrierCodes.Bosta) BostaParcelContents.Validate(parcel.Measurement.Goods, order);
+                }
+                catch (ArgumentException ex) { return new CarrierShipmentResult { ErrorCode = ex.Message, ExternalCallSkipped = true }; }
+                if (!await IsParcelMeasurementActorAdmittedAsync(tenantId, parcel.MeasuredBy, cancellationToken))
+                    return new CarrierShipmentResult { ErrorCode = "PARCEL_MEASURED_ACTOR_NOT_OWNED", ExternalCallSkipped = true };
+            }
+            var pickup = carrierCode == CarrierCodes.Bosta ? await ResolveBostaPickupOriginAsync(shipment, order, credentialsResolution, adapter, cancellationToken) : null;
+            var origin = carrierCode == CarrierCodes.Bosta ? null : await ResolveOrRestoreShipmentOriginAsync(shipment, order, cancellationToken);
+            if (carrierCode == CarrierCodes.Bosta ? pickup == null : origin == null)
                 return await FailShipmentOriginAsync(shipment, cancellationToken);
-            }
 
-            var geographicResolution = await ResolveOrRestoreCarrierGeographyAsync(
-                shipment,
-                carrierConfig,
-                cancellationToken);
-            if (!geographicResolution.Succeeded)
-            {
-                return geographicResolution.Failure!;
-            }
+            var geographicResolution = await ResolveOrRestoreCarrierGeographyAsync(shipment, carrierConfig, cancellationToken);
+            if (!geographicResolution.Succeeded) return geographicResolution.Failure!;
 
             var customsResolution = await ResolveOrRestoreShipmentCustomsAsync(
-                shipment,
-                order,
-                origin.CountryIso2,
-                geographicResolution.CountryIso2!,
-                cancellationToken);
-            if (!customsResolution.Succeeded)
-            {
-                return customsResolution.Failure!;
-            }
+                shipment, order, pickup?.CountryCode ?? origin!.CountryIso2, geographicResolution.CountryIso2!, cancellationToken);
+            if (!customsResolution.Succeeded) return customsResolution.Failure!;
 
             var carrierRequestId = await EnsureCarrierRequestIdPersistedAsync(
                 shipment,
@@ -791,6 +880,16 @@ public class CarrierShipmentService : ICarrierShipmentService
                     cancellationToken);
             }
 
+            var dhlRequest = parcel == null ? null : BuildDhlRequest(shipment, order, origin,
+                geographicResolution.CountryIso2!, geographicResolution.ProviderItems, customsResolution.Customs, parcel, carrierRequestId, pickup);
+            // Existing customs publications do not define per-unit value/invoice/export-purpose
+            // semantics. Retain international containment until that evidence is established.
+            if (dhlRequest != null && !string.Equals(dhlRequest.OriginCountry, dhlRequest.RecipientCountry, StringComparison.OrdinalIgnoreCase))
+                return new CarrierShipmentResult { ErrorCode = carrierCode == CarrierCodes.Dhl ? "DHL_CUSTOMS_VALUE_SEMANTICS_UNPROVEN" : "CARRIER_CUSTOMS_VALUE_SEMANTICS_UNPROVEN", ExternalCallSkipped = true };
+            if (dhlRequest != null) ApplyLegacyProviderGeographyFields(dhlRequest, geographicResolution.ProviderItems);
+            var dhlIntent = dhlRequest == null || accountBoundCarrier ? null : await BuildDhlIntentAsync(shipment, order, dhlRequest, credentialsResolution, cancellationToken);
+            var boundIntent = !accountBoundCarrier ? null : await BuildAccountBoundIntentAsync(shipment, order, dhlRequest!, credentialsResolution, cancellationToken);
+
             // CRITICAL: Single-winner claim using conditional update
             // Only one process can successfully increment the attempt count from the current value
             var currentAttemptCount = shipment.ExternalRegistrationAttemptCount;
@@ -805,7 +904,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             
             try
             {
-                var rowsAffected = await ClaimShipmentForExternalCallAsync(
+                var rowsAffected = await ClaimShipmentWithEvidenceAsync(
                     shipmentId,
                     tenantId,
                     currentAttemptCount,
@@ -813,7 +912,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                     claimTimestamp,
                     serviceLevel,
                     carrierRequestId,
-                    cancellationToken);
+                    cancellationToken,
+                    dhlIntent, accountBoundIntent: boundIntent);
 
                 if (rowsAffected == 0)
                 {
@@ -894,14 +994,14 @@ public class CarrierShipmentService : ICarrierShipmentService
                 InternalShipmentId = carrierRequestId,
                 CarrierRequestId = carrierRequestId,
                 OrderNumber = order.OrderNumber,
-                
-                OriginName = origin.ContactName,
-                OriginAddress = origin.Street,
-                OriginCity = origin.LocalityDisplayName ?? origin.AdministrativeAreaDisplayName ?? origin.CountryDisplayName,
-                OriginCountry = origin.CountryIso2,
-                OriginPhone = origin.ContactPhone,
+
+                OriginName = origin?.ContactName ?? "",
+                OriginAddress = origin?.Street ?? "",
+                OriginCity = origin?.LocalityDisplayName ?? origin?.AdministrativeAreaDisplayName ?? origin?.CountryDisplayName ?? "",
+                OriginCountry = pickup?.CountryCode ?? origin!.CountryIso2,
+                OriginPhone = origin?.ContactPhone ?? "",
                 Origin = origin,
-                
+
                 RecipientName = shipment.RecipientName ?? order.GuestName ?? "Customer",
                 RecipientAddress = shipment.DestinationStreet ?? "",
                 RecipientAddressLine2 = shipment.DestinationStreet2,
@@ -919,12 +1019,13 @@ public class CarrierShipmentService : ICarrierShipmentService
                 CodAmount = order.PaymentMethodCode == "COD" ? order.Total : null,
                 Currency = order.Currency ?? "USD",
                 
-                WeightKg = 1.0m, // Default weight
+                WeightKg = parcel?.GrossWeightKg ?? 0m, // No fabricated package weight
                 PackageDescription = $"Order {order.OrderNumber}",
                 Customs = customsResolution.Customs,
                 Notes = order.CustomerNotes
             };
             ApplyLegacyProviderGeographyFields(createRequest, geographicResolution.ProviderItems);
+            if (dhlRequest != null) createRequest = dhlRequest;
 
             _logger.LogInformation(
                 "Calling carrier API | CarrierCode: {CarrierCode} | ShipmentId: {ShipmentId} | OrderNumber: {OrderNumber}",
@@ -962,7 +1063,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                 serviceLevel,
                 result,
                 isReconciliationAttempt,
-                cancellationToken);
+                cancellationToken,
+                credentialsResolution);
         }
         catch (OperationCanceledException)
         {
@@ -978,7 +1080,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 await PersistCarrierRegistrationFailureAsync(
                     shipment,
                     "INTERNAL_ERROR",
-                    ex.Message ?? "Exception during carrier call",
+                    "Carrier execution failed internally. Reconciliation is required before retry.",
                     cancellationToken);
             }
             
@@ -997,154 +1099,8 @@ public class CarrierShipmentService : ICarrierShipmentService
         string reason,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Cancelling shipment {ShipmentId}", shipmentId);
-        
-        try
-        {
-            var shipment = await _dbContext.Shipments
-                .FirstOrDefaultAsync(s => s.Id == shipmentId && s.TenantId == tenantId && !s.IsDeleted, cancellationToken);
-            
-            if (shipment == null)
-            {
-                return new CarrierCancelResult
-                {
-                    Success = false,
-                    ErrorCode = "SHIPMENT_NOT_FOUND",
-                    ErrorMessage = "Shipment not found"
-                };
-            }
-            
-            if (shipment.Status == ShipmentStatus.Cancelled)
-            {
-                return new CarrierCancelResult { Success = true };
-            }
-
-            // Cancellation must follow the canonical lifecycle table; a carrier
-            // adapter cannot overwrite an already-executing shipment lifecycle.
-            if (!ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled))
-            {
-                return new CarrierCancelResult
-                {
-                    Success = false,
-                    ErrorCode = "CANNOT_CANCEL",
-                    ErrorMessage = "Cannot cancel shipment after carrier pickup"
-                };
-            }
-            
-            var hasExternalCarrierState = !string.IsNullOrEmpty(shipment.TrackingNumber);
-            if (hasExternalCarrierState)
-            {
-                var adapter = _carrierRegistry.GetAdapter(shipment.CarrierCode);
-                if (adapter == null)
-                {
-                    await MarkCarrierCancellationReconciliationRequiredAsync(
-                        shipment,
-                        reason,
-                        "CARRIER_CANCEL_ADAPTER_MISSING",
-                        $"Carrier adapter '{shipment.CarrierCode}' is unavailable, so shipment cancellation could not be proven externally.",
-                        cancellationToken);
-
-                    return new CarrierCancelResult
-                    {
-                        Success = false,
-                        ErrorCode = "CARRIER_CANCEL_ADAPTER_MISSING",
-                        ErrorMessage = "Carrier cancellation could not be verified. Operator reconciliation is required."
-                    };
-                }
-
-                var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
-                    tenantId,
-                    shipment.CarrierCode,
-                    CarrierIntegrationPurpose.Cancellation,
-                    cancellationToken);
-
-                if (!credentialsResolution.Succeeded || credentialsResolution.Credentials == null)
-                {
-                    await MarkCarrierCancellationReconciliationRequiredAsync(
-                        shipment,
-                        reason,
-                        "CARRIER_CANCEL_CONFIG_MISSING",
-                        $"Carrier configuration for '{shipment.CarrierCode}' is unavailable, so shipment cancellation could not be proven externally.",
-                        cancellationToken);
-
-                    return new CarrierCancelResult
-                    {
-                        Success = false,
-                        ErrorCode = "CARRIER_CANCEL_CONFIG_MISSING",
-                        ErrorMessage = "Carrier cancellation could not be verified. Operator reconciliation is required."
-                    };
-                }
-
-                var cancelResult = await adapter.CancelShipmentAsync(
-                    shipment.TrackingNumber!,
-                    credentialsResolution.Credentials,
-                    cancellationToken);
-
-                if (!cancelResult.Success)
-                {
-                    await MarkCarrierCancellationReconciliationRequiredAsync(
-                        shipment,
-                        reason,
-                        cancelResult.ErrorCode ?? "CARRIER_CANCEL_FAILED",
-                        cancelResult.ErrorMessage ?? "Carrier refused or failed shipment cancellation.",
-                        cancellationToken);
-
-                    _logger.LogWarning(
-                        "Carrier cancel failed for shipment {ShipmentId}: {ErrorCode} - {ErrorMessage}",
-                        shipmentId,
-                        cancelResult.ErrorCode,
-                        cancelResult.ErrorMessage);
-
-                    return new CarrierCancelResult
-                    {
-                        Success = false,
-                        ErrorCode = cancelResult.ErrorCode ?? "CARRIER_CANCEL_FAILED",
-                        ErrorMessage = cancelResult.ErrorMessage ?? "Carrier shipment cancellation failed"
-                    };
-                }
-            }
-            
-            // Update shipment status
-            shipment.Status = ShipmentStatus.Cancelled;
-            shipment.CancelledAtUtc = DateTime.UtcNow;
-            shipment.CancellationReason = reason;
-            shipment.UpdatedAt = DateTime.UtcNow;
-            
-            await _dbContext.SaveChangesAsync(cancellationToken);
-            
-            _logger.LogInformation("Cancelled shipment {ShipmentId}", shipmentId);
-            
-            return new CarrierCancelResult { Success = true };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error cancelling shipment {ShipmentId}", shipmentId);
-            return new CarrierCancelResult
-            {
-                Success = false,
-                ErrorCode = "INTERNAL_ERROR",
-                ErrorMessage = "Failed to cancel shipment"
-            };
-        }
-    }
-
-    private async Task MarkCarrierCancellationReconciliationRequiredAsync(
-        Shipment shipment,
-        string reason,
-        string errorCode,
-        string errorMessage,
-        CancellationToken cancellationToken)
-    {
-        var combinedError = $"SHIPMENT_CANCELLATION_RECONCILIATION_REQUIRED:{errorCode}:{errorMessage}";
-        shipment.CancellationReason = reason;
-        shipment.ExternalRegistrationState = ExternalRegistrationStateReconciliationRequired;
-        shipment.ExternalRegistrationFailedAtUtc = DateTime.UtcNow;
-        shipment.ExternalRegistrationError = combinedError.Length <= 500
-            ? combinedError
-            : combinedError[..500];
-        shipment.UpdatedAt = DateTime.UtcNow;
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        var result = await _cancellation.CancelForOrderAsync(tenantId, shipmentId, reason, cancellationToken);
+        return new CarrierCancelResult { Success = result.Confirmed, Cancellation = result, ErrorCode = result.Code };
     }
     
     public async Task<CarrierSyncResult> SyncTrackingAsync(
@@ -1154,7 +1110,14 @@ public class CarrierShipmentService : ICarrierShipmentService
     {
         try
         {
-            var shipment = await _dbContext.Shipments
+            // Tracking owns its persistence transaction. Never put provider HTTP
+            // inside a caller transaction or discard unrelated pending mutations.
+            if (tenantId == Guid.Empty || _tenantContext.TenantId != tenantId)
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_TENANT_INVALID");
+            if (_dbContext.Database.CurrentTransaction != null || _dbContext.ChangeTracker.HasChanges())
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_PERSISTENCE_CONTEXT_BUSY");
+
+            var shipment = await _dbContext.Shipments.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.Id == shipmentId && s.TenantId == tenantId && !s.IsDeleted, cancellationToken);
             
             if (shipment == null)
@@ -1191,6 +1154,10 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
             
+            if (shipment.CarrierCode is CarrierCodes.Dhl or CarrierCodes.FedEx &&
+                string.IsNullOrWhiteSpace(shipment.CarrierRequestSnapshotJson))
+                return TrackingPersistenceRejected(shipmentId, "CARRIER_REQUEST_IDENTITY_CHANGED_RECONCILIATION_REQUIRED");
+
             var adapter = _carrierRegistry.GetAdapter(shipment.CarrierCode);
             if (adapter == null)
             {
@@ -1218,6 +1185,18 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
+            if (RequiresAccountBoundIntent(shipment.CarrierCode) ||
+                shipment.CarrierCode is CarrierCodes.Dhl or CarrierCodes.FedEx && shipment.CarrierRequestSnapshotJson != null)
+            {
+                var order = await _dbContext.Orders.AsNoTracking().Include(o => o.Items).SingleAsync(
+                    o => o.Id == shipment.OrderId && o.TenantId == tenantId && !o.IsDeleted, cancellationToken);
+                var identityFailure = shipment.CarrierCode == CarrierCodes.Dhl
+                    ? await ValidateDhlIntentAsync(shipment, order, credentialsResolution, cancellationToken, requireCredentialIdentity: true)
+                    : shipment.CarrierCode == CarrierCodes.FedEx ? ValidateFedExIntent(shipment, order, credentialsResolution, requireCredentialIdentity: true)
+                    : await ValidateAccountBoundIntentAsync(shipment, order, credentialsResolution, cancellationToken);
+                if (identityFailure != null) return TrackingPersistenceRejected(shipmentId, identityFailure);
+            }
+
             var trackingResult = await adapter.GetTrackingAsync(
                 shipment.TrackingNumber, credentialsResolution.Credentials, cancellationToken);
             
@@ -1231,27 +1210,61 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
-            await using var mutationTransaction = await BeginCarrierMutationTransactionAsync(cancellationToken);
-            await _dbContext.Entry(shipment).ReloadAsync(cancellationToken);
-
-            if (shipment.Status is ShipmentStatus.Failed or ShipmentStatus.Cancelled or ShipmentStatus.Returned)
+            // The observation is obtained exactly once, outside SQL. Independent
+            // shipment reads under Serializable can acquire relation-wide SIREAD
+            // locks and abort each other's commits despite disjoint row writes.
+            // Tracking instead locks its current order then shipment at ReadCommitted.
+            // No database failure re-enters the provider call above.
+            var observedShipment = shipment;
+            if (_tenantContext.TenantId != tenantId)
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_TENANT_INVALID");
+            if (_dbContext.ChangeTracker.HasChanges())
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_PERSISTENCE_CONTEXT_BUSY");
+            _dbContext.ChangeTracker.Clear();
+            await using var mutationTransaction = _dbContext.Database.IsRelational()
+                ? await _dbContext.Database.BeginTransactionAsync(
+                    _dbContext.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken)
+                : null;
+            shipment = await LoadTrackingPersistenceShipmentAsync(tenantId, observedShipment, cancellationToken);
+            if (shipment == null || !TrackingObservationStillCurrent(observedShipment, shipment))
             {
-                if (mutationTransaction != null)
-                {
-                    await mutationTransaction.RollbackAsync(cancellationToken);
-                }
+                _logger.LogWarning(
+                    "Stale tracking observation | ShipmentId: {ShipmentId} | OriginalStatus: {OriginalStatus} | ObservedStatus: {ObservedStatus} | CurrentStatus: {CurrentStatus} | EvidenceHash: {EvidenceHash}",
+                    shipmentId, observedShipment.Status, trackingResult.CurrentStatus, shipment?.Status,
+                    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trackingResult.RawResponse ?? string.Empty))));
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_OBSERVATION_STALE");
+            }
 
-                return new CarrierSyncResult
-                {
-                    Success = true,
-                    PreviousStatus = shipment.Status,
-                    CurrentStatus = shipment.Status,
-                    StatusChanged = false
-                };
+            if (shipment.Order.Status is OrderStatus.Cancelled or OrderStatus.Refunded ||
+                shipment.Order.FulfillmentMode != FulfillmentMode.Carrier ||
+                CarrierCodes.Normalize(shipment.Order.FulfillmentCarrierCode) != CarrierCodes.Normalize(shipment.CarrierCode))
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_ORDER_AUTHORITY_CHANGED");
+
+            var currentCredentials = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
+                tenantId, shipment.CarrierCode, CarrierIntegrationPurpose.Tracking, cancellationToken);
+            if (!currentCredentials.Succeeded || currentCredentials.Credentials == null ||
+                currentCredentials.Configuration?.Id != credentialsResolution.Configuration?.Id ||
+                currentCredentials.Credentials.AccountId != credentialsResolution.Credentials.AccountId ||
+                currentCredentials.Credentials.UseSandbox != credentialsResolution.Credentials.UseSandbox ||
+                CarrierOriginalAccountIdentity.Serialize(currentCredentials.Credentials) != CarrierOriginalAccountIdentity.Serialize(credentialsResolution.Credentials))
+                return TrackingPersistenceRejected(shipmentId, "TRACKING_CONFIGURATION_CHANGED");
+
+            if (RequiresAccountBoundIntent(shipment.CarrierCode) ||
+                shipment.CarrierCode is CarrierCodes.Dhl or CarrierCodes.FedEx && shipment.CarrierRequestSnapshotJson != null)
+            {
+                await _dbContext.Entry(shipment.Order).Collection(o => o.Items).LoadAsync(cancellationToken);
+                var identityFailure = shipment.CarrierCode == CarrierCodes.Dhl
+                    ? await ValidateDhlIntentAsync(shipment, shipment.Order, currentCredentials, cancellationToken, requireCredentialIdentity: true)
+                    : shipment.CarrierCode == CarrierCodes.FedEx ? ValidateFedExIntent(shipment, shipment.Order, currentCredentials, requireCredentialIdentity: true)
+                    : await ValidateAccountBoundIntentAsync(shipment, shipment.Order, currentCredentials, cancellationToken);
+                if (identityFailure != null) return TrackingPersistenceRejected(shipmentId, identityFailure);
             }
             
             var previousStatus = shipment.Status;
             var statusChanged = shipment.Status != trackingResult.CurrentStatus;
+            var catchUp = statusChanged && !IsValidStatusProgression(previousStatus, trackingResult.CurrentStatus)
+                ? CarrierTrackingProgression.Resolve(previousStatus, trackingResult)
+                : null;
             var codCollectedApplied =
                 trackingResult.CodCollected &&
                 shipment.IsCashOnDelivery &&
@@ -1260,7 +1273,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             // CRITICAL: Status Regression Protection
             // Terminal statuses (Delivered, Cancelled, Returned, Failed) should NEVER regress
             // Also prevent backward lifecycle progression (e.g., InTransit -> PickedUp)
-            if (statusChanged && !IsValidStatusProgression(previousStatus, trackingResult.CurrentStatus))
+            if (statusChanged && !IsValidStatusProgression(previousStatus, trackingResult.CurrentStatus) && catchUp == null)
             {
                 _logger.LogWarning(
                     "Status regression blocked for shipment {ShipmentId}: {Current} -> {New} (carrier reported). Keeping current status.",
@@ -1271,13 +1284,6 @@ public class CarrierShipmentService : ICarrierShipmentService
                 shipment.LastCarrierSyncAtUtc = DateTime.UtcNow;
                 shipment.UpdatedAt = DateTime.UtcNow;
 
-                if (codCollectedApplied)
-                {
-                    shipment.CodCollected = true;
-                    shipment.CodCollectedAtUtc = trackingResult.CodCollectedAt ?? DateTime.UtcNow;
-                    await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
-                }
-
                 await _dbContext.SaveChangesAsync(cancellationToken);
                 if (mutationTransaction != null)
                 {
@@ -1286,13 +1292,30 @@ public class CarrierShipmentService : ICarrierShipmentService
                 
                 return new CarrierSyncResult
                 {
-                    Success = true,
+                    Success = false,
+                    ErrorCode = "TRACKING_PROGRESSION_UNRESOLVED",
+                    ErrorMessage = "Carrier progression lacks an admissible lifecycle path; reconciliation is required.",
                     PreviousStatus = previousStatus,
                     CurrentStatus = previousStatus, // Keep original
                     StatusChanged = false
                 };
             }
             
+            // Persist each evidenced intermediate edge inside the same owned transaction.
+            if (catchUp != null)
+            {
+                foreach (var observation in catchUp.Take(catchUp.Count - 1))
+                {
+                    var from = shipment.Status;
+                    shipment.Status = observation.Status;
+                    UpdateStatusTimestamps(shipment, observation.Status, observation.Timestamp);
+                    var context = await PrepareShipmentAuthorityContextAsync(shipment, observation.Status, "tracking_sync", cancellationToken);
+                    await SynchronizeFulfillmentAuthorityAsync(shipment, observation.Status, "tracking_sync", context, cancellationToken);
+                    await EmitStatusChangeEventAsync(shipment, from, observation.Status, "tracking_sync", context, cancellationToken);
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+            }
+
             // Update shipment from tracking
             shipment.Status = trackingResult.CurrentStatus;
             shipment.CarrierTrackingResponse = trackingResult.RawResponse;
@@ -1312,6 +1335,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 shipment.CodCollected = true;
                 shipment.CodCollectedAtUtc = trackingResult.CodCollectedAt ?? DateTime.UtcNow;
             }
+
             else if (trackingResult.CodCollected && !shipment.IsCashOnDelivery)
             {
                 _logger.LogWarning(
@@ -1321,7 +1345,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
             
             // Update timestamps based on status
-            UpdateStatusTimestamps(shipment, trackingResult.CurrentStatus);
+            UpdateStatusTimestamps(shipment, trackingResult.CurrentStatus, catchUp?.LastOrDefault()?.Timestamp);
             if (statusChanged)
             {
                 ApplyCarrierExceptionEvidence(
@@ -1353,7 +1377,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             {
                 await EmitStatusChangeEventAsync(
                     shipment,
-                    previousStatus,
+                    catchUp is { Count: > 1 } ? catchUp[^2].Status : previousStatus,
                     trackingResult.CurrentStatus,
                     "tracking_sync",
                     authorityContext,
@@ -1397,6 +1421,47 @@ public class CarrierShipmentService : ICarrierShipmentService
             };
         }
     }
+
+    private CarrierSyncResult TrackingPersistenceRejected(Guid shipmentId, string code)
+    {
+        // Keep diagnostic evidence without replacing newer tracking metadata or
+        // persisting an unadmitted observation as shipment/financial authority.
+        _logger.LogWarning("Tracking observation not persisted | ShipmentId: {ShipmentId} | Code: {Code}", shipmentId, code);
+        return new CarrierSyncResult { Success = false, ErrorCode = code, ErrorMessage = "Tracking observation could not be safely persisted." };
+    }
+
+    private static bool TrackingObservationStillCurrent(Shipment observed, Shipment current) =>
+        current.Id == observed.Id && current.TenantId == observed.TenantId && !current.IsDeleted &&
+        current.OrderId == observed.OrderId && current.CarrierCode == observed.CarrierCode &&
+        current.TrackingNumber == observed.TrackingNumber && current.AwbNumber == observed.AwbNumber &&
+        current.ExternalReferenceId == observed.ExternalReferenceId && current.CarrierRequestId == observed.CarrierRequestId &&
+        current.Status == observed.Status && current.LastCarrierSyncAtUtc == observed.LastCarrierSyncAtUtc &&
+        current.UpdatedAt == observed.UpdatedAt;
+
+    private async Task<Shipment?> LoadTrackingPersistenceShipmentAsync(
+        Guid tenantId, Shipment observed, CancellationToken cancellationToken)
+    {
+        // Same lock order as cancellation/registration. These queries retain EF's
+        // mandatory tenant/nondeletion filters, including over composed raw SQL.
+        IQueryable<Order> orders = _dbContext.Orders;
+        IQueryable<Shipment> shipments = _dbContext.Shipments;
+        if (_dbContext.Database.IsNpgsql())
+        {
+            orders = _dbContext.Orders.FromSqlInterpolated($"SELECT xmin, * FROM \"Orders\" WHERE \"Id\" = {observed.OrderId} AND \"TenantId\" = {tenantId} AND NOT \"IsDeleted\" FOR UPDATE");
+            shipments = _dbContext.Shipments.FromSqlInterpolated($"SELECT * FROM \"Shipments\" WHERE \"Id\" = {observed.Id} AND \"TenantId\" = {tenantId} AND NOT \"IsDeleted\" FOR UPDATE");
+        }
+        else if ((_dbContext.Database.ProviderName ?? string.Empty).Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            orders = _dbContext.Orders.FromSqlInterpolated($"SELECT * FROM [Orders] WITH (UPDLOCK, ROWLOCK) WHERE [Id] = {observed.OrderId} AND [TenantId] = {tenantId} AND [IsDeleted] = 0");
+            shipments = _dbContext.Shipments.FromSqlInterpolated($"SELECT * FROM [Shipments] WITH (UPDLOCK, ROWLOCK) WHERE [Id] = {observed.Id} AND [TenantId] = {tenantId} AND [IsDeleted] = 0");
+        }
+        var order = await orders.SingleOrDefaultAsync(x => x.Id == observed.OrderId && x.TenantId == tenantId && !x.IsDeleted, cancellationToken);
+        if (order == null) return null;
+        var shipment = await shipments.SingleOrDefaultAsync(x => x.Id == observed.Id && x.TenantId == tenantId && !x.IsDeleted, cancellationToken);
+        if (shipment == null || shipment.OrderId != order.Id) return null;
+        shipment.Order = order;
+        return shipment;
+    }
     
     public async Task<WebhookProcessResult> ProcessWebhookAsync(
         string carrierCode,
@@ -1426,6 +1491,14 @@ public class CarrierShipmentService : ICarrierShipmentService
         var normalizedCarrierCode = CarrierCodes.Normalize(carrierCode);
         var stopwatch = Stopwatch.StartNew();
         ShippingWebhookLog? webhookLog = null;
+        var webhookClaimPersisted = false;
+        ShippingWebhookClaim? ownedClaim = null;
+        var claimProtocol = new ShippingWebhookClaimProtocol(_dbContext);
+
+        if (_webhookClaimsEnabled && (!_dbContext.Database.IsNpgsql() || _dbContext.Database.CurrentTransaction != null))
+            return new WebhookProcessResult { Success = false, StatusCode = 500,
+                ErrorCode = "WEBHOOK_CLAIM_PROVIDER_UNSUPPORTED",
+                ErrorMessage = "Durable webhook claims require PostgreSQL and an owned transaction." };
 
         _logger.LogInformation(
             "Processing shipping webhook from carrier {CarrierCode}",
@@ -1640,6 +1713,8 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
 
             var payloadHash = ComputePayloadHash(payload);
+            if (parseResult.MoneyObservation != null)
+                return await ProcessObservedMoneyWebhookAsync(shipment, parseResult, payload, signature, sourceIp, cancellationToken);
             var eventId = ResolveWebhookEventId(payload, payloadHash);
             var eventType = ResolveWebhookEventType(payload, parseResult);
 
@@ -1665,6 +1740,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             }
 
             webhookLog = logPreparation.Log;
+            ownedClaim = logPreparation.Claim;
             if (webhookLog == null)
             {
                 return RejectWebhook(
@@ -1680,7 +1756,18 @@ public class CarrierShipmentService : ICarrierShipmentService
 
             try
             {
-                await _dbContext.SaveChangesAsync(cancellationToken);
+                if (ownedClaim == null)
+                {
+                    await using var admission = _webhookClaimsEnabled
+                        ? await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken) : null;
+                    if (_webhookClaimsEnabled)
+                    {
+                        ownedClaim = await claimProtocol.CreateFirstAsync(webhookLog, cancellationToken);
+                        await admission!.CommitAsync(cancellationToken);
+                    }
+                    else await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+                webhookClaimPersisted = true;
             }
             catch (DbUpdateException ex) when (IsUniqueViolation(ex))
             {
@@ -1706,11 +1793,36 @@ public class CarrierShipmentService : ICarrierShipmentService
                 throw;
             }
 
-            await using var mutationTransaction = await BeginCarrierMutationTransactionAsync(cancellationToken);
-            await _dbContext.Entry(shipment).ReloadAsync(cancellationToken);
-            if (shipment.Order != null)
+            if (ownedClaim != null)
             {
-                await _dbContext.Entry(shipment.Order).ReloadAsync(cancellationToken);
+                await using var renewal = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+                if (!await claimProtocol.RenewAsync(webhookLog, ownedClaim, cancellationToken))
+                    return CreateUnfinishedWebhookResult(webhookLog);
+                await renewal.CommitAsync(cancellationToken);
+            }
+            await using var mutationTransaction = ownedClaim != null
+                ? await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+                : await BeginCarrierMutationTransactionAsync(cancellationToken);
+            if (ownedClaim != null)
+            {
+                var authority = await ReloadCarrierPersistenceAuthorityAsync(shipment.TenantId, shipment.Id, shipment.OrderId, cancellationToken);
+                if (authority == null || !await claimProtocol.FenceBusinessAsync(webhookLog, ownedClaim, cancellationToken))
+                    return CreateUnfinishedWebhookResult(webhookLog);
+                shipment = authority.Shipment;
+                _dbContext.Attach(webhookLog);
+                await _dbContext.Entry(webhookLog).ReloadAsync(cancellationToken);
+                if (shipment.CarrierCode != normalizedCarrierCode || shipment.TrackingNumber != trackingNumber ||
+                    shipment.Order.FulfillmentCarrierCode != normalizedCarrierCode)
+                    throw new InvalidOperationException("Webhook target authority changed after admission.");
+                // Revalidate mutable trust under order -> shipment -> inbox -> configuration locks.
+                var currentTrust = await _carrierIntegrationAuthority.ResolveWebhookTrustForMutationAsync(shipment.TenantId, normalizedCarrierCode, cancellationToken);
+                if (!currentTrust.Succeeded || !currentTrust.SupportsWebhooks || !ValidateWebhookTrust(payload, signature, sourceIp, currentTrust).Success)
+                    throw new InvalidOperationException("Webhook trust authority changed after admission.");
+            }
+            else
+            {
+                await _dbContext.Entry(shipment).ReloadAsync(cancellationToken);
+                if (shipment.Order != null) await _dbContext.Entry(shipment.Order).ReloadAsync(cancellationToken);
             }
 
             if (!shipment.Order.AllowsCarrierWebhooks)
@@ -1726,6 +1838,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 webhookLog.ProcessingError = "Carrier webhook rejected because the order is manually fulfilled.";
                 webhookLog.ProcessedAt = DateTime.UtcNow;
                 webhookLog.ProcessingDurationMs = Math.Max(0, stopwatch.ElapsedMilliseconds);
+                if (ownedClaim != null) await claimProtocol.FinishAsync(webhookLog, ownedClaim, true, webhookLog.ProcessingError, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
                 if (mutationTransaction != null)
                 {
@@ -1785,6 +1898,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                     await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
                 }
 
+                if (ownedClaim != null) await claimProtocol.FinishAsync(webhookLog, ownedClaim, false, null, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
                 if (mutationTransaction != null)
                 {
@@ -1847,6 +1961,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
             }
 
+            if (ownedClaim != null) await claimProtocol.FinishAsync(webhookLog, ownedClaim, false, null, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
             if (mutationTransaction != null)
             {
@@ -1879,23 +1994,45 @@ public class CarrierShipmentService : ICarrierShipmentService
                 "Error processing shipping webhook from {CarrierCode}",
                 normalizedCarrierCode);
 
-            if (webhookLog != null)
+            if (webhookLog != null && webhookClaimPersisted)
             {
-                await PersistShippingWebhookFailureAsync(
-                    webhookLog,
-                    $"Webhook processing failed: {ex.Message}",
-                    Math.Max(0, stopwatch.ElapsedMilliseconds),
-                    cancellationToken);
+                // A cancelled HTTP request must not cancel the bounded, independent failure
+                // audit. This does not confer a lease or authorize replay of partial effects.
+                using var failureAuditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                if (ownedClaim == null)
+                    await PersistShippingWebhookFailureAsync(webhookLog, $"Webhook processing failed: {ex.Message}",
+                        Math.Max(0, stopwatch.ElapsedMilliseconds), failureAuditTimeout.Token);
+                else
+                {
+                    // await-using business transaction has been disposed before this catch.
+                    _dbContext.ChangeTracker.Clear();
+                    try
+                    {
+                        await claimProtocol.FailAsync(webhookLog, ownedClaim, $"Webhook processing failed: {ex.Message}",
+                            Math.Max(0, stopwatch.ElapsedMilliseconds), failureAuditTimeout.Token);
+                    }
+                    catch (Exception auditError) { _logger.LogError(auditError, "Owner-fenced webhook failure audit unavailable for {LogId}", webhookLog.Id); }
+                }
             }
 
             return new WebhookProcessResult
             {
                 Success = false,
-                StatusCode = 500,
-                ErrorCode = "WEBHOOK_PROCESSING_FAILED",
+                StatusCode = IsWebhookLockContention(ex) ? 503 : 500,
+                ErrorCode = IsWebhookLockContention(ex)
+                    ? "WEBHOOK_PROCESSING_UNRESOLVED" : "WEBHOOK_PROCESSING_FAILED",
                 ErrorMessage = "Failed to process shipping webhook."
             };
         }
+    }
+
+    // EF/Npgsql can wrap NOWAIT's 55P03 in InvalidOperationException. Preserve the
+    // contention classification without classifying other database errors as retryable.
+    private static bool IsWebhookLockContention(Exception exception)
+    {
+        for (Exception? current = exception; current != null; current = current.InnerException)
+            if (current is PostgresException { SqlState: PostgresErrorCodes.LockNotAvailable }) return true;
+        return false;
     }
 
     private async Task<ShippingWebhookLogPreparation> PrepareShippingWebhookLogAsync(
@@ -1951,10 +2088,19 @@ public class CarrierShipmentService : ICarrierShipmentService
                     shipmentId: shipmentId));
         }
 
+        if (existingLog != null && existingLog.EventId != eventId)
+            return new ShippingWebhookLogPreparation(null, false, false, false, CreateWebhookIdentityConflictResult(existingLog));
+
+        if (existingLog != null && ((existingLog.ShipmentId.HasValue && existingLog.ShipmentId != shipmentId) ||
+            (existingLog.OrderId.HasValue && existingLog.OrderId != orderId)))
+            return new ShippingWebhookLogPreparation(null, false, false, false, CreateWebhookIdentityConflictResult(existingLog));
+
         if (existingLog != null &&
             (existingLog.ProcessingStatus == WebhookProcessingStatus.Completed ||
              existingLog.ProcessingStatus == WebhookProcessingStatus.Skipped))
         {
+            if (!await TerminalClaimConsistentAsync(existingLog, cancellationToken))
+                return new ShippingWebhookLogPreparation(null, false, false, false, CreateUnfinishedWebhookResult(existingLog));
             _reliabilityTelemetry.RecordShippingWebhookDuplicate(carrierCode, "already_processed");
 
             return new ShippingWebhookLogPreparation(
@@ -1963,6 +2109,16 @@ public class CarrierShipmentService : ICarrierShipmentService
                 false,
                 false,
                 CreateDuplicateWebhookResult(existingLog.ShipmentId ?? shipmentId));
+        }
+
+        if (_webhookClaimsEnabled && existingLog != null)
+        {
+            await using var acquisition = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+            var claim = await new ShippingWebhookClaimProtocol(_dbContext).AcquireAsync(existingLog, cancellationToken);
+            if (claim == null) return new ShippingWebhookLogPreparation(null, false, false, false, CreateUnfinishedWebhookResult(existingLog));
+            await acquisition.CommitAsync(cancellationToken);
+            await _dbContext.Entry(existingLog).ReloadAsync(cancellationToken);
+            return new ShippingWebhookLogPreparation(existingLog, false, false, false, null, claim);
         }
 
         if (existingLog != null && existingLog.ProcessingStatus == WebhookProcessingStatus.Processing)
@@ -1974,34 +2130,20 @@ public class CarrierShipmentService : ICarrierShipmentService
                 true,
                 true,
                 false,
-                CreateDuplicateWebhookResult(existingLog.ShipmentId ?? shipmentId));
+                CreateUnfinishedWebhookResult(existingLog));
         }
 
         if (existingLog != null)
         {
-            existingLog.EventId = eventId;
-            existingLog.EventType = eventType;
-            existingLog.TrackingNumber = trackingNumber;
-            existingLog.PayloadHash = payloadHash;
-            existingLog.PayloadSummary = PointOfSale.Core.Security.WebhookDataRedactor.RedactPayload(rawPayload);
-            existingLog.Signature = HashWebhookSignature(signature);
-            existingLog.SignatureVerified = true;
-            existingLog.ValidationMethod = validationMethod;
-            existingLog.ShipmentId = shipmentId;
-            existingLog.OrderId = orderId;
-            existingLog.SourceIpPrefix = PointOfSale.Core.Security.WebhookDataRedactor.RedactIpAddress(sourceIp);
-            existingLog.UserAgentSummary = PointOfSale.Core.Security.WebhookDataRedactor.TruncateUserAgent(userAgent);
-            existingLog.ProcessingStatus = WebhookProcessingStatus.Processing;
-            existingLog.ProcessingError = null;
-            existingLog.ProcessedAt = null;
-            existingLog.ProcessingDurationMs = null;
-
+            // Legacy records have no claim owner, heartbeat, or rollback evidence. Neither age
+            // nor Failed proves that replay is safe (a commit acknowledgement can be lost).
+            // Do not race two retries or erase the original identity/trust/failure audit.
             return new ShippingWebhookLogPreparation(
-                existingLog,
+                null,
                 false,
                 false,
-                true,
-                null);
+                false,
+                CreateUnfinishedWebhookResult(existingLog));
         }
 
         var webhookLog = new ShippingWebhookLog
@@ -2043,15 +2185,16 @@ public class CarrierShipmentService : ICarrierShipmentService
         Guid shipmentId,
         CancellationToken cancellationToken)
     {
-        var existingLog = await _dbContext.ShippingWebhookLogs
+        var existingLogs = await _dbContext.ShippingWebhookLogs
             .IgnoreQueryFilters()
             .AsNoTracking()
-            .FirstOrDefaultAsync(
-                log =>
-                    log.TenantId == tenantId &&
-                    log.CarrierCode == carrierCode &&
-                    (log.EventId == eventId || log.PayloadHash == payloadHash),
-                cancellationToken);
+            .Where(log => log.TenantId == tenantId && log.CarrierCode == carrierCode &&
+                (log.EventId == eventId || log.PayloadHash == payloadHash))
+            .ToListAsync(cancellationToken);
+        // An event-identity integrity conflict must take precedence over a different row
+        // matching only the payload hash, just as it does in the normal admission path.
+        var existingLog = existingLogs.FirstOrDefault(log => log.EventId == eventId)
+            ?? existingLogs.FirstOrDefault(log => log.PayloadHash == payloadHash);
 
         if (existingLog == null)
         {
@@ -2072,16 +2215,46 @@ public class CarrierShipmentService : ICarrierShipmentService
                 shipmentId: existingLog.ShipmentId ?? shipmentId);
         }
 
+        if (existingLog.EventId != eventId) return CreateWebhookIdentityConflictResult(existingLog);
+
         if (existingLog.ProcessingStatus is WebhookProcessingStatus.Completed or
-            WebhookProcessingStatus.Skipped or
-            WebhookProcessingStatus.Processing)
+            WebhookProcessingStatus.Skipped)
         {
+            if (!await TerminalClaimConsistentAsync(existingLog, cancellationToken)) return CreateUnfinishedWebhookResult(existingLog);
             _reliabilityTelemetry.RecordShippingWebhookDuplicate(carrierCode, "db_unique_conflict");
             return CreateDuplicateWebhookResult(existingLog.ShipmentId ?? shipmentId);
         }
 
-        return null;
+        return CreateUnfinishedWebhookResult(existingLog);
     }
+
+    private async Task<bool> TerminalClaimConsistentAsync(ShippingWebhookLog log, CancellationToken ct)
+    {
+        if (!_webhookClaimsEnabled) return true; // Never query new table in containment mode.
+        var latest = await _dbContext.ShippingWebhookClaims.AsNoTracking()
+            .Where(c => c.LogId == log.Id && c.TenantId == log.TenantId)
+            .OrderByDescending(c => c.Generation).FirstOrDefaultAsync(ct);
+        // Legacy terminal evidence remains idempotent; inconsistent protocol audit is not success.
+        return latest == null || latest.Outcome == "Completed";
+    }
+
+    private static WebhookProcessResult CreateUnfinishedWebhookResult(ShippingWebhookLog log) => new()
+    {
+        Success = false,
+        StatusCode = log.ProcessingStatus == WebhookProcessingStatus.Processing ? 503 : 409,
+        ErrorCode = log.ProcessingStatus == WebhookProcessingStatus.Processing
+            ? "WEBHOOK_PROCESSING_UNRESOLVED" : "WEBHOOK_RECONCILIATION_REQUIRED",
+        ErrorMessage = "Webhook completion is not established. Existing audit evidence must be reconciled before replay.",
+        ShipmentFound = log.ShipmentId.HasValue,
+        ShipmentId = log.ShipmentId
+    };
+
+    private static WebhookProcessResult CreateWebhookIdentityConflictResult(ShippingWebhookLog log) => new()
+    {
+        Success = false, StatusCode = 409, ErrorCode = "WEBHOOK_EVENT_IDENTITY_CONFLICT",
+        ErrorMessage = "Payload identity conflicts with the persisted provider event.",
+        ShipmentFound = log.ShipmentId.HasValue, ShipmentId = log.ShipmentId
+    };
 
     private ShippingWebhookValidationOutcome ValidateWebhookTrust(
         string payload,
@@ -2276,33 +2449,35 @@ public class CarrierShipmentService : ICarrierShipmentService
         {
             _dbContext.ChangeTracker.Clear();
 
+            if (_dbContext.Database.IsRelational())
+            {
+                var failedAt = DateTime.UtcNow;
+                // A conditional write also protects a concurrent/ambiguous successful commit.
+                // This is not a lease or proof that downstream effects rolled back.
+                await _dbContext.ShippingWebhookLogs.IgnoreQueryFilters()
+                    .Where(log => log.Id == webhookLog.Id && log.TenantId == webhookLog.TenantId &&
+                        log.CarrierCode == webhookLog.CarrierCode && log.EventId == webhookLog.EventId &&
+                        log.PayloadHash == webhookLog.PayloadHash &&
+                        log.ProcessingStatus == WebhookProcessingStatus.Processing)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(log => log.ProcessingStatus, WebhookProcessingStatus.Failed)
+                        .SetProperty(log => log.ProcessingError, error)
+                        .SetProperty(log => log.ProcessedAt, failedAt)
+                        .SetProperty(log => log.ProcessingDurationMs, durationMs), cancellationToken);
+                return;
+            }
+
             var persistedLog = await _dbContext.ShippingWebhookLogs
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(log => log.Id == webhookLog.Id, cancellationToken);
+                .FirstOrDefaultAsync(log => log.Id == webhookLog.Id &&
+                    log.TenantId == webhookLog.TenantId && log.CarrierCode == webhookLog.CarrierCode &&
+                    log.EventId == webhookLog.EventId && log.PayloadHash == webhookLog.PayloadHash, cancellationToken);
 
-            if (persistedLog == null)
+            if (persistedLog == null || persistedLog.ProcessingStatus != WebhookProcessingStatus.Processing)
             {
-                persistedLog = new ShippingWebhookLog
-                {
-                    Id = webhookLog.Id,
-                    TenantId = webhookLog.TenantId,
-                    CarrierCode = webhookLog.CarrierCode,
-                    EventId = webhookLog.EventId,
-                    PayloadHash = webhookLog.PayloadHash,
-                    EventType = webhookLog.EventType,
-                    TrackingNumber = webhookLog.TrackingNumber,
-                    ShipmentId = webhookLog.ShipmentId,
-                    OrderId = webhookLog.OrderId,
-                    PayloadSummary = webhookLog.PayloadSummary,
-                    Signature = webhookLog.Signature,
-                    SignatureVerified = webhookLog.SignatureVerified,
-                    ValidationMethod = webhookLog.ValidationMethod,
-                    SourceIpPrefix = webhookLog.SourceIpPrefix,
-                    UserAgentSummary = webhookLog.UserAgentSummary,
-                    CreatedAt = webhookLog.CreatedAt == default ? DateTime.UtcNow : webhookLog.CreatedAt
-                };
-
-                _dbContext.ShippingWebhookLogs.Add(persistedLog);
+                // Never invent a durable claim after a failed insert, or downgrade a commit
+                // that actually completed but whose acknowledgement failed at the caller.
+                return;
             }
 
             persistedLog.ProcessingStatus = WebhookProcessingStatus.Failed;
@@ -2678,6 +2853,104 @@ public class CarrierShipmentService : ICarrierShipmentService
     }
 
     private async Task<int> ClaimShipmentForExternalCallAsync(
+        Guid shipmentId, Guid tenantId, int currentAttemptCount, int nextAttemptCount,
+        DateTime claimTimestamp, string serviceLevel, string carrierRequestId, CancellationToken cancellationToken)
+        => await ClaimShipmentWithEvidenceAsync(shipmentId, tenantId, currentAttemptCount, nextAttemptCount,
+            claimTimestamp, serviceLevel, carrierRequestId, cancellationToken, null);
+
+    private async Task<int> ClaimShipmentWithEvidenceAsync(
+        Guid shipmentId, Guid tenantId, int currentAttemptCount, int nextAttemptCount,
+        DateTime claimTimestamp, string serviceLevel, string carrierRequestId, CancellationToken cancellationToken,
+        DhlRegistrationIntent? dhlIntent, FedExRegistrationIntent? fedExIntent = null, AccountBoundRegistrationIntent? accountBoundIntent = null)
+    {
+        await using var tx = _dbContext.Database.IsRelational()
+            ? await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken) : null;
+        var evidenceOrderId = fedExIntent?.OrderId ?? dhlIntent?.OrderId ?? accountBoundIntent?.OrderId;
+        if (evidenceOrderId.HasValue && _dbContext.Database.IsNpgsql())
+            await _dbContext.Orders.FromSqlInterpolated($"SELECT xmin, * FROM \"Orders\" WHERE \"Id\"={evidenceOrderId.Value} AND \"TenantId\"={tenantId} AND NOT \"IsDeleted\" FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        if (_dbContext.Database.IsNpgsql())
+            await _dbContext.Shipments.FromSqlInterpolated($"SELECT * FROM \"Shipments\" WHERE \"Id\"={shipmentId} AND \"TenantId\"={tenantId} AND NOT \"IsDeleted\" FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        // A separate statement AFTER acquiring the row lock sees a competing
+        // cancellation's committed operation, including under PostgreSQL MVCC.
+        if (await _dbContext.ShipmentCancellationOperations.AnyAsync(x => x.TenantId == tenantId && x.ShipmentId == shipmentId, cancellationToken))
+            return 0;
+        if (dhlIntent != null)
+        {
+            var fresh = await _dbContext.Shipments.AsNoTracking().SingleAsync(s => s.Id == shipmentId && s.TenantId == tenantId, cancellationToken);
+            var freshOrder = await _dbContext.Orders.AsNoTracking().Include(o => o.Items).SingleAsync(o => o.Id == fresh.OrderId && o.TenantId == tenantId, cancellationToken);
+            var current = await _carrierIntegrationAuthority.ResolveCredentialsAsync(tenantId, fresh.CarrierCode,
+                CarrierIntegrationPurpose.ExternalRegistration, cancellationToken);
+            if (!current.Succeeded || current.Credentials == null || current.Configuration == null ||
+                HasOutboundRegistrationEvidence(fresh) || fresh.ParcelEvidenceJson != dhlIntent.ParcelJson ||
+                DhlContext(fresh, freshOrder) != dhlIntent.Context || !SameDhlAccount(dhlIntent, current) ||
+                freshOrder.Status == OrderStatus.Cancelled || !CanOrderProceedToShipment(freshOrder))
+                return 0;
+            var parcel = ParcelMeasurements.Restore(fresh, freshOrder);
+            if (!await IsParcelMeasurementActorAdmittedAsync(tenantId, parcel.MeasuredBy, cancellationToken)) return 0;
+        }
+        if (fedExIntent != null && !await RevalidateFedExClaimAsync(shipmentId, tenantId, fedExIntent, cancellationToken))
+            return 0;
+        if (accountBoundIntent != null && !await RevalidateAccountBoundClaimAsync(shipmentId, tenantId, accountBoundIntent, cancellationToken))
+            return 0;
+        if ((fedExIntent != null || accountBoundIntent != null) && !_dbContext.Database.IsRelational())
+        {
+            var entity = await _dbContext.Shipments.SingleAsync(s => s.Id == shipmentId && s.TenantId == tenantId, cancellationToken);
+            entity.ExternalRegistrationAttemptCount = nextAttemptCount;
+            entity.ExternalRegistrationLastAttemptAtUtc = claimTimestamp;
+            entity.ExternalRegistrationState = ExternalRegistrationStatePendingExternalCall;
+            entity.ExternalRegistrationError = null;
+            entity.ExternalRegistrationFailedAtUtc = null;
+        }
+        var claimed = await ClaimShipmentForExternalCallCoreAsync(shipmentId, tenantId, currentAttemptCount, nextAttemptCount,
+            claimTimestamp, serviceLevel, carrierRequestId, cancellationToken);
+        if (claimed > 0 && dhlIntent != null)
+        {
+            var json = JsonSerializer.Serialize(dhlIntent);
+            var fingerprint = HashDhlIntent(json);
+            if (_dbContext.Database.IsRelational())
+                await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"Shipments\" SET \"CarrierRequestSnapshotJson\"={json}, \"CarrierRequestFingerprint\"={fingerprint} WHERE \"Id\"={shipmentId} AND \"TenantId\"={tenantId}", cancellationToken);
+            else
+            {
+                var entity = await _dbContext.Shipments.SingleAsync(s => s.Id == shipmentId && s.TenantId == tenantId, cancellationToken);
+                entity.CarrierRequestSnapshotJson = json; entity.CarrierRequestFingerprint = fingerprint;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
+        if (claimed > 0 && fedExIntent != null)
+        {
+            var json = JsonSerializer.Serialize(fedExIntent);
+            var fingerprint = FedExFingerprint(json);
+            if (_dbContext.Database.IsRelational())
+                await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"Shipments\" SET \"CarrierRequestSnapshotJson\"={json}, \"CarrierRequestFingerprint\"={fingerprint} WHERE \"Id\"={shipmentId} AND \"TenantId\"={tenantId}", cancellationToken);
+            else
+            {
+                var entity = await _dbContext.Shipments.SingleAsync(s => s.Id == shipmentId && s.TenantId == tenantId, cancellationToken);
+                entity.CarrierRequestSnapshotJson = json;
+                entity.CarrierRequestFingerprint = fingerprint;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
+        if (claimed > 0 && accountBoundIntent != null)
+        {
+            var json = JsonSerializer.Serialize(accountBoundIntent);
+            var fingerprint = HashDhlIntent(json);
+            if (_dbContext.Database.IsRelational())
+                await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"Shipments\" SET \"CarrierRequestSnapshotJson\"={json}, \"CarrierRequestFingerprint\"={fingerprint} WHERE \"Id\"={shipmentId} AND \"TenantId\"={tenantId}", cancellationToken);
+            else
+            {
+                var entity = await _dbContext.Shipments.SingleAsync(s => s.Id == shipmentId && s.TenantId == tenantId, cancellationToken);
+                entity.CarrierRequestSnapshotJson = json;
+                entity.CarrierRequestFingerprint = fingerprint;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
+        if (tx != null) await tx.CommitAsync(cancellationToken);
+        return claimed;
+    }
+
+    private async Task<int> ClaimShipmentForExternalCallCoreAsync(
         Guid shipmentId,
         Guid tenantId,
         int currentAttemptCount,
@@ -2689,6 +2962,8 @@ public class CarrierShipmentService : ICarrierShipmentService
     {
         if (!_dbContext.Database.IsRelational())
         {
+            if (await _dbContext.ShipmentCancellationOperations.AnyAsync(x => x.TenantId == tenantId && x.ShipmentId == shipmentId, cancellationToken))
+                return 0;
             await _dbContext.SaveChangesAsync(cancellationToken);
             return 1;
         }
@@ -2728,6 +3003,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                   AND "Status" = {9}
                   AND "ExternalRegistrationCompletedAtUtc" IS NULL
                   AND "ExternalRegistrationAttemptCount" = {8}
+                  AND NOT EXISTS (SELECT 1 FROM "ShipmentCancellationOperations" c WHERE c."TenantId" = {7} AND c."ShipmentId" = {6})
                 """,
                 parameters,
                 cancellationToken);
@@ -2752,6 +3028,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                   AND [Status] = {9}
                   AND [ExternalRegistrationCompletedAtUtc] IS NULL
                   AND [ExternalRegistrationAttemptCount] = {8}
+                  AND NOT EXISTS (SELECT 1 FROM [ShipmentCancellationOperations] c WHERE c.[TenantId] = {7} AND c.[ShipmentId] = {6})
                 """,
                 parameters,
                 cancellationToken);
@@ -2774,6 +3051,7 @@ public class CarrierShipmentService : ICarrierShipmentService
               AND "Status" = {9}
               AND "ExternalRegistrationCompletedAtUtc" IS NULL
               AND "ExternalRegistrationAttemptCount" = {8}
+              AND NOT EXISTS (SELECT 1 FROM "ShipmentCancellationOperations" c WHERE c."TenantId" = {7} AND c."ShipmentId" = {6})
             """,
             parameters,
             cancellationToken);
@@ -2827,6 +3105,27 @@ public class CarrierShipmentService : ICarrierShipmentService
                 cancellationToken);
         }
 
+        // A negative/unsupported lookup is not remote absence, and it is not
+        // authority to overwrite a registration/cancellation committed during
+        // that await. Recompose current order -> shipment authority first.
+        await using var transaction = await BeginCarrierPersistenceTransactionAsync(cancellationToken);
+        var current = await ReloadCarrierPersistenceAuthorityAsync(shipment.TenantId, shipment.Id, shipment.OrderId, cancellationToken);
+        if (current == null)
+            return new CarrierShipmentResult { ShipmentId = shipment.Id, ErrorCode = "SHIPMENT_AUTHORITY_NOT_FOUND", ExternalCallSkipped = true, Reconciled = true };
+        shipment = current.Shipment;
+        order = current.Order;
+        var stale = await RejectStaleCarrierRegistrationAuthorityAsync(shipment, order, "negative_registration_lookup", cancellationToken);
+        if (stale != null)
+        {
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
+            return stale;
+        }
+        if (IsShipmentExternallyRegistered(shipment))
+        {
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
+            return await ReconcileExistingExternalRegistrationAsync(shipment, order, carrierDisplayName, serviceLevel, cancellationToken);
+        }
+
         shipment.ExternalRegistrationState = ExternalRegistrationStateReconciliationRequired;
         shipment.ExternalRegistrationFailedAtUtc = DateTime.UtcNow;
         shipment.ExternalRegistrationError = "EXTERNAL_REGISTRATION_RECONCILIATION_REQUIRED:Prior carrier create attempt cannot be verified automatically.";
@@ -2839,6 +3138,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             shipment.Id,
             shipment.CarrierCode,
             carrierRequestId);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
 
         return new CarrierShipmentResult
         {
@@ -2893,8 +3193,19 @@ public class CarrierShipmentService : ICarrierShipmentService
         string errorMessage,
         CancellationToken cancellationToken)
     {
+        // A refusal/exception can arrive after another registration or cancellation
+        // has committed. Revalidate SQL authority just as for successful responses.
+        await using var transaction = await BeginCarrierPersistenceTransactionAsync(cancellationToken);
+        var authority = await ReloadCarrierPersistenceAuthorityAsync(shipment.TenantId, shipment.Id, shipment.OrderId, cancellationToken);
+        if (authority == null) return;
+        shipment = authority.Shipment;
+        if (shipment.ExternalRegistrationCompletedAtUtc != null || IsShipmentExternallyRegistered(shipment) ||
+            shipment.Status == ShipmentStatus.Cancelled ||
+            await _dbContext.ShipmentCancellationOperations.AnyAsync(x => x.TenantId == shipment.TenantId && x.ShipmentId == shipment.Id, cancellationToken))
+            return;
         shipment.ExternalRegistrationFailedAtUtc = DateTime.UtcNow;
-        shipment.ExternalRegistrationState = ExternalRegistrationStateFailed;
+        shipment.ExternalRegistrationState = HasOutboundRegistrationEvidence(shipment)
+            ? ExternalRegistrationStateReconciliationRequired : ExternalRegistrationStateFailed;
         var combinedError = $"{errorCode}:{errorMessage}";
         shipment.ExternalRegistrationError = combinedError.Length <= 500
             ? combinedError
@@ -2903,6 +3214,7 @@ public class CarrierShipmentService : ICarrierShipmentService
         try
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
         }
         catch (DbUpdateException ex)
         {
@@ -3034,8 +3346,10 @@ public class CarrierShipmentService : ICarrierShipmentService
         string serviceLevel,
         CreateShipmentResult result,
         bool isReconciliationAttempt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CarrierCredentialsResolution? collectionBindingResolution = null)
     {
+        using var moneyAuthority = CarrierMoneyPersistenceAuthority.Begin();
         await using var transaction = await BeginCarrierPersistenceTransactionAsync(cancellationToken);
         var authority = await ReloadCarrierPersistenceAuthorityAsync(
             shipment.TenantId,
@@ -3135,6 +3449,8 @@ public class CarrierShipmentService : ICarrierShipmentService
         }
 
         ApplySuccessfulCarrierRegistration(shipment, order, carrierDisplayName, serviceLevel, result);
+        if (!isReconciliationAttempt && collectionBindingResolution != null)
+            await CaptureCollectionBindingAsync(shipment, result, collectionBindingResolution, cancellationToken);
         await SynchronizeFulfillmentAuthorityAsync(
             shipment,
             shipment.Status,
@@ -3155,14 +3471,8 @@ public class CarrierShipmentService : ICarrierShipmentService
 
             _dbContext.ChangeTracker.Clear();
 
-            var reloadedShipment = await _dbContext.Shipments
-                .FirstOrDefaultAsync(
-                    s => s.Id == shipment.Id && s.TenantId == shipment.TenantId && !s.IsDeleted,
-                    cancellationToken);
-            var reloadedOrder = await _dbContext.Orders
-                .FirstOrDefaultAsync(
-                    o => o.Id == order.Id && o.TenantId == order.TenantId,
-                    cancellationToken);
+            var reloadedOrder = await LoadOrderForCarrierShipmentMutationAsync(order.TenantId, order.Id, cancellationToken);
+            var reloadedShipment = await LoadShipmentForCarrierMutationAsync(shipment.TenantId, shipment.Id, cancellationToken);
 
             if (reloadedShipment == null || reloadedOrder == null)
             {
@@ -3180,6 +3490,14 @@ public class CarrierShipmentService : ICarrierShipmentService
                     ExternalCallAttempted = true,
                     Reconciled = true
                 };
+            }
+
+            var retryRejection = await RejectStaleCarrierRegistrationAuthorityAsync(
+                reloadedShipment, reloadedOrder, "carrier_registration_save_retry", cancellationToken, result);
+            if (retryRejection != null)
+            {
+                if (transaction != null) await transaction.CommitAsync(cancellationToken);
+                return retryRejection;
             }
 
             if (IsShipmentExternallyRegistered(reloadedShipment))
@@ -3304,6 +3622,9 @@ public class CarrierShipmentService : ICarrierShipmentService
                 "CARRIER_TRACKING_NUMBER_INVALID",
                 "Carrier create result did not include a valid tracking number.");
         }
+
+        if (result.ExternalReferenceId != null && !IsValidCarrierIdentifier(result.ExternalReferenceId))
+            return new CarrierResultAdmissionError("CARRIER_EXTERNAL_REFERENCE_INVALID", "Carrier create result included a malformed remote identity.");
 
         if (!IsValidOptionalCarrierIdentifier(result.AwbNumber))
         {
@@ -3462,22 +3783,23 @@ public class CarrierShipmentService : ICarrierShipmentService
     {
         _dbContext.ChangeTracker.Clear();
 
-        var shipment = await LoadShipmentForCarrierMutationAsync(
-            tenantId,
-            shipmentId,
-            cancellationToken);
-
-        if (shipment == null)
-        {
-            return null;
-        }
-
+        // Shared lock order with cancellation: order, then shipment, then operation.
         var order = await LoadOrderForCarrierShipmentMutationAsync(
             tenantId,
             orderId,
             cancellationToken);
 
         if (order == null)
+        {
+            return null;
+        }
+
+        var shipment = await LoadShipmentForCarrierMutationAsync(
+            tenantId,
+            shipmentId,
+            cancellationToken);
+
+        if (shipment == null || shipment.OrderId != order.Id)
         {
             return null;
         }
@@ -3585,6 +3907,26 @@ public class CarrierShipmentService : ICarrierShipmentService
         CancellationToken cancellationToken,
         CreateShipmentResult? externalResult = null)
     {
+        if (await _dbContext.ShipmentCancellationOperations.AnyAsync(x => x.TenantId == shipment.TenantId && x.ShipmentId == shipment.Id, cancellationToken))
+        {
+            // Retain an accepted create response for investigation, never overwrite
+            // the independent cancellation barrier or advance lifecycle/fulfillment.
+            if (externalResult != null && shipment.ExternalRegistrationCompletedAtUtc == null &&
+                !IsShipmentExternallyRegistered(shipment) && ValidateCarrierCreateResultForPersistence(externalResult) == null)
+            {
+                shipment.ExternalReferenceId = ResolveExternalReferenceId(externalResult) ?? shipment.ExternalReferenceId;
+                shipment.TrackingNumber = externalResult.TrackingNumber ?? shipment.TrackingNumber;
+                shipment.AwbNumber = externalResult.AwbNumber ?? shipment.AwbNumber;
+                shipment.CarrierCreateResponse = externalResult.RawResponse ?? shipment.CarrierCreateResponse;
+                shipment.ExternalRegistrationCompletedAtUtc ??= DateTime.UtcNow;
+                shipment.ExternalRegistrationState = ExternalRegistrationStateReconciliationRequired;
+                shipment.ExternalRegistrationError = "CANCELLATION_BARRIER:External creation requires reconciliation.";
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+            return new CarrierShipmentResult { Success = false, ErrorCode = "CANCELLATION_BARRIER", ShipmentId = shipment.Id,
+                ExternalCallSkipped = externalResult == null, ExternalCallAttempted = externalResult != null, Reconciled = true };
+        }
+
         if (IsShipmentExternallyRegistered(shipment) &&
             shipment.Status != ShipmentStatus.PendingExternalRegistration)
         {
@@ -3744,33 +4086,34 @@ public class CarrierShipmentService : ICarrierShipmentService
         };
     }
     
-    private static void UpdateStatusTimestamps(Shipment shipment, ShipmentStatus status)
+    private static void UpdateStatusTimestamps(Shipment shipment, ShipmentStatus status, DateTime? observedAtUtc = null)
     {
+        var timestamp = observedAtUtc ?? DateTime.UtcNow;
         switch (status)
         {
             case ShipmentStatus.ReadyForPickup:
-                shipment.ReadyForPickupAtUtc ??= DateTime.UtcNow;
+                shipment.ReadyForPickupAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.PickedUp:
-                shipment.PickedUpAtUtc ??= DateTime.UtcNow;
+                shipment.PickedUpAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.InTransit:
-                shipment.ShippedAtUtc ??= DateTime.UtcNow;
+                shipment.ShippedAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.OutForDelivery:
-                shipment.OutForDeliveryAtUtc ??= DateTime.UtcNow;
+                shipment.OutForDeliveryAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.Delivered:
-                shipment.DeliveredAtUtc ??= DateTime.UtcNow;
+                shipment.DeliveredAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.Cancelled:
-                shipment.CancelledAtUtc ??= DateTime.UtcNow;
+                shipment.CancelledAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.Returned:
-                shipment.ReturnedAtUtc ??= DateTime.UtcNow;
+                shipment.ReturnedAtUtc ??= timestamp;
                 break;
             case ShipmentStatus.Failed:
-                shipment.FailedAtUtc ??= DateTime.UtcNow;
+                shipment.FailedAtUtc ??= timestamp;
                 break;
         }
     }
@@ -3808,7 +4151,8 @@ public class CarrierShipmentService : ICarrierShipmentService
         bool IsDuplicate,
         bool IsInFlight,
         bool WasPreviouslyFailed,
-        WebhookProcessResult? Result);
+        WebhookProcessResult? Result,
+        ShippingWebhookClaim? Claim = null);
 
     private async Task<ShipmentOriginDto?> ResolveOrRestoreShipmentOriginAsync(
         Shipment shipment,
@@ -3821,7 +4165,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             {
                 var stored = JsonSerializer.Deserialize<ShipmentOriginDto>(shipment.OriginSnapshotJson);
                 if (stored is not null &&
-                    stored.SnapshotVersion == 1 &&
+                    stored.SnapshotVersion is 1 or 2 &&
                     stored.WarehouseId == shipment.OriginWarehouseId &&
                     stored.AddressAdmissionEvidenceId == shipment.OriginAddressAdmissionEvidenceId &&
                     stored.CatalogReleaseId == shipment.OriginGeographicCatalogReleaseId &&
@@ -3831,10 +4175,21 @@ public class CarrierShipmentService : ICarrierShipmentService
                     !string.IsNullOrWhiteSpace(stored.ContactPhone) &&
                     !string.IsNullOrWhiteSpace(stored.Street))
                 {
+                    if (stored.SnapshotVersion == 2)
+                    {
+                        if (stored.TenantId != shipment.TenantId || stored.OrderId != order.Id || stored.ShipmentId != shipment.Id ||
+                            order.TenantId != shipment.TenantId || order.Id != shipment.OrderId || stored.WarehouseId != order.WarehouseId ||
+                            stored.CanonicalAddressEvidenceJson == null) return null;
+                        var retained = await _dbContext.AddressAdmissionEvidence.AsNoTracking().SingleOrDefaultAsync(e =>
+                            e.Id == stored.AddressAdmissionEvidenceId && e.TenantId == shipment.TenantId && e.OwnerId == stored.WarehouseId &&
+                            e.OwnerDomain == AddressAdmissionOwnerDomain.Warehouse, cancellationToken);
+                        if (retained == null || retained.CanonicalAddressEvidenceJson != stored.CanonicalAddressEvidenceJson) return null;
+                        CanonicalShipmentAddresses.RestoreOrigin(shipment, order, retained);
+                    }
                     return stored;
                 }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or ArgumentException)
             {
                 // Malformed persisted evidence fails closed below.
             }
@@ -3845,7 +4200,10 @@ public class CarrierShipmentService : ICarrierShipmentService
         // Recovery after a successful provider registration must never reconstruct
         // origin from live Warehouse or carrier integration configuration state.
         if (shipment.ExternalRegistrationCompletedAtUtc.HasValue ||
-            !string.IsNullOrWhiteSpace(shipment.ExternalReferenceId))
+            !string.IsNullOrWhiteSpace(shipment.ExternalReferenceId) || shipment.ExternalRegistrationAttemptCount > 0 ||
+            shipment.ExternalRegistrationLastAttemptAtUtc.HasValue ||
+            shipment.CarrierRequestSnapshotJson != null || shipment.CarrierRequestFingerprint != null ||
+            !string.IsNullOrWhiteSpace(shipment.TrackingNumber) || shipment.ExternalRegistrationState == ExternalRegistrationStateReconciliationRequired)
         {
             return null;
         }
@@ -3932,6 +4290,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                 : string.Empty;
 
         var now = DateTime.UtcNow;
+        // PostgreSQL timestamp precision is microseconds; keep JSON and scalar mirrors equal after reload.
+        now = new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc);
         var snapshot = new ShipmentOriginDto(
             warehouse.Id,
             evidence.Id,
@@ -3952,6 +4312,33 @@ public class CarrierShipmentService : ICarrierShipmentService
             warehouse.Address.Trim(),
             now,
             1);
+        if (shipment.CarrierCode == CarrierCodes.Dhl)
+        {
+            // Preserve admitted postal evidence in new snapshots. Restored snapshots
+            // above remain immutable and must not be enriched from current warehouse data.
+            snapshot = snapshot with { PostalCode = evidence.PostalCode };
+        }
+        if (shipment.CarrierCode == CarrierCodes.FedEx)
+        {
+            snapshot = snapshot with
+            {
+                PostalCode = evidence.PostalCode,
+                AdministrativeAreaCode = evidence.AdministrativeAreaPlaceId.HasValue
+                    ? places[evidence.AdministrativeAreaPlaceId.Value].CanonicalCode : null
+            };
+            var failure = await ValidateFedExOriginAsync(shipment, order, snapshot, cancellationToken);
+            if (failure != null) throw new ArgumentException(failure);
+        }
+
+        if (evidence.CanonicalAddressEvidenceJson != null)
+        {
+            var canonical = Geographic.CanonicalAddressEvidence.Restore(evidence.CanonicalAddressEvidenceJson, evidence);
+            if (canonical.Inputs.Street != warehouse.Address.Trim() || canonical.Inputs.ContactName != warehouse.Name.Trim() ||
+                canonical.Inputs.ContactPhone != warehouse.Phone.Trim() || canonical.CountryIso2 != snapshot.CountryIso2)
+                throw new ArgumentException("SHIPMENT_ORIGIN_EVIDENCE_CHANGED");
+            snapshot = snapshot with { SnapshotVersion = 2, TenantId = shipment.TenantId, OrderId = order.Id, ShipmentId = shipment.Id,
+                PostalCode = canonical.NormalizedPostalCode, CanonicalAddressEvidenceJson = evidence.CanonicalAddressEvidenceJson };
+        }
 
         shipment.OriginWarehouseId = snapshot.WarehouseId;
         shipment.OriginAddressAdmissionEvidenceId = snapshot.AddressAdmissionEvidenceId;
@@ -4047,6 +4434,12 @@ public class CarrierShipmentService : ICarrierShipmentService
         {
             return ShipmentCustomsResolutionEvidence.Success(null);
         }
+        if (shipment.CarrierCode == CarrierCodes.Dhl && shipment.ParcelEvidenceJson == null)
+            return ShipmentCustomsResolutionEvidence.Fail(new CarrierShipmentResult
+            {
+                ErrorCode = "PARCEL_MEASUREMENTS_REQUIRED", ExternalCallSkipped = true,
+                Reconciled = shipment.ExternalRegistrationAttemptCount > 0
+            });
 
         // CUSTOMS-2: cross-border carrier registration must acquire an immutable
         // shipment-owned Customs Snapshot before any adapter/provider I/O.
@@ -4057,7 +4450,9 @@ public class CarrierShipmentService : ICarrierShipmentService
                 shipment.OrderId,
                 origin,
                 destination,
-                shipment.WeightKg ?? 1.0m,
+                shipment.CarrierCode == CarrierCodes.Dhl
+                    ? ParcelMeasurements.Restore(shipment, await _dbContext.Orders.Include(o => o.Items).SingleAsync(o => o.Id == order.Id && o.TenantId == shipment.TenantId, cancellationToken)).GrossWeightKg
+                    : shipment.WeightKg ?? 1.0m,
                 "kg",
                 "ShipmentRegistration",
                 shipment.CarrierRequestId ?? shipment.Id.ToString("N")),
@@ -4098,6 +4493,16 @@ public class CarrierShipmentService : ICarrierShipmentService
         CarrierIntegrationConfigurationSnapshot carrierConfig,
         CancellationToken cancellationToken)
     {
+        if (shipment.CarrierCode == CarrierCodes.Bosta && BostaNativeDestination.IsNative(shipment.CarrierGeographicMappingSnapshotJson))
+        {
+            try
+            {
+                var native = BostaNativeDestination.Restore(shipment);
+                return CarrierGeographicResolutionEvidence.Success("EG", native.ProviderItems());
+            }
+            catch (Exception ex) when (ex is ArgumentException or JsonException)
+            { return await FailCarrierGeographicResolutionAsync(shipment, "BOSTA_DESTINATION_SNAPSHOT_INVALID", "Select a valid Bosta destination.", cancellationToken); }
+        }
         if (!string.IsNullOrWhiteSpace(shipment.CarrierGeographicMappingSnapshotJson))
         {
             try
@@ -4137,6 +4542,27 @@ public class CarrierShipmentService : ICarrierShipmentService
 
         }
 
+        // MyDHL quote/create use postal text and ISO country, not provider-place IDs.
+        // This narrowly scoped branch requires independently retained canonical v2
+        // origin AND exact immutable checkout destination evidence. Legacy paths keep
+        // their original mapping requirement and original bytes.
+        if (shipment.CarrierCode == CarrierCodes.Dhl && shipment.OriginGeographicSnapshotVersion == 2)
+        {
+            try
+            {
+                var order = await _dbContext.Orders.AsNoTracking().SingleAsync(o => o.Id == shipment.OrderId && o.TenantId == shipment.TenantId, cancellationToken);
+                var origin = await _dbContext.AddressAdmissionEvidence.AsNoTracking().SingleAsync(e => e.Id == shipment.OriginAddressAdmissionEvidenceId, cancellationToken);
+                var destination = await _dbContext.AddressAdmissionEvidence.AsNoTracking().SingleAsync(e => e.Id == shipment.DestinationAddressAdmissionEvidenceId, cancellationToken);
+                var pair = CanonicalShipmentAddresses.Restore(shipment, order, origin, destination);
+                return CarrierGeographicResolutionEvidence.Success(pair.Destination.CountryIso2, Array.Empty<ResolvedProviderGeography>());
+            }
+            catch (Exception ex) when (ex is ArgumentException or JsonException or InvalidOperationException)
+            {
+                return await FailCarrierGeographicResolutionAsync(shipment, "DHL_CANONICAL_ADDRESS_EVIDENCE_REQUIRED",
+                    "DHL requires complete independently admitted original country, postal, ownership and address evidence.", cancellationToken);
+            }
+        }
+
         if (!shipment.DestinationCountryPlaceId.HasValue ||
             !shipment.DestinationGeographicCatalogReleaseId.HasValue)
         {
@@ -4167,7 +4593,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                     shipment.DestinationLocalityPlaceId,
                     shipment.DestinationDistrictPlaceId,
                     shipment.DestinationZonePlaceId),
-                Array.Empty<string>(),
+                shipment.CarrierCode == CarrierCodes.Bosta ? ["country", "city", "district"] : Array.Empty<string>(),
                 shipment.ShippingZipCode,
                 !string.IsNullOrWhiteSpace(shipment.DestinationStreet)),
             cancellationToken);
@@ -4621,10 +5047,14 @@ public class CarrierShipmentService : ICarrierShipmentService
 
     private async Task PublishShipmentCodCollectedEventAsync(
         Shipment shipment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CarrierCollectionEvidence? evidence = null)
     {
+        // A mutable logistics flag, including legacy tracking/admin flags, is never money evidence.
+        if (evidence == null || evidence.AdmissionOutcome != "Qualified") return;
         await _eventPublisher.PublishAsync(new ShipmentCodCollectedEvent
         {
+            CollectionEvidenceId = evidence.Id,
             TenantId = shipment.TenantId,
             ShipmentId = shipment.Id,
             OrderId = shipment.OrderId,
@@ -4633,10 +5063,10 @@ public class CarrierShipmentService : ICarrierShipmentService
             TrackingNumber = shipment.TrackingNumber,
             CarrierCode = shipment.CarrierCode,
             CarrierName = shipment.ShippingMethodName,
-            CodAmount = shipment.CodAmount ?? 0,
-            Currency = shipment.Currency,
-            CollectedAt = shipment.CodCollectedAtUtc ?? DateTime.UtcNow,
-            IdempotencyKey = $"shipment-cod-collected:{shipment.Id:N}:{shipment.CodCollectedAtUtc?.Ticks ?? 0}"
+            CodAmount = evidence.ObservedAmount!.Value,
+            Currency = evidence.Currency!,
+            CollectedAt = evidence.ProviderEventAtUtc,
+            IdempotencyKey = $"carrier-collection-evidence:{evidence.Id:N}"
         }, cancellationToken);
     }
 

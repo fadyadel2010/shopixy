@@ -102,7 +102,7 @@ public class AttributionContextResolver : IAttributionContextResolver
                 source = analyticsEvent.Context.UtmSource;
                 medium = analyticsEvent.Context.UtmMedium ?? "none";
             }
-            else if (!string.IsNullOrWhiteSpace(referrer))
+            else if (!string.IsNullOrWhiteSpace(referrer) && !IsSameOrigin(pageUrl, referrer))
             {
                 // Infer from referrer
                 (source, medium) = InferFromReferrer(referrer);
@@ -128,6 +128,7 @@ public class AttributionContextResolver : IAttributionContextResolver
 
             var shouldStore = hasUtm ||
                               existingFirst == null ||
+                              analyticsEvent.OccurredAtUtc < existingFirst.CapturedAtUtc ||
                               (existingFirst.Source != source && source != "direct");
 
             if (!shouldStore)
@@ -148,6 +149,7 @@ public class AttributionContextResolver : IAttributionContextResolver
                 pageUrl);
 
             context.CustomerId = analyticsEvent.Actor?.CustomerId;
+            context.SourceEventId = analyticsEvent.EventId;
             context.CapturedAtUtc = analyticsEvent.OccurredAtUtc;
 
             await _store.StoreContextAsync(context, cancellationToken);
@@ -163,13 +165,19 @@ public class AttributionContextResolver : IAttributionContextResolver
             _logger.LogWarning(ex,
                 "[Attribution] Failed to resolve context | TenantId: {TenantId} | EventId: {EventId}",
                 analyticsEvent.TenantId, analyticsEvent.EventId);
-            return null;
+            throw;
         }
     }
 
     /// <summary>
     /// Infers source and medium from referrer URL.
     /// </summary>
+    private static bool IsSameOrigin(string pageUrl, string referrer) =>
+        Uri.TryCreate(pageUrl, UriKind.Absolute, out var page) &&
+        Uri.TryCreate(referrer, UriKind.Absolute, out var previous) &&
+        string.Equals(page.Scheme, previous.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(page.IdnHost, previous.IdnHost, StringComparison.OrdinalIgnoreCase) && page.Port == previous.Port;
+
     private static (string source, string medium) InferFromReferrer(string referrer)
     {
         try

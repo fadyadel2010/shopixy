@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle, Clock, MessageSquare, RefreshCw, Settings, Shield, ShoppingCart, TrendingUp } from 'lucide-react'
 import { useToast } from '../components/Toast'
@@ -40,8 +40,11 @@ export default function AbandonedCartRecovery() {
     const [configurationError, setConfigurationError] = useState(false)
     const [statsError, setStatsError] = useState(false)
     const [formData, setFormData] = useState(DEFAULT_FORM)
+    const savingRef = useRef(false)
+    const generation = useRef(0)
 
     const load = async () => {
+        const current = ++generation.current
         setLoading(true)
         setConfigurationError(false)
         setStatsError(false)
@@ -51,6 +54,7 @@ export default function AbandonedCartRecovery() {
             api.get('/admin/ecommerce/abandoned-cart-recovery/eligibility'),
             api.get('/admin/ecommerce/abandoned-cart-recovery/stats')
         ])
+        if (current !== generation.current) return false
 
         if (settingsResult.status === 'fulfilled') {
             const data = settingsResult.value.data
@@ -81,10 +85,12 @@ export default function AbandonedCartRecovery() {
         }
 
         setLoading(false)
+        return settingsResult.status === 'fulfilled' && eligibilityResult.status === 'fulfilled' && statsResult.status === 'fulfilled'
     }
 
     useEffect(() => {
         void load()
+        return () => { generation.current += 1 }
     }, [])
 
     const dirty = settings !== null && (
@@ -135,6 +141,7 @@ export default function AbandonedCartRecovery() {
     const showEnableRecoveryLink = readinessCode === 'recovery_disabled'
 
     const handleSave = async () => {
+        if (savingRef.current || loading || configurationError || !settings) return
         if (formData.workingHoursFrom === formData.workingHoursTo) {
             showError(t('AbandonedCartRecovery.messages.invalidWorkingHours'))
             return
@@ -144,17 +151,23 @@ export default function AbandonedCartRecovery() {
             return
         }
 
+        savingRef.current = true
         setSaving(true)
+        const workspaceGeneration = generation.current
         try {
-            await api.put('/admin/ecommerce/abandoned-cart-recovery/settings', formData)
-            showSuccess(t('AbandonedCartRecovery.messages.saveSuccess'))
-            await load()
+            const response = await api.put('/admin/ecommerce/abandoned-cart-recovery/settings', formData)
+            if (workspaceGeneration !== generation.current) return
+            setSettings(response.data)
+            if (await load()) showSuccess(t('AbandonedCartRecovery.messages.saveSuccess'))
+            else showError(t('common.savedButReloadFailed', 'Saved, but the latest data could not be reloaded. Refresh before editing again.'))
         } catch (error) {
+            if (workspaceGeneration !== generation.current) return
             const code = error.response?.data?.code
             showError(READINESS_CODES.includes(code)
                 ? t(`AbandonedCartRecovery.readiness.${code}`)
                 : error.response?.data?.details || error.response?.data?.error || t('AbandonedCartRecovery.messages.saveError'))
         } finally {
+            savingRef.current = false
             setSaving(false)
         }
     }
@@ -183,6 +196,7 @@ export default function AbandonedCartRecovery() {
                 <button
                     type="button"
                     onClick={() => void load()}
+                    disabled={loading || saving}
                     aria-label={t('AbandonedCartRecovery.actions.refresh')}
                     className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
                 >
@@ -271,7 +285,7 @@ export default function AbandonedCartRecovery() {
                     </div>
                 </div>
 
-                <div className="space-y-6 p-5 sm:p-6">
+                <fieldset disabled={loading || saving || configurationError} className="space-y-6 p-5 sm:p-6">
                     <div className="flex flex-col gap-4 rounded-xl bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                             <label htmlFor="enable-recovery" className="font-medium text-gray-900">{t('AbandonedCartRecovery.settings.enableTitle')}</label>
@@ -281,7 +295,7 @@ export default function AbandonedCartRecovery() {
                             id="enable-recovery"
                             type="checkbox"
                             checked={formData.enableAbandonedRecovery}
-                            disabled={loading || (!formData.enableAbandonedRecovery && !recoveryPrerequisitesReady)}
+                            disabled={loading || saving || (!formData.enableAbandonedRecovery && !recoveryPrerequisitesReady)}
                             onChange={event => setFormData(previous => ({ ...previous, enableAbandonedRecovery: event.target.checked }))}
                             className="h-6 w-6 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                         />
@@ -342,7 +356,7 @@ export default function AbandonedCartRecovery() {
                             {saving ? t('AbandonedCartRecovery.settings.saving') : t('AbandonedCartRecovery.settings.save')}
                         </button>
                     </div>
-                </div>
+                </fieldset>
             </section>
         </div>
     )

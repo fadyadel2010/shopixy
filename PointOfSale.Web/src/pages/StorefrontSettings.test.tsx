@@ -129,6 +129,7 @@ describe('StorefrontSettings candidate authority', () => {
         showSuccessMock.mockReset()
         showInfoMock.mockReset()
         tMock.mockClear()
+        tMock.mockImplementation((_key: string, fallback?: string) => fallback)
     })
 
     it('keeps unsaved status edits candidate-only until backend acceptance', async () => {
@@ -290,5 +291,37 @@ describe('StorefrontSettings candidate authority', () => {
         })
 
         await waitFor(() => expect(screen.getByText('Current Status').nextElementSibling).toHaveTextContent('Maintenance'))
+    })
+
+    it('preserves edits made while a save is pending instead of silently discarding them', async () => {
+        getStoreConfigMock.mockResolvedValue(backendConfig())
+        let accept!: (value: unknown) => void
+        updateStorefrontStatusMock.mockImplementation(() => new Promise(resolve => { accept = resolve }))
+        await renderSettings()
+        fireEvent.click(await screen.findByRole('radio', { name: /Maintenance/ }))
+        const message = screen.getByRole('textbox')
+        fireEvent.change(message, { target: { value: 'Submitted message' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Status' }))
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save live Status' }))
+        fireEvent.change(message, { target: { value: 'Newer unsaved message' } })
+        await act(async () => accept(backendConfig({ storefrontStatus: 'maintenance', maintenanceMessage: 'Submitted message', rowVersion: 'rv-2' })))
+        expect(screen.getByRole('textbox')).toHaveValue('Newer unsaved message')
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    })
+
+    it('does not announce a failed conflict reload or erase the unsaved candidate', async () => {
+        tMock.mockImplementation((key: string, fallback?: string) => fallback || key)
+        getStoreConfigMock.mockResolvedValueOnce(backendConfig()).mockRejectedValueOnce({ response: { status: 503 } })
+        updateStorefrontStatusMock.mockRejectedValue({ response: { status: 409, data: { message: 'Concurrent edit' } } })
+        await renderSettings()
+        fireEvent.click(await screen.findByRole('radio', { name: /Maintenance/ }))
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep this input' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Status' }))
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save live Status' }))
+        await screen.findByText('Concurrent edit')
+        fireEvent.click(screen.getByRole('button', { name: 'storefront.homepageEditor.loadLatest' }))
+        await waitFor(() => expect(getStoreConfigMock).toHaveBeenCalledTimes(2))
+        expect(screen.queryByText('Latest version loaded')).not.toBeInTheDocument()
+        expect(screen.getByRole('textbox')).toHaveValue('Keep this input')
     })
 })

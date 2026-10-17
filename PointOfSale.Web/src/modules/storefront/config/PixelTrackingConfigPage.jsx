@@ -4,9 +4,9 @@
  * 
  * Admin page for configuring pixel conversion value overrides.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Save, Radio, Eye } from 'lucide-react'
+import { AlertTriangle, Save, Eye } from 'lucide-react'
 import api from '../../../services/api'
 
 export default function PixelTrackingConfigPage() {
@@ -16,6 +16,11 @@ export default function PixelTrackingConfigPage() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [message, setMessage] = useState(null)
+    const [loadError, setLoadError] = useState(false)
+    const [previewError, setPreviewError] = useState(false)
+    const lifetime = useRef(0)
+    const saveBusy = useRef(false)
+    const previewSequence = useRef(0)
     const [config, setConfig] = useState({
         isEnabled: false,
         strategy: 'PERCENTAGE',
@@ -26,53 +31,66 @@ export default function PixelTrackingConfigPage() {
     const [preview, setPreview] = useState(null)
     const [previewOrderTotal, setPreviewOrderTotal] = useState(600)
 
+    const fetchConfig = useCallback(async () => {
+        const scope = lifetime.current
+        setLoading(true)
+        try {
+            const response = await api.get('/admin/pixel-tracking/config')
+            if (scope !== lifetime.current) return false
+            setConfig({ isEnabled: response.data.isEnabled, strategy: response.data.strategy, value: response.data.value, appliesTo: response.data.appliesTo || [] })
+            setLoadError(false)
+            return true
+        } catch {
+            if (scope === lifetime.current) setLoadError(true)
+            return false
+        } finally {
+            if (scope === lifetime.current) setLoading(false)
+        }
+    }, [])
     useEffect(() => {
         fetchConfig()
-    }, [])
+        return () => { lifetime.current++; previewSequence.current++ }
+    }, [fetchConfig])
 
     // Live preview effect
     useEffect(() => {
+        const sequence = ++previewSequence.current
         const fetchPreview = async () => {
+            setPreview(null)
+            setPreviewError(false)
             try {
-                const res = await api.get(`/admin/pixel-tracking/preview?orderTotal=${previewOrderTotal}&strategyStr=${config.strategy}&value=${config.value}`)
-                setPreview(res.data)
-            } catch (err) {
-                console.error('Preview failed', err)
+                const res = await api.get('/admin/pixel-tracking/preview', { params: { orderTotal: previewOrderTotal, strategyStr: config.strategy, value: config.value } })
+                if (sequence === previewSequence.current) setPreview(res.data)
+            } catch {
+                if (sequence === previewSequence.current) setPreviewError(true)
             }
         }
 
-        if (config.value) {
+        if (!loading && !loadError && config.value >= 0 && config.value <= (config.strategy === 'PERCENTAGE' ? 100 : 1000000) && previewOrderTotal >= 0) {
             fetchPreview()
         }
-    }, [config.strategy, config.value, previewOrderTotal])
-
-    const fetchConfig = async () => {
-        try {
-            const response = await api.get('/admin/pixel-tracking/config')
-            setConfig({
-                isEnabled: response.data.isEnabled,
-                strategy: response.data.strategy,
-                value: response.data.value,
-                appliesTo: response.data.appliesTo || []
-            })
-        } catch (error) {
-            console.error('Failed to load pixel configuration', error)
-            setMessage({ type: 'error', text: 'Failed to load pixel configuration' })
-        } finally {
-            setLoading(false)
-        }
-    }
+        return () => { previewSequence.current++ }
+    }, [config.strategy, config.value, previewOrderTotal, loading, loadError])
 
     const handleSave = async () => {
+        if (saveBusy.current || loadError || !Number.isFinite(config.value) || config.value < 0 || config.value > (config.strategy === 'PERCENTAGE' ? 100 : 1000000)) return
+        saveBusy.current = true
+        const scope = lifetime.current
         setSaving(true)
         try {
             await api.put('/admin/pixel-tracking/config', config)
-            setMessage({ type: 'success', text: 'Pixel tracking configuration updated' })
+            if (scope !== lifetime.current) return
+            const readBack = await fetchConfig()
+            if (scope !== lifetime.current) return
+            setMessage({ type: readBack ? 'success' : 'error', text: readBack
+                ? (isRTL ? 'تم حفظ إعدادات قيمة التحويل والتحقق منها' : 'Pixel value configuration saved and verified')
+                : (isRTL ? 'تم الحفظ، لكن تعذر إعادة التحميل. أعد المحاولة.' : 'Saved, but configuration could not be reloaded. Retry the read.') })
         } catch (error) {
             console.error('Failed to update configuration', error)
             setMessage({ type: 'error', text: 'Failed to update configuration' })
         } finally {
-            setSaving(false)
+            saveBusy.current = false
+            if (scope === lifetime.current) setSaving(false)
         }
     }
 
@@ -138,15 +156,16 @@ export default function PixelTrackingConfigPage() {
 
             {/* Status Message */}
             {message && (
-                <div className={`rounded-xl p-4 mb-6 ${message.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+                <div role="status" className={`rounded-xl p-4 mb-6 ${message.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
                     {message.text}
                     <button onClick={() => setMessage(null)} className="float-right text-sm underline">Dismiss</button>
                 </div>
             )}
+            {loadError && <div role="alert" className="mb-4 text-red-700">{isRTL ? 'تعذر تحميل التكوين' : 'Configuration unavailable'} <button onClick={fetchConfig}>{isRTL ? 'إعادة المحاولة' : 'Retry'}</button></div>}
 
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Configuration Card */}
-                <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <fieldset disabled={saving || loadError} className="min-w-0 lg:col-span-3 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
                     {/* Enable Toggle */}
                     <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-100">
                         <h2 className="text-lg font-semibold text-gray-900">
@@ -158,12 +177,12 @@ export default function PixelTrackingConfigPage() {
                                     ? (isRTL ? 'مُفعّل' : 'Enabled')
                                     : (isRTL ? 'معطّل' : 'Disabled')}
                             </span>
-                            <div
+                            <button type="button" role="switch" aria-label={isRTL ? 'تفعيل تعديل القيمة' : 'Enable value override'} aria-checked={config.isEnabled}
                                 className={`w-12 h-6 rounded-full p-1 cursor-pointer transition-colors ${config.isEnabled ? 'bg-green-500' : 'bg-gray-300'}`}
                                 onClick={() => handleChange('isEnabled', !config.isEnabled)}
                             >
                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform ${config.isEnabled ? 'translate-x-6' : 'translate-x-0'}`}></div>
-                            </div>
+                            </button>
                         </label>
                     </div>
 
@@ -222,6 +241,7 @@ export default function PixelTrackingConfigPage() {
                                 : (isRTL ? 'القيمة الثابتة' : 'Fixed Amount Value')}
                         </label>
                         <input
+                            aria-label={isRTL ? 'قيمة التعديل' : 'Override value'}
                             type="number"
                             value={config.value}
                             onChange={(e) => handleChange('value', parseFloat(e.target.value) || 0)}
@@ -276,7 +296,7 @@ export default function PixelTrackingConfigPage() {
                     <div className="flex justify-end pt-4 border-t border-gray-100">
                         <button
                             onClick={handleSave}
-                            disabled={saving}
+                            disabled={saving || !Number.isFinite(config.value) || config.value < 0 || config.value > (config.strategy === 'PERCENTAGE' ? 100 : 1000000)}
                             className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                         >
                             <Save size={18} />
@@ -285,7 +305,7 @@ export default function PixelTrackingConfigPage() {
                                 : (isRTL ? 'حفظ التكوين' : 'Save Configuration')}
                         </button>
                     </div>
-                </div>
+                </fieldset>
 
                 {/* Preview Card */}
                 <div className="lg:col-span-2 bg-gray-50 rounded-xl border border-gray-200 p-6 shadow-sm">
@@ -307,6 +327,7 @@ export default function PixelTrackingConfigPage() {
                             {isRTL ? 'إجمالي الطلب النموذجي' : 'Sample Order Total'}
                         </label>
                         <input
+                            aria-label={isRTL ? 'إجمالي الطلب النموذجي' : 'Sample Order Total'}
                             type="number"
                             value={previewOrderTotal}
                             onChange={(e) => setPreviewOrderTotal(parseFloat(e.target.value) || 0)}
@@ -315,7 +336,7 @@ export default function PixelTrackingConfigPage() {
                     </div>
 
                     {/* Preview Result */}
-                    {preview && config.isEnabled ? (
+                    {previewError ? <p role="alert">{isRTL ? 'المعاينة غير متاحة' : 'Preview unavailable'}</p> : preview && config.isEnabled ? (
                         <div className="bg-white rounded-lg border border-gray-200 p-4">
                             <div className="grid grid-cols-2 gap-4 mb-4">
                                 <div>

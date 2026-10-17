@@ -2,17 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
-    ArrowLeft,
     Eye,
-    Globe,
     GripVertical,
-    History,
     Image as ImageIcon,
     ListOrdered,
     Loader2,
     Plus,
     RefreshCcw,
-    Save,
     Trash2,
     Undo2,
     Type,
@@ -128,6 +124,13 @@ export function CmsPageEditor() {
     const [rollbackState, setRollbackState] = useState({ version: null, reason: '', confirmed: false, isRollingBack: false })
     const formRef = useRef(form)
     formRef.current = form
+    const saveInFlightRef = useRef(false)
+    const publishInFlightRef = useRef(false)
+    const mountedRef = useRef(true)
+    useEffect(() => {
+        mountedRef.current = true
+        return () => { mountedRef.current = false }
+    }, [])
 
     const currentUser = useAuthStore((state) => state.user)
     const currentFingerprint = useMemo(() => getPageFormFingerprint(form), [form])
@@ -224,6 +227,7 @@ export function CmsPageEditor() {
     }
 
     async function handleSave(expectedVersionOverride = null) {
+        if (saveInFlightRef.current) return null
         if (!form.slug.trim() || !hasTranslationContent(englishTranslation)) {
             setError(t('storefront.cms.validation.titleAndSlugRequired'))
             return null
@@ -238,6 +242,7 @@ export function CmsPageEditor() {
             return page
         }
 
+        saveInFlightRef.current = true
         setIsSaving(true)
         setError('')
         setNotice('')
@@ -252,6 +257,7 @@ export function CmsPageEditor() {
             const savedPage = isNewPage
                 ? await cmsService.createPage(payload)
                 : await cmsService.updatePage(pageId, payload)
+            if (!mountedRef.current) return null
             const hasNewerLocalEdits = getPageFormFingerprint(formRef.current) !== submittedFingerprint
             const admittedPage = adoptAuthoritativePage(
                 savedPage,
@@ -285,13 +291,17 @@ export function CmsPageEditor() {
             setError(`${feedback.title}: ${feedback.message}`)
             return null
         } finally {
+            saveInFlightRef.current = false
             setIsSaving(false)
         }
     }
 
     async function handlePublish() {
+        if (publishInFlightRef.current || saveInFlightRef.current) return
+        publishInFlightRef.current = true
         const targetPage = (isDirty || !page) ? await handleSave() : page
-        if (!targetPage) {
+        if (!targetPage || !mountedRef.current) {
+            publishInFlightRef.current = false
             return
         }
 
@@ -324,6 +334,7 @@ export function CmsPageEditor() {
             const feedback = getAuthoringErrorFeedback(err)
             setError(`${feedback.title}: ${feedback.message}`)
         } finally {
+            publishInFlightRef.current = false
             setIsPublishing(false)
         }
     }
@@ -450,6 +461,7 @@ export function CmsPageEditor() {
 
         try {
             const previewAccess = await cmsService.createPreviewLink(pageId)
+            if (!mountedRef.current) return
             window.open(previewAccess.previewUrl, '_blank', 'noopener,noreferrer')
         } catch (err) {
             console.error('Failed to create CMS preview link', err)
@@ -1064,13 +1076,17 @@ function RichTextEditor({ value, onChange, t }) {
             <div
                 ref={editorRef}
                 contentEditable
+                role="textbox"
+                aria-label={t('storefront.cms.pageEditor.content')}
+                aria-multiline="true"
                 suppressContentEditableWarning
                 onFocus={() => {
                     isEditingRef.current = true
                 }}
                 onInput={() => {
-                    // Input is handled, but sanitization is deferred to onBlur to avoid lag
-                    // This keeps the editor responsive while typing
+                    // Keep candidate/dirty/keyboard-save state current without replacing
+                    // the editable DOM (and therefore its caret) during typing.
+                    onChange(sanitizeRichTextHtml(editorRef.current.innerHTML))
                 }}
                 onBlur={(event) => {
                     isEditingRef.current = false

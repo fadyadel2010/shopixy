@@ -102,23 +102,12 @@ public class CampaignRoiService : ICampaignRoiService
         campaignCosts = FilterCurrencyMismatches(tenantId, campaignCosts, tenantCurrency);
 
         // 3. Build lookup for costs by campaign key
-        var costLookup = new Dictionary<string, List<Core.Analytics.Attribution.CampaignCost>>();
-        foreach (var cost in campaignCosts)
-        {
-            var key = $"{cost.Source}|{cost.Medium}|{cost.Campaign}";
-            if (!costLookup.ContainsKey(key))
-            {
-                costLookup[key] = new List<Core.Analytics.Attribution.CampaignCost>();
-            }
-            costLookup[key].Add(cost);
-        }
-
         // 4. Build results - start with attribution data
-        var results = new Dictionary<string, CampaignRoiResult>();
+        var results = new Dictionary<(string Source, string Medium, string Campaign), CampaignRoiResult>();
         // Add all campaigns that have revenue
         foreach (var rev in campaignRevenue)
         {
-            var key = $"{rev.Source.ToLowerInvariant()}|{rev.Medium.ToLowerInvariant()}|{(rev.Campaign ?? "").ToLowerInvariant()}";
+            var key = (rev.Source.Trim().ToLowerInvariant(), rev.Medium.Trim().ToLowerInvariant(), (rev.Campaign ?? "").Trim().ToLowerInvariant());
             
             if (!results.ContainsKey(key))
             {
@@ -141,7 +130,7 @@ public class CampaignRoiService : ICampaignRoiService
         // Add costs from declared campaign costs
         foreach (var costEntry in campaignCosts)
         {
-            var key = costEntry.GetCampaignKey();
+            var key = (costEntry.Source.Trim().ToLowerInvariant(), costEntry.Medium.Trim().ToLowerInvariant(), costEntry.Campaign.Trim().ToLowerInvariant());
             if (!results.ContainsKey(key))
             {
                 // Campaign with cost but no revenue yet
@@ -209,15 +198,15 @@ public class CampaignRoiService : ICampaignRoiService
         var costBySource = campaignCosts
             .GroupBy(c => new { Source = c.Source, Medium = c.Medium })
             .ToDictionary(
-                g => $"{g.Key.Source}|{g.Key.Medium}",
+                g => (g.Key.Source, g.Key.Medium),
                 g => new { Cost = g.Sum(c => c.CostAmount), Currency = g.First().Currency });
 
         // 3. Build results
-        var results = new Dictionary<string, SourceRoiResult>();
+        var results = new Dictionary<(string Source, string Medium), SourceRoiResult>();
         // Add sources with revenue
         foreach (var rev in sourceRevenue)
         {
-            var key = $"{rev.Source.ToLowerInvariant()}|{rev.Medium.ToLowerInvariant()}";
+            var key = (rev.Source.Trim().ToLowerInvariant(), rev.Medium.Trim().ToLowerInvariant());
             
             if (!results.ContainsKey(key))
             {
@@ -238,13 +227,12 @@ public class CampaignRoiService : ICampaignRoiService
         // Add costs
         foreach (var kvp in costBySource)
         {
-            var parts = kvp.Key.Split('|');
             if (!results.ContainsKey(kvp.Key))
             {
                 results[kvp.Key] = new SourceRoiResult
                 {
-                    Source = parts[0],
-                    Medium = parts[1],
+                    Source = kvp.Key.Source,
+                    Medium = kvp.Key.Medium,
                     TotalRevenue = 0,
                     TotalCost = 0,
                     TotalOrders = 0
@@ -308,11 +296,7 @@ public class CampaignRoiService : ICampaignRoiService
 
         if (valid.Count != costs.Count)
         {
-            _logger.LogWarning(
-                "[CampaignROI] Excluded {Count} campaign costs with non-authoritative currency | TenantId: {TenantId} | Currency: {Currency}",
-                costs.Count - valid.Count,
-                tenantId,
-                tenantCurrency);
+            throw new InvalidOperationException("ROI unavailable: campaign costs contain a currency different from the tenant currency. No conversion policy is configured.");
         }
 
         return valid;

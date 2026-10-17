@@ -5,7 +5,6 @@ import { useToast } from '../../../components/Toast'
 import { useWhatsAppApi } from '../hooks/useWhatsAppApi'
 import { useWhatsAppAnalytics } from '../hooks/useWhatsAppAnalytics'
 import AccountStatusBadge from '../components/AccountStatusBadge'
-import CircuitBreakerBadge from '../components/CircuitBreakerBadge'
 import DeliveryFunnel from '../components/DeliveryFunnel'
 import TemplateEditor from '../components/TemplateEditor'
 import MessageDetailsModal from '../components/MessageDetailsModal'
@@ -32,6 +31,7 @@ export default function WhatsAppSettings() {
     const { t, i18n } = useTranslation()
     const { showSuccess, showError } = useToast()
     const [activeTab, setActiveTab] = useState('accounts')
+    const [tabState, setTabState] = useState({})
 
     // API hooks
     const {
@@ -119,6 +119,7 @@ export default function WhatsAppSettings() {
     // === DATA FETCHING ===
     const fetchAccounts = async () => {
         const requestId = ++accountsRequestIdRef.current
+        setTabState(previous => ({ ...previous, accounts: 'loading' }))
         try {
             const data = await getAccounts()
 
@@ -127,8 +128,10 @@ export default function WhatsAppSettings() {
             }
 
             setAccounts(data || [])
+            setTabState(previous => ({ ...previous, accounts: 'ready' }))
         } catch (err) {
             if (requestId === accountsRequestIdRef.current) {
+                setTabState(previous => ({ ...previous, accounts: 'error' }))
                 showError(err.message)
             }
         }
@@ -136,6 +139,7 @@ export default function WhatsAppSettings() {
 
     const fetchTemplates = async () => {
         const requestId = ++templatesRequestIdRef.current
+        setTabState(previous => ({ ...previous, templates: 'loading' }))
         setTemplatesError(null)
         try {
             const data = await getTemplates()
@@ -145,8 +149,10 @@ export default function WhatsAppSettings() {
             }
 
             setTemplates(data || [])
+            setTabState(previous => ({ ...previous, templates: 'ready' }))
         } catch (err) {
             if (requestId === templatesRequestIdRef.current) {
+                setTabState(previous => ({ ...previous, templates: 'error' }))
                 setTemplatesError(err.message)
                 showError(err.message)
             }
@@ -155,6 +161,7 @@ export default function WhatsAppSettings() {
 
     const fetchKillSwitchStatus = async () => {
         const requestId = ++killSwitchRequestIdRef.current
+        setTabState(previous => ({ ...previous, safety: 'loading' }))
         try {
             const data = await getKillSwitchStatus()
 
@@ -163,8 +170,10 @@ export default function WhatsAppSettings() {
             }
 
             setKillSwitchStatus(data)
+            setTabState(previous => ({ ...previous, safety: 'ready' }))
         } catch (err) {
             if (requestId === killSwitchRequestIdRef.current) {
+                setTabState(previous => ({ ...previous, safety: 'error' }))
                 console.error('Failed to fetch kill switch status:', err)
             }
         }
@@ -172,6 +181,7 @@ export default function WhatsAppSettings() {
 
     const fetchAnalytics = async () => {
         const requestId = ++analyticsRequestIdRef.current
+        setTabState(previous => ({ ...previous, analytics: 'loading' }))
         try {
             const data = await getAnalytics()
 
@@ -180,8 +190,10 @@ export default function WhatsAppSettings() {
             }
 
             setMetrics(data)
+            setTabState(previous => ({ ...previous, analytics: 'ready' }))
         } catch (err) {
             if (requestId === analyticsRequestIdRef.current) {
+                setTabState(previous => ({ ...previous, analytics: 'error' }))
                 showError(err.message)
             }
         }
@@ -189,6 +201,7 @@ export default function WhatsAppSettings() {
 
     const fetchLogs = async (filters = logFilters, page = logPage) => {
         const requestId = ++logsRequestIdRef.current
+        setTabState(previous => ({ ...previous, logs: 'loading' }))
         try {
             const data = await getLogs(filters, page)
 
@@ -197,9 +210,11 @@ export default function WhatsAppSettings() {
             }
 
             setLogs(data.items || [])
+            setTabState(previous => ({ ...previous, logs: 'ready' }))
             setLogPagination({ totalPages: data.totalPages, totalCount: data.totalCount })
         } catch (err) {
             if (requestId === logsRequestIdRef.current) {
+                setTabState(previous => ({ ...previous, logs: 'error' }))
                 showError(err.message)
             }
         }
@@ -475,8 +490,10 @@ export default function WhatsAppSettings() {
                 </div>
 
                 <div className="p-6 flex-1">
+                    {tabState[activeTab] === 'error' && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-red-700">{t('common.failedToLoad')} {t('common.retry')}</div>}
+                    {(!tabState[activeTab] || tabState[activeTab] === 'loading') && <p role="status">{t('common.loading')}</p>}
                     {/* === ACCOUNTS TAB === */}
-                    {activeTab === 'accounts' && (
+                    {activeTab === 'accounts' && tabState.accounts === 'ready' && (
                         <div>
                             <div className="flex justify-between items-center mb-6">
                                 <h2 className="text-lg font-medium text-gray-900">{t('whatsapp.accounts.connectedAccounts')}</h2>
@@ -511,7 +528,6 @@ export default function WhatsAppSettings() {
                                                     <div className="flex gap-2 mb-4 flex-wrap">
                                                         <span className={`px-2.5 py-0.5 rounded-md text-xs font-medium ${account.useForOrderConfirmation ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'}`}>{t('whatsapp.accounts.orderConfirmations')}</span>
                                                         <span className={`px-2.5 py-0.5 rounded-md text-xs font-medium ${account.useForOtpVerification ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-600'}`}>{t('whatsapp.accounts.otpVerification')}</span>
-                                                        <CircuitBreakerBadge isOpen={false} />
                                                     </div>
                                                     {account.statusReason && <p className="mb-4 text-xs text-amber-700">{account.statusReason}</p>}
                                                     <div className="flex gap-2 flex-wrap">
@@ -524,7 +540,7 @@ export default function WhatsAppSettings() {
                                                         </button>
                                                         <button
                                                             onClick={() => handleToggleAccount(account)}
-                                                            disabled={loading || !isConnected}
+                                                            disabled={loading || (!account.enabled && !isConnected)}
                                                             className={`inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-white ${account.enabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50`}
                                                         >
                                                             <Power className="mr-1.5 h-4 w-4" /> {account.enabled ? t('common.disable') : t('common.enable')}
@@ -565,7 +581,7 @@ export default function WhatsAppSettings() {
                     )}
 
                     {/* === TEMPLATES TAB === */}
-                    {activeTab === 'templates' && (
+                    {activeTab === 'templates' && tabState.templates === 'ready' && (
                         <div className="space-y-8">
                             {templatesError && (
                                 <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -642,15 +658,15 @@ export default function WhatsAppSettings() {
                     )}
 
                     {/* === ANALYTICS TAB === */}
-                    {activeTab === 'analytics' && (
+                    {activeTab === 'analytics' && tabState.analytics === 'ready' && (
                         <div>
                             {/* KPI Grid */}
                             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
                                 {[
-                                    { name: t('whatsapp.analytics.kpis.totalMessages'), value: metrics?.totalMessages || 0, color: 'text-gray-900' },
+                                    { name: t('whatsapp.logs.statuses.sent'), value: metrics?.sentMessages ?? t('common.notAvailable'), color: 'text-gray-900' },
                                     { name: t('whatsapp.analytics.kpis.successRate'), value: `${metrics?.successRate || 0}%`, color: 'text-green-600' },
                                     { name: t('whatsapp.analytics.kpis.failed'), value: metrics?.failedMessages || 0, color: 'text-red-600' },
-                                    { name: t('whatsapp.analytics.kpis.retries'), value: metrics?.retryCount || 0, color: 'text-yellow-600' },
+                                    { name: t('whatsapp.analytics.kpis.retries'), value: t('common.notAvailable'), color: 'text-yellow-600' },
                                 ].map(card => (
                                     <div key={card.name} className="bg-white border rounded-lg px-4 py-5 sm:p-6">
                                         <dt className="text-sm font-medium text-gray-500 truncate">{card.name}</dt>
@@ -660,17 +676,17 @@ export default function WhatsAppSettings() {
                             </div>
 
                             <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-                                <DeliveryFunnel metrics={metrics?.funnel} />
+                                {metrics?.funnel ? <DeliveryFunnel metrics={metrics.funnel} /> : <p>{t('common.notAvailable')}</p>}
                                 <div className="bg-white border rounded-lg p-6">
                                     <h3 className="text-lg font-medium text-gray-900 mb-4">{t('whatsapp.analytics.operationalInsights')}</h3>
                                     <div className="space-y-4">
                                         <div className="bg-yellow-50 p-4 rounded-md">
                                             <h4 className="text-sm font-medium text-yellow-800">{t('whatsapp.analytics.circuitBreakerEvents')}</h4>
-                                            <p className="mt-1 text-2xl font-semibold text-yellow-600">{metrics?.circuitBreakerEvents || 0}</p>
+                                            <p className="mt-1 text-2xl font-semibold text-yellow-600">{t('common.notAvailable')}</p>
                                         </div>
                                         <div className="bg-red-50 p-4 rounded-md">
                                             <h4 className="text-sm font-medium text-red-800">{t('whatsapp.analytics.killSwitchActivations')}</h4>
-                                            <p className="mt-1 text-2xl font-semibold text-red-600">{metrics?.killSwitchActivations || 0}</p>
+                                            <p className="mt-1 text-2xl font-semibold text-red-600">{t('common.notAvailable')}</p>
                                         </div>
                                     </div>
                                 </div>
@@ -679,7 +695,7 @@ export default function WhatsAppSettings() {
                     )}
 
                     {/* === SAFETY TAB === */}
-                    {activeTab === 'safety' && (
+                    {activeTab === 'safety' && tabState.safety === 'ready' && (
                         <div className="space-y-8">
                             {/* Status Banner */}
                             <div className={`rounded-md p-4 ${killSwitchStatus.isKilled ? 'bg-red-50 border-l-4 border-red-400' : 'bg-green-50 border-l-4 border-green-400'}`}>
@@ -693,7 +709,7 @@ export default function WhatsAppSettings() {
                                     </div>
                                     <div className="ml-3">
                                         <h3 className={`text-sm font-medium ${killSwitchStatus.isKilled ? 'text-red-800' : 'text-green-800'}`}>
-                                            {t('whatsapp.safety.systemStatus')}: {killSwitchStatus.isKilled ? t('whatsapp.safety.messagingHalted') : t('whatsapp.safety.operational')}
+                                            {t('whatsapp.safety.killSwitch')}: {killSwitchStatus.isKilled ? t('whatsapp.safety.messagingHalted') : t('whatsapp.safety.state.deactivated')}
                                         </h3>
                                         {killSwitchStatus.isKilled && (
                                             <div className="mt-2 text-sm text-red-700">
@@ -740,7 +756,7 @@ export default function WhatsAppSettings() {
                     )}
 
                     {/* === LOGS TAB === */}
-                    {activeTab === 'logs' && (
+                    {activeTab === 'logs' && tabState.logs === 'ready' && (
                         <div>
                             {/* Filters */}
                             <div className="bg-gray-50 rounded-lg p-4 mb-6 grid grid-cols-1 gap-4 sm:grid-cols-4">

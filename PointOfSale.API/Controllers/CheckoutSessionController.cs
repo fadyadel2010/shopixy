@@ -593,8 +593,8 @@ public class CheckoutSessionController : ControllerBase
                     }
                     : null,
                 Notes = session.Notes,
-                CartTotal = session.CartTotal,
-                Currency = session.Currency,
+                CartTotal = recoveredLiveCart.Cart.GrandTotal,
+                Currency = recoveredLiveCart.Cart.Currency,
                 ShippingMethodId = session.ShippingMethodId,
                 PaymentMethodCode = session.PaymentMethodCode,
                 CouponCode = recoveredLiveCart.Cart?.AppliedCouponCode ?? recoveredLiveCart.Cart?.AppliedCoupon?.Code,
@@ -704,6 +704,12 @@ public class CheckoutSessionController : ControllerBase
                 owner,
                 correlationId,
                 cancellationToken);
+            if (liveCart == null || liveCart.CartId != session.CartId || liveCart.TenantId != tenantId ||
+                !string.Equals(liveCart.OwnerType, owner.OwnerType, StringComparison.OrdinalIgnoreCase) ||
+                !SecurityUtilities.FixedTimeEquals(liveCart.OwnerId, owner.OwnerId))
+            {
+                return new RevalidatedRecoveredCartResult(null, Attempted: true, Failed: true, CartChanged: false);
+            }
             return new RevalidatedRecoveredCartResult(
                 liveCart,
                 Attempted: true,

@@ -64,6 +64,7 @@ public class ModelRouter : IModelRouter
             // Build prompts
             var systemPrompt = _promptManager.GetSystemPrompt();
             var userPrompt = _promptManager.BuildUserPrompt(context);
+            if (!AIProviderTransport.WithinPromptBudget(systemPrompt, userPrompt)) return _safeResponseBuilder.CreateFallbackResponse();
             
             // Get available adapters sorted by priority
             var availableAdapters = _adapters
@@ -92,8 +93,12 @@ public class ModelRouter : IModelRouter
             
             foreach (var adapter in availableAdapters)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (attemptCount >= maxAttempts)
                     break;
+
+                if (attemptCount > 0 && !(await _rateLimiter.CheckAsync(context.TenantId, cancellationToken)).Allowed)
+                    return _safeResponseBuilder.CreateRateLimitedResponse();
                     
                 attemptCount++;
                 
@@ -152,6 +157,7 @@ public class ModelRouter : IModelRouter
             
             return _safeResponseBuilder.CreateFallbackResponse();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (OperationCanceledException)
         {
             _logger.LogWarning("AI router request cancelled | CorrelationId: {CorrelationId}", correlationId);

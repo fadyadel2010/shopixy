@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from '../services/api'
 import { useSettings } from '../contexts/SettingsContext'
@@ -7,10 +7,7 @@ import ValidationDeleteModal from './ValidationDeleteModal'
 import { useRTL } from '../hooks/useRTL'
 import { formatDate } from '../utils/dateFormat'
 import { useDebounce } from '../hooks/useDebounce'
-
-export const canRewriteInvoice = (type, invoice) => (
-    type !== 'sales' || invoice?.status === 'Draft' || invoice?.status === 0
-)
+import { canRewriteInvoice } from './invoiceAuthoring'
 
 export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint }) {
     const { t } = useTranslation()
@@ -38,7 +35,7 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
         requestIdRef.current += 1
     }, [searchTerm])
 
-    const fetchInvoices = async () => {
+    const fetchInvoices = useCallback(async () => {
         const requestId = ++requestIdRef.current
         setLoading(true)
         try {
@@ -69,7 +66,7 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
                 setLoading(false)
             }
         }
-    }
+    }, [type, page, debouncedSearchTerm, showError, t])
 
     useEffect(() => {
         if (!isSearchSettled) {
@@ -77,7 +74,7 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
         }
 
         void fetchInvoices()
-    }, [debouncedSearchTerm, isSearchSettled, page, type])
+    }, [fetchInvoices, isSearchSettled])
 
     useEffect(() => {
         if (isSearchSettled || page === 1) {

@@ -31,7 +31,7 @@ export default function OrderTrackingPage() {
     const [orderNumber, setOrderNumber] = useState('')
     const [hasSearched, setHasSearched] = useState(false)
 
-    const { order, loading, error, trackOrder, clearError } = useGuestTracking()
+    const { order, loading, error, trackOrder } = useGuestTracking()
 
     const handleSubmit = async (e) => {
         e.preventDefault()

@@ -4,13 +4,15 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace PointOfSale.Infrastructure.Shipping.Adapters;
 
 /// <summary>
 /// Official FedEx runtime endpoint and authentication surface.
-/// This foundation executes OAuth only; shipment, tracking, label, pickup, and other carrier operations remain separate phases.
+/// Selected REST operations execute through transport; operational readiness is gated separately.
 /// </summary>
 public sealed class FedExOptions
 {
@@ -42,12 +44,22 @@ public sealed class FedExOptions
     public string OAuthHttpClientName { get; init; } = "FedExOAuth";
     public string TransportHttpClientName { get; init; } = "FedEx";
     public int TransportMaxRetryCount { get; init; } = 1;
+    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
-    public Uri GetBaseUri(bool useSandbox) =>
-        new(useSandbox ? SandboxBaseUri : ProductionBaseUri, UriKind.Absolute);
+    public Uri GetBaseUri(bool useSandbox)
+    {
+        var uri = new Uri(useSandbox ? SandboxBaseUri : ProductionBaseUri, UriKind.Absolute);
+        var official = new Uri(useSandbox ? SandboxBaseUrl : ProductionBaseUrl);
+        if (uri != official) throw new InvalidOperationException("FedEx requires the official environment base URI.");
+        return uri;
+    }
 
-    public Uri GetOAuthTokenUri(bool useSandbox) =>
-        new(GetBaseUri(useSandbox), OAuthTokenEndpointPath.TrimStart('/'));
+    public Uri GetOAuthTokenUri(bool useSandbox)
+    {
+        if (OAuthTokenEndpointPath != OAuthTokenPath)
+            throw new InvalidOperationException("FedEx requires the official OAuth endpoint.");
+        return new(GetBaseUri(useSandbox), OAuthTokenPath.TrimStart('/'));
+    }
 
     public Uri GetTransportUri(bool useSandbox, string endpointPath) =>
         new(GetBaseUri(useSandbox), endpointPath.TrimStart('/'));
@@ -98,6 +110,11 @@ public interface IFedExOAuthClient
         FedExOAuthRequest request,
         bool useSandbox,
         CancellationToken cancellationToken = default);
+
+    Task<FedExAuthorizationHeaderResult> RefreshAuthorizationHeaderAfterUnauthorizedAsync(
+        FedExOAuthRequest request, bool useSandbox, string rejectedAccessToken,
+        CancellationToken cancellationToken = default) =>
+        RefreshAuthorizationHeaderAfterUnauthorizedAsync(request, useSandbox, cancellationToken);
 }
 
 public sealed class FedExOAuthClient : IFedExOAuthClient
@@ -160,17 +177,24 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
             return ToAuthorizationHeader(validation);
         }
 
-        _cache.TryRemove(CreateCacheKey(request, useSandbox), out _);
-        var token = await GetAccessTokenCoreAsync(request, useSandbox, forceRefresh: true, cancellationToken);
+        _cache.TryGetValue(CreateCacheKey(request, useSandbox), out var rejected);
+        var token = await GetAccessTokenCoreAsync(request, useSandbox, forceRefresh: true, cancellationToken, rejected?.AccessToken);
         return ToAuthorizationHeader(token);
     }
+
+    public async Task<FedExAuthorizationHeaderResult> RefreshAuthorizationHeaderAfterUnauthorizedAsync(
+        FedExOAuthRequest request, bool useSandbox, string rejectedAccessToken,
+        CancellationToken cancellationToken = default) =>
+        ToAuthorizationHeader(await GetAccessTokenCoreAsync(request, useSandbox, true, cancellationToken, rejectedAccessToken));
 
     private async Task<FedExOAuthTokenResult> GetAccessTokenCoreAsync(
         FedExOAuthRequest request,
         bool useSandbox,
         bool forceRefresh,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? rejectedAccessToken = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var validation = ValidateRequest(request);
         if (!validation.Success)
         {
@@ -187,10 +211,13 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (!forceRefresh && TryGetValidCachedToken(key, out cachedToken))
+            if (TryGetValidCachedToken(key, out cachedToken) &&
+                (!forceRefresh || cachedToken.AccessToken != rejectedAccessToken))
             {
                 return cachedToken.ToResult(fromCache: true);
             }
+
+            _cache.TryRemove(key, out _);
 
             var acquired = await AcquireTokenAsync(request, useSandbox, cancellationToken);
             if (!acquired.Success)
@@ -233,7 +260,7 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
         CancellationToken cancellationToken)
     {
         var correlationId = Guid.NewGuid().ToString("N");
-        var attempts = Math.Max(0, Options.OAuthMaxRetryCount) + 1;
+        var attempts = Math.Clamp(Options.OAuthMaxRetryCount, 0, 3) + 1;
         var retryCount = 0;
 
         for (var attempt = 1; attempt <= attempts; attempt++)
@@ -243,6 +270,8 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
 
             try
             {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(Options.RequestTimeout);
                 using var httpRequest = new HttpRequestMessage(HttpMethod.Post, Options.GetOAuthTokenUri(useSandbox))
                 {
                     Content = new StringContent(FedExContractSerializer.SerializeOAuthForm(request))
@@ -250,19 +279,20 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
                 httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
 
                 var client = _httpClientFactory.CreateClient(Options.OAuthHttpClientName);
-                using var response = await client.SendAsync(httpRequest, cancellationToken);
+                using var response = await client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
                 statusCode = response.StatusCode;
                 LogOAuthAttempt(correlationId, started, statusCode, retryCount);
 
-                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                var body = await FedExHttpSafety.ReadBodyAsync(response.Content, FedExHttpSafety.OAuthResponseLimit, timeout.Token);
                 if (response.IsSuccessStatusCode)
                 {
                     return ParseTokenResponse(body);
                 }
 
-                if (IsTransient(response.StatusCode) && attempt < attempts)
+                if (IsTransient(response.StatusCode) && attempt < attempts && FedExHttpSafety.RetryDelay(response, attempt) is { } delay)
                 {
                     retryCount++;
+                    await Task.Delay(delay, cancellationToken);
                     continue;
                 }
 
@@ -279,6 +309,7 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
             {
                 LogOAuthAttempt(correlationId, started, statusCode, retryCount);
                 retryCount++;
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
             }
             catch (HttpRequestException)
             {
@@ -292,12 +323,13 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
                     ErrorCode: TokenUnavailableCode,
                     ErrorMessage: "FedEx OAuth token request failed after transient retries.");
             }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < attempts)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < attempts)
             {
                 LogOAuthAttempt(correlationId, started, statusCode, retryCount);
                 retryCount++;
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
             }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 LogOAuthAttempt(correlationId, started, statusCode, retryCount);
                 return new FedExOAuthTokenResult(
@@ -313,6 +345,14 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
             {
                 LogOAuthAttempt(correlationId, started, statusCode, retryCount);
                 return InvalidOAuthResponse("FedEx OAuth response JSON is malformed.");
+            }
+            catch (FedExResponseLimitException)
+            {
+                return InvalidOAuthResponse("FedEx OAuth response exceeds the local size limit.");
+            }
+            catch (IOException)
+            {
+                return InvalidOAuthResponse("FedEx OAuth response stream failed.");
             }
         }
 
@@ -339,6 +379,8 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
             {
                 return InvalidOAuthResponse("FedEx OAuth response is missing required token fields or contains invalid values.");
             }
+            if (response.AccessToken.Any(char.IsWhiteSpace) || response.AccessToken.Any(char.IsControl))
+                return InvalidOAuthResponse("FedEx OAuth response contains an invalid bearer token.");
 
             var expiresAt = _timeProvider.GetUtcNow().AddSeconds(response.ExpiresIn.Value);
             return new FedExOAuthTokenResult(
@@ -420,7 +462,12 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
         new(
             Normalize(request.AccountNumber),
             useSandbox ? "sandbox" : "production",
-            Normalize(request.ClientId));
+            Normalize(request.ClientId),
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[]
+            {
+                Normalize(request.ClientSecret), Normalize(request.GrantType),
+                Normalize(request.ChildKey), Normalize(request.ChildSecret)
+            })))));
 
     private static string Normalize(string? value) => value?.Trim() ?? string.Empty;
 
@@ -447,7 +494,7 @@ public sealed class FedExOAuthClient : IFedExOAuthClient
             retryCount);
     }
 
-    private sealed record TokenCacheKey(string AccountNumber, string Environment, string ClientId);
+    private sealed record TokenCacheKey(string AccountNumber, string Environment, string ClientId, string CredentialFingerprint);
 
     private sealed record CachedToken(
         string AccessToken,

@@ -9,8 +9,14 @@ public sealed class ShipmentActionAuthorityCertificationTests
         var adminController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AdminShipmentsController.cs");
         var storefrontController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/StorefrontShipmentController.cs");
 
-        Assert.Contains("[Authorize(Roles = \"Owner,Admin,Manager\")]", shipmentController, StringComparison.Ordinal);
-        Assert.Contains("[Authorize(Roles = \"Owner,Admin,Manager\")]", adminController, StringComparison.Ordinal);
+        var permissions = CertificationSource.ReadRepoFile("PointOfSale.API/Security/PosEndpointPermissionCatalog.cs");
+        var program = CertificationSource.ReadRepoFile("PointOfSale.API/Program.cs");
+        Assert.Contains("[Authorize]", shipmentController, StringComparison.Ordinal);
+        Assert.Contains("[\"Shipment\"] = R(PosPermissions.ShippingView, PosPermissions.ShippingFulfill)", permissions, StringComparison.Ordinal);
+        Assert.Contains("[\"AdminShipments\"] = R(PosPermissions.ShippingView, PosPermissions.ShippingFulfill)", permissions, StringComparison.Ordinal);
+        Assert.Contains("options.Conventions.Add(new PosPermissionApplicationModelConvention())", program, StringComparison.Ordinal);
+        Assert.Contains("ValidateTenantHeader(traceId)", shipmentController, StringComparison.Ordinal);
+        Assert.Contains("ValidateTenantHeader(traceId)", adminController, StringComparison.Ordinal);
         Assert.Contains("[HttpGet(\"{orderId:guid}/shipment\")]", storefrontController, StringComparison.Ordinal);
         Assert.DoesNotContain("HttpPost", storefrontController, StringComparison.Ordinal);
         Assert.DoesNotContain("HttpPut", storefrontController, StringComparison.Ordinal);
@@ -22,7 +28,9 @@ public sealed class ShipmentActionAuthorityCertificationTests
         var shipmentService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Shipping/ShipmentService.cs");
         var recovery = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Shipping/ShipmentAuthorityRecoveryHostedService.cs");
 
-        Assert.Contains("sm.TenantId == tenantId", shipmentService, StringComparison.Ordinal);
+        Assert.Contains("LoadOrderForShipmentMutationAsync(tenantId, orderId", shipmentService, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipmentService, StringComparison.Ordinal);
+        Assert.Contains("GetServiceLevelReadinessAsync(\n            tenantId,", shipmentService.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Equal(3, recovery.Split(".IgnoreQueryFilters()", StringSplitOptions.None).Length - 1);
         Assert.Contains("tenantContext.SetTenantId(candidate.TenantId);", recovery, StringComparison.Ordinal);
         Assert.Contains("ReconcileShipmentAuthorityAsync(", recovery, StringComparison.Ordinal);

@@ -11,11 +11,12 @@
  * - No retry logic
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { XCircle, RefreshCw, AlertTriangle } from 'lucide-react'
 import { useShipmentActions } from '../hooks/useShipmentsApi'
 import { hasShipmentActionAuthority } from '../shipmentActionAuthority'
+import CancellationOutcome from './CancellationOutcome'
 
 export default function ShipmentActions({ shipment, actionAuthority, actionAuthorityLoading, actionAuthorityError, refetchActionAuthority, onActionComplete }) {
     const { t } = useTranslation()
@@ -23,41 +24,81 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
 
     const [showCancelModal, setShowCancelModal] = useState(false)
     const [cancelReason, setCancelReason] = useState('')
+    const [cancellation, setCancellation] = useState(null)
+    const [validating, setValidating] = useState(false)
+    const activeTargetRef = useRef(null)
+    const pendingConfirmationRef = useRef(null)
+    useEffect(() => {
+        const target = { shipmentId: shipment?.id || shipment?.shipmentId, orderId: shipment?.orderId }
+        activeTargetRef.current = target
+        pendingConfirmationRef.current = null
+        setValidating(false)
+        setCancellation(null)
+        setShowCancelModal(false)
+        setCancelReason('')
+        clearError()
+        return () => {
+            activeTargetRef.current = null
+            pendingConfirmationRef.current = null
+        }
+    }, [shipment?.shipmentId, shipment?.id, shipment?.orderId, clearError])
 
     if (!shipment) return null
 
-    const canCancel = hasShipmentActionAuthority(actionAuthority, shipment, 'cancel')
+    const canCancel = !shipment.cancellation && !cancellation && hasShipmentActionAuthority(actionAuthority, shipment, 'cancel')
 
     const handleCancel = async () => {
-        if (!cancelReason.trim()) return
+        if (!canCancel || actionAuthorityLoading || actionAuthorityError || loading || pendingConfirmationRef.current || !cancelReason.trim()) return
 
         const shipmentId = shipment.id || shipment.shipmentId
         if (!shipmentId) return
-
-        let currentAuthority
+        const target = activeTargetRef.current
+        if (!target || target.shipmentId !== shipmentId || target.orderId !== shipment.orderId) return
+        const confirmation = { target }
+        // Synchronous single-flight guard includes the authority-refresh interval,
+        // before the mutation hook's loading flag becomes true.
+        pendingConfirmationRef.current = confirmation
+        setValidating(true)
         try {
             // Do not execute from the authority snapshot that rendered this button.
-            currentAuthority = await refetchActionAuthority?.()
-        } catch {
-            return
-        }
+            let currentAuthority
+            try {
+                currentAuthority = await refetchActionAuthority?.()
+            } catch {
+                // Authority errors remain owned/displayed by the refresh hook.
+                // Do not retry or treat a failed refresh as permission to mutate.
+                return
+            }
+            // Switching targets or unmounting withdraws this UI confirmation.
+            // Never issue a late cancellation of the previous selection.
+            if (activeTargetRef.current !== target || pendingConfirmationRef.current !== confirmation ||
+                !hasShipmentActionAuthority(currentAuthority, shipment, 'cancel')) return
 
-        if (!hasShipmentActionAuthority(currentAuthority, shipment, 'cancel')) return
+            const result = await cancelShipment(shipmentId, cancelReason)
+            if (activeTargetRef.current !== target || pendingConfirmationRef.current !== confirmation) return
+            if (result.data) {
+                setCancellation(result.data)
+                if (onActionComplete) onActionComplete()
+            }
 
-        const result = await cancelShipment(shipmentId, cancelReason)
-
-        if (result.success) {
-            setShowCancelModal(false)
-            setCancelReason('')
-            if (onActionComplete) onActionComplete()
+            if (result.success) {
+                setShowCancelModal(false)
+                setCancelReason('')
+            }
+        } finally {
+            if (pendingConfirmationRef.current === confirmation) {
+                pendingConfirmationRef.current = null
+                setValidating(false)
+            }
         }
     }
 
     return (
         <>
             <div className="bg-white border border-gray-200 rounded-xl p-6">
+                {!showCancelModal && <CancellationOutcome result={shipment.cancellation || cancellation} />}
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                    {t('shipping.actions', 'Actions')}
+                    {t('shipping.closure.actions')}
                 </h3>
 
                 {/* Terminal State Warning */}
@@ -66,10 +107,10 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                         <AlertTriangle size={18} className="text-gray-400 mt-0.5" />
                         <div>
                             <p className="text-sm font-medium text-gray-700">
-                                No backend action authority
+                                {t('shipping.closure.noActionAuthority')}
                             </p>
                             <p className="text-sm text-gray-500">
-                                The current backend fulfillment authority did not grant a shipment cancellation action.
+                                {t('shipping.closure.actionAuthorityBoundary')}
                             </p>
                         </div>
                     </div>
@@ -78,14 +119,14 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                 {actionAuthorityLoading && (
                     <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-lg mb-4 text-sm text-blue-800">
                         <RefreshCw size={18} className="animate-spin mt-0.5" />
-                        Loading current backend action authority...
+                        {t('shipping.closure.loadingActionAuthority')}
                     </div>
                 )}
 
                 {actionAuthorityError && (
                     <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-lg mb-4 text-sm text-amber-900">
                         <AlertTriangle size={18} className="mt-0.5" />
-                        Shipment actions are withheld until backend action authority is available.
+                        {t('shipping.closure.actionsWithheld')}
                     </div>
                 )}
 
@@ -95,7 +136,7 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                         <div className="flex items-start gap-2">
                             <XCircle size={18} className="text-red-500 mt-0.5" />
                             <div>
-                                <p className="text-sm font-medium text-red-700">Action Failed</p>
+                                <p className="text-sm font-medium text-red-700">{t('shipping.closure.actionFailed')}</p>
                                 <p className="text-sm text-red-600">{error}</p>
                             </div>
                         </div>
@@ -103,7 +144,7 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                             onClick={clearError}
                             className="mt-2 text-sm text-red-600 hover:underline"
                         >
-                            Dismiss
+                            {t('common.close')}
                         </button>
                     </div>
                 )}
@@ -113,7 +154,7 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                     {/* Cancel Button */}
                     <button
                         onClick={() => setShowCancelModal(true)}
-                        disabled={!canCancel || actionAuthorityLoading || loading}
+                        disabled={!canCancel || actionAuthorityLoading || actionAuthorityError || loading || validating}
                         className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors
                             ${canCancel
                                 ? 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
@@ -121,19 +162,19 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                             }
                         `}
                     >
-                        {loading ? (
+                        {loading || validating ? (
                             <RefreshCw size={18} className="animate-spin" />
                         ) : (
                             <XCircle size={18} />
                         )}
-                        Cancel Shipment
+                        {t('shipping.cancelShipment')}
                     </button>
                 </div>
 
                 {/* Info Text */}
                     {canCancel && (
                     <p className="text-xs text-gray-500 mt-4">
-                        Cancelling a shipment will notify the carrier and update the order status.
+                        {t('shipping.cancellationScope')}
                     </p>
                 )}
             </div>
@@ -149,27 +190,29 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                                 </div>
                                 <div>
                                     <h3 className="text-lg font-semibold text-gray-900">
-                                        Cancel Shipment
+                                        {t('shipping.cancelShipment')}
                                     </h3>
                                     <p className="text-sm text-gray-500">
-                                        This action cannot be undone
+                                        {t('shipping.cancellationScope')}
                                     </p>
                                 </div>
                             </div>
 
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Cancellation Reason *
+                                    {t('shipping.cancellationReason')} *
                                 </label>
                                 <textarea
+                                    disabled={loading || validating}
                                     value={cancelReason}
                                     onChange={(e) => setCancelReason(e.target.value)}
-                                    placeholder="Enter reason for cancellation..."
+                                    placeholder={t('shipping.cancellationReason')}
                                     rows={3}
                                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                                 />
                             </div>
 
+                            <CancellationOutcome result={shipment.cancellation || cancellation} />
                             {error && (
                                 <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg mb-4">
                                     {error}
@@ -178,6 +221,7 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
 
                             <div className="flex gap-3">
                                 <button
+                                    disabled={loading || validating}
                                     onClick={() => {
                                         setShowCancelModal(false)
                                         setCancelReason('')
@@ -185,15 +229,15 @@ export default function ShipmentActions({ shipment, actionAuthority, actionAutho
                                     }}
                                     className="flex-1 px-4 py-3 border border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50"
                                 >
-                                    Keep Shipment
+                                    {t('shipping.keepShipment')}
                                 </button>
                                 <button
                                     onClick={handleCancel}
-                                    disabled={!cancelReason.trim() || loading}
+                                    disabled={!canCancel || actionAuthorityLoading || actionAuthorityError || !cancelReason.trim() || loading || validating}
                                     className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                 >
-                                    {loading && <RefreshCw size={16} className="animate-spin" />}
-                                    Cancel Shipment
+                                    {(loading || validating) && <RefreshCw size={16} className="animate-spin" />}
+                                    {t('shipping.cancelShipment')}
                                 </button>
                             </div>
                         </div>

@@ -761,6 +761,7 @@ public class StorefrontOrdersReadController : ControllerBase
             Total = order.Total,
             Currency = order.Currency,
             PaymentMethodName = order.PaymentMethodName,
+            PaymentMethodCode = order.PaymentMethodCode,
             ShippingMethodName = order.ShippingMethodName,
             CouponCode = order.CouponCode,
             TrackingNumber = order.TrackingNumber,
@@ -804,6 +805,7 @@ public class StorefrontOrdersReadController : ControllerBase
             ItemCount = order.Items.Count,
             ShippingMethodName = order.ShippingMethodName,
             PaymentMethodName = order.PaymentMethodName,
+            PaymentMethodCode = order.PaymentMethodCode,
             CreatedAt = order.CreatedAt,
             // Preview items (first 3)
             Items = order.Items.Take(3).Select(i => new StorefrontOrderItemDto
@@ -837,6 +839,7 @@ public class StorefrontOrdersReadController : ControllerBase
             Total = order.Total,
             Currency = order.Currency,
             PaymentMethodName = order.PaymentMethodName,
+            PaymentMethodCode = order.PaymentMethodCode,
             ShippingMethodName = order.ShippingMethodName,
             TrackingNumber = order.TrackingNumber,
             CarrierName = order.CarrierName,
@@ -983,6 +986,7 @@ public class StorefrontOrderDto
     public decimal Total { get; set; }
     public string Currency { get; set; } = string.Empty;
     public string? PaymentMethodName { get; set; }
+    public string? PaymentMethodCode { get; set; }
     public string? ShippingMethodName { get; set; }
     public string? CouponCode { get; set; }
     public string? TrackingNumber { get; set; }
@@ -1006,6 +1010,7 @@ public class StorefrontOrderSummaryDto
     public int ItemCount { get; set; }
     public string? ShippingMethodName { get; set; }
     public string? PaymentMethodName { get; set; }
+    public string? PaymentMethodCode { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<StorefrontOrderItemDto> Items { get; set; } = new();
 }
@@ -1064,6 +1069,7 @@ public class StorefrontOrderTrackingDto
     
     // Payment and shipping
     public string? PaymentMethodName { get; set; }
+    public string? PaymentMethodCode { get; set; }
     public string? ShippingMethodName { get; set; }
     
     // Tracking

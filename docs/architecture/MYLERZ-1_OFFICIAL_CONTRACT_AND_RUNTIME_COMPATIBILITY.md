@@ -1,5 +1,11 @@
 # MYLERZ-1 Official Contract And Runtime Compatibility
 
+> Historical review. The 2026-10-11 comprehensive review found public vendor
+> integration Swagger schemas and supersedes this document's discovery result.
+> The Egypt merchant operational gate remains necessary; see
+> [MYLERZ-2 comprehensive contract remediation](MYLERZ-2_COMPREHENSIVE_CONTRACT_REMEDIATION.md)
+> for current evidence, production corrections and verification limitations.
+
 Date: 2026-07-07
 Scope: Mylerz official public API contract and current runtime compatibility only
 Status: FAIL CLOSED

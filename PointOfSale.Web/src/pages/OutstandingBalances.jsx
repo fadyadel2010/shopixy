@@ -69,7 +69,7 @@ const OutstandingBalances = () => {
                 setLoading(false)
             }
         }
-    }, [activeTab, page, committedSearch, refreshCounter, showError, t])
+    }, [activeTab, page, committedSearch, showError, t])
 
     useEffect(() => {
         loadOutstandingBalances()
@@ -80,7 +80,7 @@ const OutstandingBalances = () => {
                 abortControllerRef.current.abort()
             }
         }
-    }, [loadOutstandingBalances])
+    }, [loadOutstandingBalances, refreshCounter])
 
     useEffect(() => {
         const handle = window.setTimeout(() => {

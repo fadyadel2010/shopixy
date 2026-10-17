@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import api from '../services/api'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useRTL } from '../hooks/useRTL'
-import { useHasPermission } from '../components/PermissionGuard'
+import { useHasPermission } from '../hooks/usePosSessionPermission'
 
 export default function Categories() {
     const { t } = useTranslation()

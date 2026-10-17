@@ -80,7 +80,7 @@ describe('storeConfigService', () => {
 
         const result = await storeConfigService.createThemePreviewLink('editorial')
 
-        expect(apiPost).toHaveBeenCalledWith('/admin/store-config/theme/preview-link/editorial')
+        expect(apiPost).toHaveBeenCalledWith('/admin/store-config/theme/preview-link/editorial', {})
         expect(result).toEqual({
             previewToken: 'backend-token',
             previewUrl: 'https://shop.example.test/?themePreviewToken=backend-token',
@@ -156,7 +156,8 @@ describe('storeConfigService', () => {
 
         const result = await storeConfigService.getVersionHistory()
 
-        expect(result.currentVersion).toBe(3)
+        expect(result).toMatchObject({ currentVersion: 3, versions: expect.any(Array) })
+        if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('Version response is not an object')
         expect(result.versions).toHaveLength(2)
         expect(apiGet).toHaveBeenCalledWith('/admin/store-config/versions', {
             headers: {

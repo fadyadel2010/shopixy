@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus } from 'lucide-react'
 import AccountCard from '../components/AccountCard'
@@ -11,7 +11,7 @@ export default function WhatsAppAccountsPage() {
     const { showError } = useToast()
     const [accounts, setAccounts] = useState([])
 
-    const fetchAccounts = async () => {
+    const fetchAccounts = useCallback(async () => {
         try {
             const data = await getAccounts()
             setAccounts(data || [])
@@ -19,11 +19,11 @@ export default function WhatsAppAccountsPage() {
             // Error handled by hook state, but we show toast too
             showError(err.message)
         }
-    }
+    }, [getAccounts, showError])
 
     useEffect(() => {
         fetchAccounts()
-    }, [])
+    }, [fetchAccounts])
 
     if (loading && accounts.length === 0) {
         return <div className="p-8 text-center text-gray-500">{t('whatsapp.accounts.loading')}</div>

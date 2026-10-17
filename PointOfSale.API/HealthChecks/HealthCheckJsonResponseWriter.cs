@@ -23,6 +23,9 @@ public static class HealthCheckJsonResponseWriter
                     status = entry.Value.Status.ToString(),
                     description = entry.Value.Description,
                     duration = entry.Value.Duration.TotalMilliseconds,
+                    // A category is sufficient for health correlation. Do not emit
+                    // exception messages, stacks, endpoints or sensitive payloads.
+                    exceptionCategory = entry.Value.Exception?.GetType().Name,
                     data = entry.Value.Data.ToDictionary(item => item.Key, item => item.Value)
                 })
         };

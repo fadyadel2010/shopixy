@@ -52,6 +52,19 @@ export default function StorefrontSettings({ onDirtyChange }) {
     const requestIdRef = useRef(0)
     const dirtyRef = useRef(false)
     const saveInFlightRef = useRef(false)
+    const candidateRef = useRef(candidateConfig)
+    candidateRef.current = candidateConfig
+    const tenantRef = useRef(tenantId)
+    tenantRef.current = tenantId
+
+    useEffect(() => {
+        dirtyRef.current = false
+        setBaselineConfig(null)
+        setCandidateConfig(null)
+        setFeedback(null)
+        setConflict(null)
+        setIsSaveConfirmOpen(false)
+    }, [tenantId, canManageStorefront])
 
     const isDirty = Boolean(baselineConfig && candidateConfig && (
         baselineConfig.storefrontStatus !== candidateConfig.storefrontStatus ||
@@ -70,7 +83,7 @@ export default function StorefrontSettings({ onDirtyChange }) {
     }, [])
 
     // Fetch store config on mount
-    const fetchStoreConfig = useCallback(async () => {
+    const fetchStoreConfig = useCallback(async ({ replaceCandidate = false, preserveOnFailure = false } = {}) => {
         const requestId = ++requestIdRef.current
 
         if (!tenantId || !canManageStorefront) {
@@ -78,37 +91,38 @@ export default function StorefrontSettings({ onDirtyChange }) {
             setCandidateConfig(null)
             setLoadError(null)
             setLoading(false)
-            return
+            return false
         }
         setLoading(true)
         try {
             const response = await storeConfigService.getStoreConfig()
             if (requestId !== requestIdRef.current) {
-                return
+                return false
             }
 
             const nextStoreConfig = deriveCurrentStoreIdentityPresentation(response, user)
+            if (!nextStoreConfig) throw new Error('Store configuration response was not accepted.')
             setBaselineConfig(nextStoreConfig)
-            if (!dirtyRef.current) {
+            if (replaceCandidate || !dirtyRef.current) {
                 setCandidateConfig(nextStoreConfig)
+                dirtyRef.current = false
             }
-            setLoadError(nextStoreConfig ? null : t('storefront.failedToLoad') || 'Failed to load Storefront Status')
-            if (!nextStoreConfig) {
-                setCandidateConfig(null)
-                showError(t('storefront.failedToLoad') || 'Failed to load Storefront Status')
-            }
+            setLoadError(null)
+            return true
         } catch (error) {
             if (requestId !== requestIdRef.current) {
-                return
+                return false
             }
 
-            console.error('Error fetching store config:', error)
-            setBaselineConfig(null)
-            setCandidateConfig(null)
-            setLoadError(t('storefront.failedToLoad') || 'Failed to load Storefront Status')
+            if (!preserveOnFailure) {
+                setBaselineConfig(null)
+                setCandidateConfig(null)
+                setLoadError(t('storefront.failedToLoad', 'Failed to load Storefront Status'))
+            }
             if (error.response?.status !== 404) {
                 showError(t('storefront.failedToLoad') || 'Failed to load Storefront Status')
             }
+            return false
         } finally {
             if (requestId === requestIdRef.current) {
                 setLoading(false)
@@ -122,10 +136,17 @@ export default function StorefrontSettings({ onDirtyChange }) {
 
     // Save store config
     const handleSave = async (rowVersionOverride = null) => {
-        if (!candidateConfig || saveInFlightRef.current) {
+        if (!candidateConfig || !canManageStorefront || !tenantId || saveInFlightRef.current) {
             return
         }
 
+        if ((candidateConfig.maintenanceMessage || '').length > 500) {
+            showError(t('storefront.messageTooLong', 'Maintenance message cannot exceed 500 characters.'))
+            return
+        }
+
+        const submitted = candidateConfig
+        const savedTenant = tenantId
         saveInFlightRef.current = true
         setSaving(true)
         try {
@@ -135,19 +156,31 @@ export default function StorefrontSettings({ onDirtyChange }) {
                 rowVersion: rowVersionOverride || candidateConfig.rowVersion,
             })
             const acceptedConfig = deriveCurrentStoreIdentityPresentation(acceptedResponse, user)
+            if (tenantRef.current !== savedTenant) return
             if (!acceptedConfig) {
                 throw new Error('Store configuration mutation response was not accepted as current backend authority.')
             }
-            dirtyRef.current = false
+            const latestCandidate = candidateRef.current
+            const hasNewerEdits = latestCandidate && (
+                latestCandidate.storefrontStatus !== submitted.storefrontStatus ||
+                (latestCandidate.maintenanceMessage || '') !== (submitted.maintenanceMessage || '')
+            )
+            dirtyRef.current = Boolean(hasNewerEdits)
             setBaselineConfig(acceptedConfig)
-            setCandidateConfig(acceptedConfig)
+            setCandidateConfig(hasNewerEdits ? {
+                ...acceptedConfig,
+                storefrontStatus: latestCandidate.storefrontStatus,
+                maintenanceMessage: latestCandidate.maintenanceMessage,
+            } : acceptedConfig)
             setLoadError(null)
             setConflict(null)
             setIsSaveConfirmOpen(false)
-            setFeedback({ kind: 'success', title: 'Storefront Status saved live', message: 'The accepted status and maintenance message are now live.' })
+            setFeedback({ kind: 'success', title: t('storefront.statusUi.savedTitle', 'Storefront Status saved live'), message: hasNewerEdits
+                ? t('storefront.newerEditsRetained', 'Submitted changes were saved. Newer edits remain unsaved.')
+                : t('storefront.statusUi.savedMessage', 'The accepted status and maintenance message are now live.') })
             showSuccess(t('storefront.saved') || 'Storefront status saved')
         } catch (error) {
-            console.error('Error saving store config:', error)
+            if (tenantRef.current !== savedTenant) return
 
             if (error?.response?.status === 409) {
                 setIsSaveConfirmOpen(false)
@@ -189,10 +222,11 @@ export default function StorefrontSettings({ onDirtyChange }) {
     })
 
     const handleLoadLatest = async () => {
-        setConflict(null)
-        dirtyRef.current = false
-        await fetchStoreConfig()
-        setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted live Storefront Status replaced your local candidate.' })
+        const loaded = await fetchStoreConfig({ replaceCandidate: true, preserveOnFailure: true })
+        if (loaded) {
+            setConflict(null)
+            setFeedback({ kind: 'info', title: t('storefront.statusUi.latestTitle', 'Latest version loaded'), message: t('storefront.statusUi.latestMessage', 'The accepted live Storefront Status replaced your local candidate.') })
+        }
     }
 
     const handleRetryConflict = async () => {
@@ -203,7 +237,7 @@ export default function StorefrontSettings({ onDirtyChange }) {
             setConflict(null)
             await handleSave(latest.rowVersion)
         } catch (error) {
-            setFeedback({ kind: 'error', title: 'Status retry failed', message: error?.response?.data?.message || error.message })
+            setFeedback({ kind: 'error', title: t('storefront.statusUi.retryFailed', 'Status retry failed'), message: error?.response?.data?.message || error.message })
         }
     }
 
@@ -222,7 +256,7 @@ export default function StorefrontSettings({ onDirtyChange }) {
     }
 
     if (loading) {
-        return <AuthoringLoadingState label="Loading Storefront Status…" />
+        return <AuthoringLoadingState label={t('storefront.statusUi.loading', 'Loading Storefront Status…')} />
     }
 
     if (!canManageStorefront) {
@@ -233,6 +267,7 @@ export default function StorefrontSettings({ onDirtyChange }) {
         return (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-sm text-gray-600" dir={isRTL ? 'rtl' : 'ltr'}>
                 {loadError || (t('storefront.failedToLoad') || 'Failed to load Storefront Status')}
+                <button type="button" onClick={() => fetchStoreConfig()} className="ms-3 text-blue-700 underline">{t('common.retry', 'Retry')}</button>
             </div>
         )
     }
@@ -243,11 +278,11 @@ export default function StorefrontSettings({ onDirtyChange }) {
         <div className="space-y-8" dir={isRTL ? 'rtl' : 'ltr'}>
             <AuthoringActionBar
                 title={t('storefront.ia.status', 'Storefront Status')}
-                subtitle="Status changes are committed live. This surface does not publish content, Theme, or Builder drafts."
-                backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront') }}
-                status={<AuthoringStatusBadge state={saving ? 'saving' : isDirty ? 'dirty' : baselineConfig.storefrontStatus === 'live' ? 'live' : baselineConfig.storefrontStatus === 'disabled' ? 'disabled' : 'published'}>{isDirty ? 'Unsaved changes' : baselineStatusConfig.label}</AuthoringStatusBadge>}
-                discardAction={{ label: 'Discard', onClick: resetCandidateToBaseline, disabled: !isDirty || saving }}
-                publishAction={{ label: 'Save live Status', busyLabel: 'Saving…', onClick: () => setIsSaveConfirmOpen(true), disabled: !isDirty, busy: saving }}
+                subtitle={t('storefront.statusUi.subtitle', 'Status changes are committed live. This surface does not publish content, Theme, or Builder drafts.')}
+                backAction={{ label: t('common.back', 'Back'), onClick: () => requestNavigation('/storefront') }}
+                status={<AuthoringStatusBadge state={saving ? 'saving' : isDirty ? 'dirty' : baselineConfig.storefrontStatus === 'live' ? 'live' : baselineConfig.storefrontStatus === 'disabled' ? 'disabled' : 'published'}>{isDirty ? t('storefront.homepageEditor.unsavedChanges', 'Unsaved changes') : baselineStatusConfig.label}</AuthoringStatusBadge>}
+                discardAction={{ label: t('storefront.homepageEditor.discard', 'Discard'), onClick: resetCandidateToBaseline, disabled: !isDirty || saving }}
+                publishAction={{ label: t('storefront.statusUi.save', 'Save live Status'), busyLabel: t('storefront.homepageEditor.saving', 'Saving…'), onClick: () => setIsSaveConfirmOpen(true), disabled: !isDirty, busy: saving }}
             />
             {feedback ? <AuthoringFeedback {...feedback} /> : null}
 
@@ -312,7 +347,7 @@ export default function StorefrontSettings({ onDirtyChange }) {
                             <div className="font-medium text-gray-900">{t('storefront.lastUpdated') || 'Last Updated'}</div>
                             <div className="text-xs text-gray-600">
                                 {baselineConfig.updatedAtUtc
-                                    ? new Date(baselineConfig.updatedAtUtc).toLocaleString()
+                                    ? new Date(baselineConfig.updatedAtUtc).toLocaleString(i18n.language)
                                     : (t('storefront.never') || 'Never')}
                             </div>
                         </div>
@@ -414,6 +449,8 @@ export default function StorefrontSettings({ onDirtyChange }) {
                         {t('storefront.maintenanceMessageDescription') || 'This message will be shown to customers while your store is in maintenance mode.'}
                     </p>
                     <textarea
+                        aria-label={t('storefront.maintenanceMessage', 'Maintenance Message')}
+                        maxLength={500}
                         value={candidateConfig.maintenanceMessage || ''}
                         onChange={(e) => setCandidateConfig(prev => ({ ...prev, maintenanceMessage: e.target.value }))}
                         placeholder={t('storefront.maintenanceMessagePlaceholder') || "We're making some improvements. Please check back soon!"}
@@ -445,9 +482,9 @@ export default function StorefrontSettings({ onDirtyChange }) {
             </div>
             <AuthoringConfirmDialog
                 open={isSaveConfirmOpen}
-                title="Save Storefront Status live?"
-                description="This immediately changes storefront availability and the maintenance message. It does not publish any authoring draft."
-                confirmLabel="Save live Status"
+                title={t('storefront.statusUi.confirmTitle', 'Save Storefront Status live?')}
+                description={t('storefront.statusUi.confirmDescription', 'This immediately changes storefront availability and the maintenance message. It does not publish any authoring draft.')}
+                confirmLabel={t('storefront.statusUi.save', 'Save live Status')}
                 confirmTone="publish"
                 busy={saving}
                 onClose={() => setIsSaveConfirmOpen(false)}

@@ -1,0 +1,25 @@
+import type { ComponentType, ReactElement, ReactNode, RefObject } from 'react';
+export interface AuthoringAction { label?: string; onClick(): unknown; disabled?: boolean; busy?: boolean; busyLabel?: string; ariaLabel?: string; tone?: string }
+export const AUTHORING_ACTION_ORDER: readonly string[];
+export function getAuthoringErrorFeedback(error: unknown): { kind: string; code: string; title: string; message: string };
+export function AuthoringActionBar(props: { title: string; subtitle?: string; status?: ReactNode; backAction?: AuthoringAction; previewAction?: AuthoringAction; historyAction?: AuthoringAction; discardAction?: AuthoringAction; saveAction?: AuthoringAction; publishAction?: AuthoringAction; dangerActions?: AuthoringAction[]; leading?: ReactNode }): ReactElement;
+export function AuthoringStatusBadge(props: { state?: string; children?: ReactNode }): ReactElement;
+export function AuthoringPlatformProvider(props: { children: ReactNode }): ReactElement;
+export function UnsavedChangesDialog(props: { open: boolean; busy?: boolean; onClose(): void; onDiscard(): void }): ReactElement | null;
+export function AuthoringConflictDialog(props: { open: boolean; message?: string; hasLatest?: boolean; canRetry?: boolean; busy?: boolean; onClose(): void; onLoadLatest?(): void; onRetry?(): void }): ReactElement | null;
+export function useAuthoringGuard(options: { isDirty: boolean; isBusy?: boolean; onSave?(): unknown; onPreview?(): unknown }): { requestNavigation(path: string): boolean; unsavedDialogProps: Parameters<typeof UnsavedChangesDialog>[0] };
+export function AuthoringButton(props: { action?: AuthoringAction | null; defaultLabel?: string; defaultIcon?: ComponentType<{ className?: string }>; tone?: string }): ReactElement | null;
+export function AuthoringEmptyState(props: { title: string; description?: string; action?: AuthoringAction }): ReactElement;
+export function AuthoringLoadingState(props: { label?: string }): ReactElement;
+export function AuthoringPermissionState(props: { message?: string }): ReactElement;
+export function AuthoringDialog(props: { open: boolean; title: string; description?: string; children?: ReactNode; onClose?(): void; initialFocusRef?: RefObject<HTMLElement | null>; panelClassName?: string; overlayClassName?: string; titleClassName?: string; descriptionClassName?: string }): ReactElement | null;
+export function AuthoringConfirmDialog(props: { open: boolean; title: string; description?: string; confirmLabel?: string; confirmTone?: string; busy?: boolean; onConfirm(): void; onClose(): void }): ReactElement | null;
+export function AuthoringPromptDialog(props: { open: boolean; title: string; description?: string; label: string; value: string; placeholder?: string; confirmLabel?: string; busy?: boolean; onChange(value: string): void; onConfirm(): void; onClose(): void }): ReactElement | null;
+export function AuthoringFeedback(props: { kind?: string; title?: string; message?: string; action?: AuthoringAction }): ReactElement | null;
+export function AuthoringHistoryLauncher(props: { action?: AuthoringAction }): ReactElement | null;
+export function useAuthoringShortcuts(shortcuts?: ({ key: string; ctrlOrMeta?: boolean; shiftKey?: boolean; disabled?: boolean; onInvoke(event: KeyboardEvent): void } | null)[]): void;
+export function useAuthoringPlatform(): { registerNavigationGuard(guard: (path: string) => boolean): () => void; guardNavigation(path: string): boolean };
+export function AuthoringShell(props: { children: ReactNode; className?: string }): ReactElement;
+export function AuthoringValidationSummary(props: { errors?: string[]; title?: string }): ReactElement | null;
+export const AUTHORING_BUTTON_TONES: Readonly<Record<'secondary' | 'primary' | 'publish' | 'danger', string>>;
+export const AUTHORING_STATUS_LABELS: Readonly<Record<'dirty' | 'draft' | 'published' | 'live' | 'saving' | 'publishing' | 'error' | 'disabled', string>>;

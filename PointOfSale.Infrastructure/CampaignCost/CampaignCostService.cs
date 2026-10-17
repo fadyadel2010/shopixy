@@ -35,6 +35,7 @@ public class CampaignCostService : ICampaignCostService
         CreateCampaignCostRequest request,
         CancellationToken cancellationToken = default)
     {
+        Validate(tenantId, request);
         // Normalize UTM values
         var source = request.Source.Trim().ToLowerInvariant();
         var medium = request.Medium.Trim().ToLowerInvariant();
@@ -95,6 +96,55 @@ public class CampaignCostService : ICampaignCostService
         return cost;
     }
 
+    public async Task<Core.Analytics.Attribution.CampaignCost?> ReplaceAsync(
+        Guid tenantId, Guid id, CreateCampaignCostRequest request,
+        DateTime? expectedUpdatedAtUtc = null, CancellationToken cancellationToken = default)
+    {
+        Validate(tenantId, request);
+        await using var transaction = _dbContext.Database.IsRelational()
+            ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+        var existing = await GetByIdAsync(tenantId, id, cancellationToken);
+        if (existing == null) return null;
+        if (expectedUpdatedAtUtc.HasValue && existing.UpdatedAtUtc != expectedUpdatedAtUtc.Value)
+            throw new DbUpdateConcurrencyException("Campaign cost changed. Reload before editing.");
+        var source = request.Source.Trim().ToLowerInvariant();
+        var medium = request.Medium.Trim().ToLowerInvariant();
+        var campaign = request.Campaign.Trim().ToLowerInvariant();
+        if (await _dbContext.CampaignCosts.AnyAsync(c => c.TenantId == tenantId && c.CampaignCostId != id &&
+            c.Source == source && c.Medium == medium && c.Campaign == campaign && c.PeriodStartUtc == request.PeriodStartUtc, cancellationToken))
+            throw new InvalidOperationException("Another cost already exists for this campaign and period start.");
+        // Preserve replacement history, but commit archive + successor atomically.
+        existing.IsDeleted = true;
+        existing.UpdatedAtUtc = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        // Insert, never upsert here: a competing writer may have claimed the target
+        // key after the collision check. The unique constraint then rolls back the
+        // archive rather than allowing this edit to overwrite that writer's row.
+        var replacement = new Core.Analytics.Attribution.CampaignCost
+        {
+            CampaignCostId = Guid.NewGuid(), TenantId = tenantId,
+            Source = source, Medium = medium, Campaign = campaign,
+            PeriodStartUtc = request.PeriodStartUtc, PeriodEndUtc = request.PeriodEndUtc,
+            CostAmount = request.CostAmount, Currency = request.Currency, Notes = request.Notes,
+            CreatedAtUtc = DateTime.UtcNow, UpdatedAtUtc = DateTime.UtcNow
+        };
+        _dbContext.CampaignCosts.Add(replacement);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
+        return replacement;
+    }
+
+    private static void Validate(Guid tenantId, CreateCampaignCostRequest request)
+    {
+        if (tenantId == Guid.Empty || string.IsNullOrWhiteSpace(request.Source) || request.Source.Trim().Length > 100 ||
+            string.IsNullOrWhiteSpace(request.Medium) || request.Medium.Trim().Length > 100 ||
+            string.IsNullOrWhiteSpace(request.Campaign) || request.Campaign.Trim().Length > 200 || request.Notes?.Length > 500 ||
+            request.CostAmount < 0 || request.CostAmount > 9999999999999999.99m || decimal.Round(request.CostAmount, 2) != request.CostAmount ||
+            request.PeriodStartUtc.Kind != DateTimeKind.Utc || request.PeriodEndUtc.Kind != DateTimeKind.Utc ||
+            request.PeriodStartUtc == DateTime.MinValue || request.PeriodEndUtc <= request.PeriodStartUtc)
+            throw new ArgumentException("Valid campaign fields, a non-negative two-decimal cost and increasing UTC period are required.");
+    }
+
     public async Task<List<Core.Analytics.Attribution.CampaignCost>> GetByPeriodAsync(
         Guid tenantId,
         DateTime from,
@@ -104,8 +154,8 @@ public class CampaignCostService : ICampaignCostService
         return await _dbContext.CampaignCosts
             .Where(c =>
                 c.TenantId == tenantId &&
-                c.PeriodStartUtc <= to &&
-                c.PeriodEndUtc >= from)
+                c.PeriodStartUtc < to &&
+                c.PeriodEndUtc > from)
             .OrderByDescending(c => c.PeriodStartUtc)
             .ToListAsync(cancellationToken);
     }
@@ -162,8 +212,8 @@ public class CampaignCostService : ICampaignCostService
         var query = _dbContext.CampaignCosts
             .Where(c =>
                 c.TenantId == tenantId &&
-                c.PeriodStartUtc <= to &&
-                c.PeriodEndUtc >= from);
+                c.PeriodStartUtc < to &&
+                c.PeriodEndUtc > from);
 
         if (!string.IsNullOrWhiteSpace(source))
         {

@@ -63,7 +63,7 @@ public class AnalyticsMetricReader : IAnalyticsMetricReader
             _logger.LogWarning(ex,
                 "[Metrics] Failed to read metric | TenantId: {TenantId} | Metric: {Metric}",
                 tenantId, metric);
-            return 0;
+            throw;
         }
     }
 
@@ -100,7 +100,8 @@ public class AnalyticsMetricReader : IAnalyticsMetricReader
             var windowStart = now.AddMinutes(-windowMinutes);
 
             // Get all hours that overlap with our window
-            var currentHour = now;
+            var currentHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+            windowStart = new DateTime(windowStart.Year, windowStart.Month, windowStart.Day, windowStart.Hour, 0, 0, DateTimeKind.Utc);
             while (currentHour >= windowStart)
             {
                 var windowKey = currentHour.ToString("yyyyMMddHH");
@@ -122,7 +123,7 @@ public class AnalyticsMetricReader : IAnalyticsMetricReader
             _logger.LogWarning(ex,
                 "[Metrics] Failed to read counter | TenantId: {TenantId} | Counter: {Counter}",
                 tenantId, counterName);
-            return 0;
+            throw;
         }
     }
 

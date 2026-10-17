@@ -46,7 +46,9 @@ public class AffiliateOrderDeliveredConsumer :
             evt.DeliveredAt,
             nameof(OrderDeliveredEvent),
             evt.EventVersion,
-            context.CancellationToken);
+            context.CancellationToken,
+            evt.DeliveryReference,
+            evt.ProofOfDeliveryUrl);
     }
 
     public Task Consume(ConsumeContext<FulfillmentDeliveredEvent> context)

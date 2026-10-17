@@ -18,7 +18,15 @@ public sealed record GeographicAddressCandidate(
     string? PostalCode,
     decimal? Latitude,
     decimal? Longitude,
-    string? CoordinateSource);
+    string? CoordinateSource,
+    CanonicalAddressInputs? CanonicalInputs = null);
+
+// Server-bound input, not public client authority.
+public sealed record CanonicalAddressInputs(
+    string AddressRole, string PrincipalReference, string OwnershipSource,
+    string? SubmittedCountryIso2, string Street, string? Street2, string? City,
+    string? State, string? Building, string? Floor, string? Apartment, string? Landmark,
+    string ContactName, string ContactPhone, string? ContactEmail);
 
 public sealed record GeographicAdmissionResult(
     bool Succeeded,
@@ -101,6 +109,9 @@ public interface IGeographicRepository
     IQueryable<GeographicPlace> Places { get; }
     IQueryable<GeographicPlaceHierarchyEdge> HierarchyEdges { get; }
     IQueryable<GeographicCountryProfile> CountryProfiles { get; }
+    IQueryable<GeographicCatalogPublication> CatalogPublications { get; }
+    IQueryable<GeographicCatalogReleasePlace> CatalogReleasePlaces { get; }
+    IQueryable<GeographicCatalogReleaseEdge> CatalogReleaseEdges { get; }
     IQueryable<CarrierProvider> CarrierProviders { get; }
     IQueryable<CarrierGeographicMappingRelease> MappingReleases { get; }
     IQueryable<CarrierGeographicMappingPublication> MappingPublications { get; }

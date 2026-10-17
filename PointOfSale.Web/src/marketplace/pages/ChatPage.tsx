@@ -15,11 +15,11 @@ import { deriveServiceRequestCompletionStatePresentation } from '../completionSt
 import { deriveServiceRequestRatingStatePresentation } from '../ratingStateAuthority'
 import { RatingStateBadge } from '../components/RatingStateBadge'
 import type { ChatMessage as ChatMessageType } from '../types'
-import { marketplaceApi } from '../api/marketplaceApi'
+import { useChatAttachmentUpload } from '../hooks/useChatAttachmentUpload'
 
 export function ChatPage() {
     const { t } = useTranslation()
-    const { formatCurrency, formatDate, formatNumber, isRTL } = useFormatting()
+    const { formatCurrency, formatDate, formatNumber, formatTime, dir, isRTL } = useFormatting()
     const { requestId } = useParams<{ requestId: string }>()
     const navigate = useNavigate()
     const { user } = useAuthStore()
@@ -54,6 +54,7 @@ export function ChatPage() {
         : null
     const canViewChatHistory = chatIdentity?.canViewChatHistory ?? false
     const canSendChat = chatIdentity?.canSendChat ?? false
+    const uploadChatAttachment = useChatAttachmentUpload(chatIdentity)
     const {
         messages,
         isLoading: isLoadingMessages,
@@ -79,7 +80,7 @@ export function ChatPage() {
     const attachmentIntentScopeRef = useRef('')
 
     useEffect(() => {
-        const newestMessageId = messages.at(-1)?.id ?? null
+        const newestMessageId = messages[messages.length - 1]?.id ?? null
         const previousNewestMessageId = newestMessageIdRef.current
         if (newestMessageId !== previousNewestMessageId) {
             newestMessageIdRef.current = newestMessageId
@@ -182,7 +183,7 @@ export function ChatPage() {
             }
 
             if (selectedFile) {
-                const payload = await marketplaceApi.uploadChatAttachment(sendIdentity.requestId, selectedFile)
+                const payload = await uploadChatAttachment(sendIdentity.requestId, selectedFile)
                 const upload = deriveChatAttachmentUploadAuthority(payload, sendIdentity)
                 if (!upload) {
                     throw new Error(t('servicesMarketplace.chat.uploadFailed'))
@@ -404,6 +405,8 @@ export function ChatPage() {
                         ) : null}
                         {messages.map((message: ChatMessageType) => (
                             <ChatMessage
+                                dir={dir}
+                                formatTime={formatTime}
                                 key={message.id}
                                 message={message}
                                 isOwnMessage={message.senderUserId === chatIdentity.currentUserId}

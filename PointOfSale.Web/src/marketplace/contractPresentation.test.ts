@@ -9,7 +9,7 @@ const request = (overrides = {}) => ({
     serviceCategory: 'Marketing',
     requestMessage: 'Promote the summer launch.',
     startingPrice: 500,
-    pricingType: 'Fixed',
+    pricingType: 'Fixed' as const,
     currency: 'usd',
     packages: JSON.stringify([{ name: 'Standard', description: 'Campaign setup', price: 500, deliveryDays: 7, revisions: 2 }]),
     status: 'Accepted',

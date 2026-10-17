@@ -331,8 +331,9 @@ public class GoogleAnalyticsDispatcher : IAnalyticsDispatcher
                 var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 
                 orderItems = await dbContext.OrderItems
+                    .IgnoreQueryFilters()
                     .AsNoTracking()
-                    .Where(oi => oi.OrderId == analyticsEvent.Payload.OrderId.Value)
+                    .Where(oi => oi.OrderId == analyticsEvent.Payload.OrderId.Value && oi.Order.TenantId == analyticsEvent.TenantId && !oi.Order.IsDeleted && !oi.IsDeleted)
                     .OrderBy(oi => oi.Id)
                     .Select(oi => new Ga4OrderItem(
                         oi.ProductId,

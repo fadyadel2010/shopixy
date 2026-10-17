@@ -57,6 +57,8 @@ public class StorefrontAuthResponse
     public string AccessToken { get; set; } = string.Empty;
     public string RefreshToken { get; set; } = string.Empty;
     public DateTime ExpiresAt { get; set; }
+    // Registration dispatch evidence, not a provider-delivery receipt.
+    public bool? VerificationEmailSent { get; set; }
 }
 
 /// <summary>
@@ -137,6 +139,7 @@ public class StorefrontAuthService : IStorefrontAuthService
     private readonly IEventPublisher _eventPublisher;
     private readonly IPhoneRiskProfileService _phoneRiskProfileService;
     private readonly ILogger<StorefrontAuthService> _logger;
+    private readonly IStorefrontEmailVerificationService _emailVerification;
 
     public StorefrontAuthService(
         ApplicationDbContext dbContext,
@@ -144,7 +147,8 @@ public class StorefrontAuthService : IStorefrontAuthService
         IPasswordHasher<OnlineCustomer> passwordHasher,
         IEventPublisher eventPublisher,
         IPhoneRiskProfileService phoneRiskProfileService,
-        ILogger<StorefrontAuthService> logger)
+        ILogger<StorefrontAuthService> logger,
+        IStorefrontEmailVerificationService emailVerification)
     {
         _dbContext = dbContext;
         _jwtSettings = jwtSettings.Value;
@@ -152,6 +156,7 @@ public class StorefrontAuthService : IStorefrontAuthService
         _eventPublisher = eventPublisher;
         _phoneRiskProfileService = phoneRiskProfileService;
         _logger = logger;
+        _emailVerification = emailVerification;
     }
 
     public async Task<StorefrontAuthResult> RegisterAsync(
@@ -292,6 +297,19 @@ public class StorefrontAuthService : IStorefrontAuthService
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
+            // Account creation is already committed. Report dispatch separately so a
+            // transport outage cannot make customers retry creation of an existing account.
+            var verificationSent = false;
+            try
+            {
+                verificationSent = (await _emailVerification.RequestVerificationAsync(
+                    tenantId, customer.Id, cancellationToken: cancellationToken)).Success;
+            }
+            catch (Exception)
+            {
+                _logger.LogWarning("Registration verification dispatch unavailable | TenantId: {TenantId} | CustomerId: {CustomerId}", tenantId, customer.Id);
+            }
+
             _logger.LogInformation(
                 "[StorefrontAuth] {Action} success | TenantId: {TenantId} | CustomerId: {CustomerId} | Email: {Email} | TraceId: {TraceId}",
                 "REGISTRATION",
@@ -308,6 +326,7 @@ public class StorefrontAuthService : IStorefrontAuthService
                     Customer = MapToDto(customer),
                     AccessToken = string.Empty,
                     RefreshToken = string.Empty,
+                    VerificationEmailSent = verificationSent,
                     ExpiresAt = DateTime.UtcNow
                 }
             };

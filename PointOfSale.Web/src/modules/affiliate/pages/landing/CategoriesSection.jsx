@@ -20,11 +20,10 @@ import { useState, useEffect, useRef, memo } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
-    Grid3X3, Package, RefreshCw, AlertCircle,
+    Grid3X3, RefreshCw, AlertCircle,
     Smartphone, ShoppingBag, Shirt, Home, Briefcase,
     Sparkles, Heart, Wrench, BookOpen
 } from 'lucide-react'
-import { useLanguage } from '../../i18n/LanguageContext'
 
 // ═══════════════════════════════════════════════════════════════════
 // ANIMATION VARIANTS
@@ -175,7 +174,6 @@ function CategoriesSkeleton() {
 // ═══════════════════════════════════════════════════════════════════
 
 function CategoriesEmptyState() {
-    const { t } = useLanguage()
     return (
         <div className="text-center py-16">
             <Grid3X3 className="w-14 h-14 text-gray-400 mx-auto mb-4" />
@@ -220,7 +218,6 @@ function CategoriesError({ onRetry }) {
 // ═══════════════════════════════════════════════════════════════════
 
 export default function CategoriesSection() {
-    const { t } = useLanguage()
     const [state, setState] = useState('loading') // loading | loaded | empty | error
     const [categories, setCategories] = useState([])
     const abortRef = useRef(null)

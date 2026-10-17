@@ -8,7 +8,7 @@ import { formatDate } from '../utils/dateFormat'
 import { toSafeNumber } from '../utils/financialMath'
 import AsyncEntitySelect from '../components/AsyncEntitySelect'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
-import { useHasPermission } from '../components/PermissionGuard'
+import { useHasPermission } from '../hooks/usePosSessionPermission'
 
 const StockTransfers = () => {
     const { t } = useTranslation()
@@ -80,7 +80,7 @@ const StockTransfers = () => {
             }
 
             setWarehouses(response.data.items || response.data)
-        } catch (error) {
+        } catch {
             if (requestId !== warehousesRequestIdRef.current) {
                 return
             }
@@ -101,7 +101,7 @@ const StockTransfers = () => {
             }
 
             setTransfers(response.data.items || [])
-        } catch (error) {
+        } catch {
             if (requestId !== transfersRequestIdRef.current) {
                 return
             }

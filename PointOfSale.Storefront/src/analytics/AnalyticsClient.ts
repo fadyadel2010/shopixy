@@ -16,7 +16,7 @@
  */
 
 import type { AnalyticsEvent, AnalyticsEventResponse, AnalyticsEventBatchResponse } from './eventTypes';
-import { getRequestHeaders, isRequestContextReady } from '@/bootstrap';
+import { getRequestHeaders, isRequestContextReady } from '../bootstrap/index';
 import { appendCsrfHeader } from '@/services/api/csrf';
 
 const ANALYTICS_BASE_URL = import.meta.env.VITE_API_URL || '';

@@ -30,10 +30,6 @@ const fadeUp = {
     })
 }
 
-const scaleIn = {
-    hidden: { opacity: 0, scale: 0.9 },
-    visible: { opacity: 1, scale: 1, transition: { duration: 0.5 } }
-}
 
 const stagger = {
     visible: { transition: { staggerChildren: 0.08 } }
@@ -73,10 +69,9 @@ function AnimatedCounter({ target, prefix = '', suffix = '', duration = 2000 }) 
 // HERO SECTION
 // ═══════════════════════════════════════════════════════════════════
 
-function HeroSection({ onSearch }) {
+function HeroSection() {
     const { t } = useLanguage()
     const navigate = useNavigate()
-    const [query, setQuery] = useState('')
 
     return (
         <section className="relative min-h-[90vh] flex items-center justify-center overflow-hidden">

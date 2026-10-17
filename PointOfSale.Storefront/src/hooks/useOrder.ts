@@ -22,6 +22,8 @@ import type {
     TimelineStep
 } from '@/types/order';
 import { AxiosError } from 'axios';
+import { orderPaymentMethod } from '@/features/checkout/orderPaymentMethod';
+import { buildOrderEventTimeline } from '@/features/checkout/orderEventTimeline';
 
 // ============================================================================
 // Types
@@ -95,6 +97,16 @@ const STATUS_CONFIG: Record<OrderStatus, { label: string; icon: string; descript
         icon: '❌',
         description: 'Order was cancelled',
     },
+    returned: {
+        label: 'Returned',
+        icon: '↩️',
+        description: 'Shipment was returned',
+    },
+    failed: {
+        label: 'Delivery Failed',
+        icon: '⚠️',
+        description: 'Delivery was unsuccessful',
+    },
 };
 
 // ============================================================================
@@ -105,9 +117,23 @@ const STATUS_CONFIG: Record<OrderStatus, { label: string; icon: string; descript
  * Normalize status from backend (PascalCase) to frontend (lowercase)
  * Also handles mapping between different status naming conventions.
  */
-function normalizeStatus(backendStatus: string): OrderStatus {
+function normalizeStatus(backendStatus: string, shippingStatus?: string): OrderStatus {
     // Convert to lowercase for comparison
     const lower = backendStatus.toLowerCase();
+
+    // Shipping progression is independently authorized; payment/settlement must
+    // never manufacture delivery. Preserve canonical order cancellation first.
+    if (lower === 'cancelled' || lower === 'canceled') return 'cancelled';
+    switch (shippingStatus?.toLowerCase()) {
+        case 'returned': return 'returned';
+        case 'failed': return 'failed';
+        case 'delivered': return 'delivered';
+        case 'outfordelivery':
+        case 'out_for_delivery': return 'out_for_delivery';
+        case 'shipped':
+        case 'intransit':
+        case 'pickedup': return 'shipped';
+    }
 
     // Map backend status names to frontend OrderStatus
     switch (lower) {
@@ -125,6 +151,7 @@ function normalizeStatus(backendStatus: string): OrderStatus {
         case 'outfordelivery':
             return 'out_for_delivery';
         case 'delivered':
+        case 'completed':
             return 'delivered';
         case 'cancelled':
         case 'canceled':
@@ -199,11 +226,11 @@ function parseError(error: unknown): OrderError {
  * Build timeline from order status
  */
 function buildTimeline(currentStatus: OrderStatus): TimelineStep[] {
-    // Handle cancelled status specially
-    if (currentStatus === 'cancelled') {
+    // Terminal logistics exceptions must not show a successful delivery timeline.
+    if (currentStatus === 'cancelled' || currentStatus === 'returned' || currentStatus === 'failed') {
         return [{
-            id: 'cancelled',
-            ...STATUS_CONFIG.cancelled,
+            id: currentStatus,
+            ...STATUS_CONFIG[currentStatus],
             status: 'current',
         }];
     }
@@ -364,7 +391,7 @@ export function useOrder(orderId: string | undefined, options: UseOrderOptions =
             }
 
             // Normalize status from backend (PascalCase) to frontend (lowercase)
-            const normalizedStatus = normalizeStatus(orderData.status || 'pending');
+            const normalizedStatus = normalizeStatus(orderData.status || 'pending', orderData.shippingStatus);
 
             // Map tracking DTO to OrderDto (adapter for UI components)
             const mappedOrder: OrderDto = {
@@ -372,7 +399,7 @@ export function useOrder(orderId: string | undefined, options: UseOrderOptions =
                 orderNumber: orderData.orderNumber,
                 status: normalizedStatus,
                 paymentStatus: orderData.paymentStatus?.toLowerCase() as any || 'pending',
-                paymentMethod: orderData.paymentMethodName?.toLowerCase()?.includes('cod') ? 'cod' : 'online',
+                paymentMethod: orderPaymentMethod(orderData.paymentMethodCode),
                 items: (orderData.items || []).map((item: any) => ({
                     productId: item.productId,
                     productName: item.productName,
@@ -475,28 +502,9 @@ export function useOrder(orderId: string | undefined, options: UseOrderOptions =
         if (!order) return [];
 
         // Phase 10.5.A: Prefer server-side timeline if available
-        const serverTimeline = (order as any).timeline;
+        const serverTimeline = order.timeline;
         if (serverTimeline && Array.isArray(serverTimeline) && serverTimeline.length > 0) {
-            return serverTimeline.map((t: any) => {
-                // Map server type to UI status/icon
-                let status: OrderStatus = 'pending';
-                let icon = '📅';
-
-                if (t.type === 'OrderCreated') { status = 'pending'; icon = '📝'; }
-                else if (t.type === 'MarkedAsPaid') { status = 'confirmed'; icon = '💲'; }
-                else if (t.type === 'Shipped') { status = 'shipped'; icon = '🚚'; }
-                else if (t.type === 'Delivered') { status = 'delivered'; icon = '🏠'; }
-                else if (t.type === 'Cancelled') { status = 'cancelled'; icon = '❌'; }
-
-                return {
-                    id: status,
-                    label: t.description || t.type,
-                    icon: icon,
-                    status: 'completed' as const, // All past events are completed
-                    timestamp: t.at,
-                    description: t.description
-                };
-            });
+            return buildOrderEventTimeline(serverTimeline);
         }
 
         // Fallback to client-side generated timeline

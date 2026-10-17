@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -359,7 +359,7 @@ describe('BulkMutationResult — per-item mapping, statuses and names', () => {
     })
 
     it('keeps resolving names through the provided stable snapshot, independent of result payloads', () => {
-        const snapshot = { p1: 'Alpha Tea' }
+        const snapshot: Record<string, string> = { p1: 'Alpha Tea' }
         const { rerender } = render(
             <BulkMutationResult
                 action="delete"
@@ -670,8 +670,8 @@ describe('BulkMutationResult — presentation model unit behavior', () => {
             result: aggregate(),
             t: mockT,
         })
-        expect(model.kind).toBe('processing')
-        expect(model.processingText).toBe('Deleting 2 selected product(s)…')
+        expect(model).toMatchObject({ kind: 'processing' })
+        expect(model).toMatchObject({ processingText: 'Deleting 2 selected product(s)…' })
     })
 
     it('returns null when idle with neither result nor error', () => {

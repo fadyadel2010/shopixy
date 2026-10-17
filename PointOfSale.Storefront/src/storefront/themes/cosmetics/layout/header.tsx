@@ -23,7 +23,7 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
                     <div className="flex items-center gap-3">
                         <button
                             type="button"
-                            className="inline-flex h-10 w-10 items-center justify-center md:hidden"
+                            className="inline-flex h-10 w-10 items-center justify-center lg:hidden"
                             onClick={() => setMobileOpen((value) => !value)}
                             aria-label={labels.menu}
                             aria-expanded={mobileOpen}

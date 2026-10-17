@@ -25,7 +25,8 @@ public sealed record SupportedShippingCarrierDto(
     bool RequiresOriginReadiness = false,
     bool RequiresGeographyMapping = false,
     bool SupportsWebhooks = false,
-    IReadOnlyList<string>? WebhookTrustModes = null);
+    IReadOnlyList<string>? WebhookTrustModes = null,
+    IReadOnlyList<PointOfSale.Infrastructure.Shipping.CarrierOperationSupport>? Operations = null);
 
 public sealed record CarrierCredentialFieldDto(
     string Key,
@@ -61,7 +62,15 @@ public sealed record CarrierAccountAdministrationDto(
     IReadOnlyList<CarrierPolicyDto> Policies,
     IReadOnlyList<ShippingAdministrationServiceLevelDto> ServiceLevels,
     CarrierConnectionTestDto? LastConnectionTest,
-    CarrierIntegrationReadinessDto? IntegrationReadiness = null);
+    CarrierIntegrationReadinessDto? IntegrationReadiness = null,
+    IReadOnlyList<CarrierOperationReadinessDto>? Operations = null,
+    IReadOnlyList<string>? SavedCredentialFields = null,
+    bool ConnectionTestIsCurrent = false);
+
+// AccountReady is not CanExecute: specific parcel/address/order, route/service,
+// immutable original identity and financial authority remain operation gates.
+public sealed record CarrierOperationReadinessDto(string Operation, string Implementation, bool AccountReady,
+    bool RequiresShipmentEvidence, IReadOnlyList<string> Blockers);
 
 public sealed record CarrierIntegrationReadinessDto(
     bool Enabled,
@@ -134,12 +143,15 @@ public sealed record PolicyCommand(
 public sealed record ServiceLevelCommand(bool Enabled);
 
 public sealed record ConnectionTestCommand(
-    string ApiKey,
+    string? ApiKey,
     string? ApiSecret,
     string? AccountId,
     string? ApiUrl,
     bool UseSandbox,
-    IReadOnlyDictionary<string, string>? ExtraConfig);
+    IReadOnlyDictionary<string, string>? ExtraConfig,
+    string? WebhookSecret = null,
+    bool SaveOnly = false,
+    bool UseSavedCredentials = false);
 
 public sealed record ReadinessEvidenceCommand(
     bool? CarrierMappingPublished,

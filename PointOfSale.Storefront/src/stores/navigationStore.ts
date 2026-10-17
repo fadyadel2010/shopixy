@@ -83,12 +83,17 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
         const requestGeneration = navigationGeneration;
         set({ loading: true, error: null, ...(state.cacheIdentity && state.cacheIdentity !== identity ? { navigation: null } : {}) });
 
-        let requestRecord!: NavigationRequest;
+        let requestRecord: NavigationRequest | null = null;
+        const canAcceptResponse = () => requestRecord !== null && navigationRequest === requestRecord
+            && navigationGeneration === requestGeneration
+            && getRuntimeCacheIdentity('navigation') === identity
+            && !(useStoreConfigStore.getState().configSource === 'preview'
+                && useStoreConfigStore.getState().config.previewChrome);
         const promise = (async () => {
             try {
                 const navigation = await fetchNavigation();
 
-                if (navigationRequest === requestRecord && navigationGeneration === requestGeneration) {
+                if (canAcceptResponse()) {
                     set({
                         navigation,
                         loading: false,
@@ -100,7 +105,7 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
             } catch (error) {
                 console.error('Failed to load navigation:', error);
 
-                if (navigationRequest === requestRecord && navigationGeneration === requestGeneration) {
+                if (canAcceptResponse()) {
                     set({
                         navigation: get().navigation ?? emptyNavigation,
                         error: 'Failed to load navigation',

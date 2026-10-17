@@ -64,7 +64,7 @@ export const OfferProvider: React.FC<OfferProviderProps> = ({ children }) => {
     useEffect(() => {
         let isMounted = true;
 
-        loadSmartOffers()
+        const refresh = () => loadSmartOffers()
             .then((loadedOffers) => {
                 if (!isMounted) {
                     return;
@@ -80,11 +80,20 @@ export const OfferProvider: React.FC<OfferProviderProps> = ({ children }) => {
                     setIsLoaded(true);
                 }
             });
+        void refresh();
+        const interval = window.setInterval(refresh, 60_000);
+        window.addEventListener('focus', refresh);
 
         return () => {
             isMounted = false;
+            window.clearInterval(interval);
+            window.removeEventListener('focus', refresh);
         };
-    }, []);
+    }, [pathname]);
+
+    useEffect(() => {
+        setActiveOffer(current => current ? offers.find(offer => offer.id === current.id) ?? null : null);
+    }, [offers]);
 
     useEffect(() => {
         const handleNavigate = () => {

@@ -93,6 +93,9 @@ public class AnalyticsEventConsumer : IConsumer<AnalyticsEventReceivedEvent>
                 "[Analytics] Durable replay rejected | TenantId: {TenantId} | EventId: {EventId}",
                 analyticsEvent.TenantId,
                 analyticsEvent.EventId);
+            // Durable storage succeeded on an earlier delivery, but attribution may have failed.
+            // Retry only that idempotent stage: never repeat counters or external dispatch.
+            await ProcessAttributionAsync(analyticsEvent, cancellationToken);
             return;
         }
 
@@ -162,6 +165,7 @@ public class AnalyticsEventConsumer : IConsumer<AnalyticsEventReceivedEvent>
             _logger.LogWarning(ex,
                 "[Attribution] Processing failed after durable insert | TenantId: {TenantId} | EventId: {EventId}",
                 analyticsEvent.TenantId, analyticsEvent.EventId);
+            throw;
         }
     }
 

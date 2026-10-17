@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const navigate = vi.hoisted(() => vi.fn())
@@ -12,7 +12,8 @@ const cmsService = vi.hoisted(() => ({
     rollbackPage: vi.fn(),
     updatePage: vi.fn(),
 }))
-const extractCmsConflict = vi.hoisted(() => vi.fn((error: any) => {
+type CmsConflictFailure = { response?: { status: number; data?: { code?: string; message?: string; latestVersion?: unknown; LatestVersion?: unknown } } }
+const extractCmsConflict = vi.hoisted(() => vi.fn((error: CmsConflictFailure) => {
     const response = error?.response
     if (!response || response.status !== 409 || response.data?.code !== 'CONCURRENCY_CONFLICT') {
         return null
@@ -95,13 +96,49 @@ function deferred<T>() {
 }
 
 describe('CmsPageEditor authoring UX', () => {
+    it('does not open a late preview after the workspace is closed', async () => {
+        const pending = deferred<{ previewUrl: string }>()
+        cmsService.createPreviewLink.mockReturnValueOnce(pending.promise)
+        const view = render(<CmsPageEditor />)
+        await screen.findByText('Draft')
+        fireEvent.click(screen.getByRole('button', { name: 'Preview Saved Draft' }))
+        view.unmount()
+        await act(async () => pending.resolve({ previewUrl: 'https://synthetic.example.test/about' }))
+        expect(windowOpen).not.toHaveBeenCalled()
+    })
+
+    it('includes rich text typed without blur in keyboard saves and unload protection', async () => {
+        render(<CmsPageEditor />)
+        await screen.findByText('Draft')
+        const editor = document.querySelector('[contenteditable="true"]') as HTMLDivElement
+        editor.innerHTML = '<p>Latest keyboard content</p>'
+        fireEvent.input(editor)
+        expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false)
+        fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+        await waitFor(() => expect(cmsService.updatePage).toHaveBeenCalledWith('page-1',
+            expect.objectContaining({ content: '<p>Latest keyboard content</p>' })))
+    })
+
+    it('does not submit a second draft while a keyboard save is pending', async () => {
+        const pending = deferred<ReturnType<typeof page>>()
+        cmsService.updatePage.mockReturnValueOnce(pending.promise)
+        render(<CmsPageEditor />)
+        await screen.findByText('Draft')
+        fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Candidate' } })
+        fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+        fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+        expect(cmsService.updatePage).toHaveBeenCalledTimes(1)
+        pending.resolve(page(2, 'Candidate'))
+        await screen.findByText('Draft saved.')
+    })
+
     beforeEach(() => {
         Object.values(cmsService).forEach((mock) => mock.mockReset())
         windowOpen.mockReset()
         extractCmsConflict.mockClear()
         cmsService.getPage.mockResolvedValue(page(1))
         cmsService.updatePage.mockImplementation(async (_id, request) => page(2, request.title))
-        cmsService.publishPage.mockImplementation(async (_id, _version) => page(2, 'Changed title', true))
+        cmsService.publishPage.mockImplementation(async () => page(2, 'Changed title', true))
         cmsService.createPreviewLink.mockResolvedValue({
             slug: 'about',
             previewToken: 'backend-token',

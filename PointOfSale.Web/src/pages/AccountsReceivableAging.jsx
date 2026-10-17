@@ -88,14 +88,6 @@ export default function AccountsReceivableAging() {
         showSuccess(t('arAging.exportSuccess'))
     }
 
-    const getAgingColor = (daysOverdue) => {
-        if (daysOverdue <= 0) return 'text-green-600'
-        if (daysOverdue <= 30) return 'text-yellow-600'
-        if (daysOverdue <= 60) return 'text-orange-600'
-        if (daysOverdue <= 90) return 'text-red-600'
-        return 'text-red-800'
-    }
-
     const getAgingBadgeColor = (daysOverdue) => {
         if (daysOverdue <= 0) return 'bg-green-100 text-green-800'
         if (daysOverdue <= 30) return 'bg-yellow-100 text-yellow-800'

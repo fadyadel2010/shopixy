@@ -139,7 +139,8 @@ export default function SupplierCardFundingInstruments() {
         setSaving(true)
         try {
             if (editor.mode === 'create') {
-                const { instrumentType: _instrumentType, ...request } = editor.form
+                const request = { ...editor.form }
+                delete request.instrumentType
                 await supplierCardFundingApi.create(request)
                 showSuccess(t('supplierCards.created'))
             } else {

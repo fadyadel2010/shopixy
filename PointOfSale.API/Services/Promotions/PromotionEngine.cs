@@ -274,7 +274,9 @@ public class PromotionEngine : IPromotionEngine
             promotionIds,
             cancellationToken);
 
-        // Find best eligible promotion (first one that meets MinOrderAmount and has capacity)
+        // Match checkout: greatest monetary saving, then priority and stable load order.
+        Promotion? bestPromotion = null;
+        decimal bestDiscount = 0m;
         foreach (var promo in cartPromotions)
         {
             var validationError = DiscountValidation.GetPromotionValidationError(
@@ -308,33 +310,28 @@ public class PromotionEngine : IPromotionEngine
                 continue;
             }
 
-            var discount = promo.CalculateDiscount(subtotal);
+            var discount = CalculateDiscountAmount(promo, subtotal);
 
             if (discount <= 0)
             {
                 continue;
             }
 
-            _logger.LogInformation(
-                "[PromotionEngine] Cart promotion found | TenantId: {TenantId} | PromotionId: {PromotionId} | Name: {Name} | Discount: {Discount} | Subtotal: {Subtotal}",
-                tenantId, promo.Id, promo.Name, discount, subtotal);
-
-            return new CartPromotionResult
+            if (discount > bestDiscount)
             {
-                PromotionId = promo.Id,
-                Name = promo.Name,
-                Description = promo.Description,
-                DiscountType = promo.DiscountType == DiscountType.Percentage ? "percentage" : "fixed",
-                DiscountValue = promo.DiscountValue,
-                MaxDiscountAmount = promo.MaxDiscountAmount,
-                MinOrderAmount = promo.MinOrderAmount,
-                EndDate = promo.EndDate,
-                Priority = promo.Priority,
-                CalculatedDiscount = discount
-            };
+                bestPromotion = promo;
+                bestDiscount = discount;
+            }
         }
 
-        return null;
+        return bestPromotion == null ? null : new CartPromotionResult
+        {
+            PromotionId = bestPromotion.Id, Name = bestPromotion.Name, Description = bestPromotion.Description,
+            DiscountType = bestPromotion.DiscountType == DiscountType.Percentage ? "percentage" : "fixed",
+            DiscountValue = bestPromotion.DiscountValue, MaxDiscountAmount = bestPromotion.MaxDiscountAmount,
+            MinOrderAmount = bestPromotion.MinOrderAmount, EndDate = bestPromotion.EndDate,
+            Priority = bestPromotion.Priority, CalculatedDiscount = bestDiscount
+        };
     }
 
     #region Private Methods
@@ -554,7 +551,12 @@ public class PromotionEngine : IPromotionEngine
 
     private decimal CalculateDiscountAmount(Promotion offer, decimal amount)
     {
-        return RoundCurrency(offer.CalculateDiscount(amount));
+        // Lifecycle/configuration and ledger capacity were admitted using the caller's
+        // evaluation clock. Do not re-enter wall-clock IsValid()/CurrentUsage here.
+        var discount = offer.DiscountType == DiscountType.Percentage
+            ? amount * offer.DiscountValue / 100m : offer.DiscountValue;
+        if (offer.MaxDiscountAmount.HasValue) discount = Math.Min(discount, offer.MaxDiscountAmount.Value);
+        return RoundCurrency(Math.Max(0m, Math.Min(discount, amount)));
     }
 
     private PromotionResult? CalculatePrevalidatedCouponDiscount(CartSnapshotForPromotion cart)

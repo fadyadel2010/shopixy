@@ -129,7 +129,11 @@ public sealed class TreasurySettlementAuthorityCertificationTests
         Assert.DoesNotContain("toAccountCode: '1010'", clearingAging, StringComparison.Ordinal);
         Assert.Contains("settlementRequiresEvidence", clearingAging, StringComparison.Ordinal);
         Assert.Contains("disabled", clearingAging, StringComparison.Ordinal);
-        Assert.Contains("account.accountType === 'Cashbox' || account.accountType === 'Bank'", transfers, StringComparison.Ordinal);
+        var catalog = ReadRepoFile("PointOfSale.Web/src/services/treasuryAccountCatalog.js");
+        Assert.Contains("filter(isTransferEligibleAccount)", transfers, StringComparison.Ordinal);
+        Assert.Contains("isAvailableCashAccount(account)", catalog, StringComparison.Ordinal);
+        Assert.Contains("account?.accountType === TREASURY_ACCOUNT_TYPES.CASHBOX", catalog, StringComparison.Ordinal);
+        Assert.Contains("account?.accountType === TREASURY_ACCOUNT_TYPES.BANK", catalog, StringComparison.Ordinal);
         Assert.Contains("SETTLEMENT_AUTHORITY_REQUIRED", adminAccounting, StringComparison.Ordinal);
         Assert.Contains("StatusCodes.Status410Gone", adminAccounting, StringComparison.Ordinal);
     }

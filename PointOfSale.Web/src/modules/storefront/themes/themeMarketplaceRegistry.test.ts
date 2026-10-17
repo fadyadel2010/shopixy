@@ -30,7 +30,7 @@ describe('Pearl theme — Marketplace registry (Phase T1.0 scaffold)', () => {
         const themes = getAvailableMarketplaceThemes();
         const ids = themes.map((t) => t.id.toLowerCase());
         expect(new Set(ids).size).toBe(ids.length);
-        expect(getDefaultMarketplaceTheme().id).toBe('modern');
+        expect(getDefaultMarketplaceTheme()?.id).toBe('modern');
     });
 
     it('derives marketplace visibility from the canonical theme authority', () => {

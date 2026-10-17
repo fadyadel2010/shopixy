@@ -74,7 +74,6 @@ public class StorefrontShippingMethodsController : ControllerBase
     public async Task<IActionResult> GetShippingMethods([FromQuery] Guid? warehouseId, CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
-        SetNoStoreHeaders();
 
         // Validate tenant identity securely
         var tenantValidation = ValidateTenantHeader(traceId);
@@ -146,7 +145,6 @@ public class StorefrontShippingMethodsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
-        SetNoStoreHeaders();
 
         var tenantValidation = ValidateTenantHeader(traceId);
         if (tenantValidation.Error != null)
@@ -238,7 +236,6 @@ public class StorefrontShippingMethodsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
-        SetNoStoreHeaders();
 
         var tenantValidation = ValidateTenantHeader(traceId);
         if (tenantValidation.Error != null)
@@ -430,13 +427,6 @@ public class StorefrontShippingMethodsController : ControllerBase
     private string GetTraceId()
     {
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-    }
-
-    private void SetNoStoreHeaders()
-    {
-        Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
-        Response.Headers["Pragma"] = "no-cache";
-        Response.Headers["Expires"] = "0";
     }
 
     private sealed record ShippingMethodCallerIdentity(ClaimsPrincipal? Principal, Guid? CustomerId);

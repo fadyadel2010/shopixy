@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Microsoft.Extensions.DependencyInjection;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Helpers;
@@ -263,7 +264,11 @@ public class CouponsController : ControllerBase
         // The outbox stores events in the same transaction as entity changes
         await PublishCouponCreatedEventAsync(coupon, cancellationToken);
         
-        await _context.SaveChangesAsync(cancellationToken);
+        try { await _context.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return Conflict(new { message = "A coupon with this code already exists. Refresh before retrying." });
+        }
         
         _logger.LogInformation(
             "Coupon created | CouponId: {CouponId} | Code: {Code} | TenantId: {TenantId}",
@@ -360,6 +365,10 @@ public class CouponsController : ControllerBase
         catch (DbUpdateConcurrencyException)
         {
             return Conflict(new { message = "Coupon has changed. Refresh before retrying." });
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return Conflict(new { message = "A coupon with this code already exists. Refresh before retrying." });
         }
         
         _logger.LogInformation(
@@ -955,6 +964,9 @@ public class CouponsController : ControllerBase
         {
             return "Inactive";
         }
+
+        if (coupon.StartDate > DateTime.UtcNow) return "Scheduled";
+        if (coupon.MaxUsage.HasValue && coupon.CurrentUsage >= coupon.MaxUsage.Value) return "Exhausted";
 
         return coupon.IsValid() ? "Active" : "Expired";
     }

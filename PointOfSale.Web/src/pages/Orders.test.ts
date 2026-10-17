@@ -10,6 +10,7 @@ import {
     normalizeFilters,
     validateManualDeliveryEvidence,
     validateReturnReceiptEvidence,
+    buildManualDispatchPayload,
 } from './Orders.jsx'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -17,6 +18,14 @@ const ordersPath = join(currentDir, 'Orders.jsx')
 const adminOrdersApiPath = join(currentDir, '..', 'services', 'adminOrdersApi.js')
 
 describe('Admin Orders lifecycle UI contract', () => {
+    it('requires explicit shipment-bound dispatch tracking rather than silently delivering only the order', () => {
+        expect(() => buildManualDispatchPayload('SYN-SHIPMENT', '  ')).toThrow()
+        expect(buildManualDispatchPayload('SYN-SHIPMENT', ' LOCAL-TRACK ')).toEqual({ shipmentId: 'SYN-SHIPMENT', trackingNumber: 'LOCAL-TRACK' })
+        const source = readFileSync(ordersPath, 'utf8')
+        expect(source).toContain("pendingFulfillmentAction.code === 'out-for-delivery'")
+        expect(source).toContain('buildManualDispatchPayload(order.shipment?.shipmentId, fulfillmentEvidence.trackingNumber)')
+        expect(source).toContain('fulfillmentAuthority={fulfillmentAuthorityQuery.error ? null : fulfillmentAuthorityQuery.data}')
+    })
     it('uses only backend-issued targets for the direct status mutation control', () => {
         const options = getDirectOrderStatusMutationOptions({
             status: 'Confirmed',

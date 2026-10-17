@@ -5,16 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import HomepageBuilderPreview from './HomepageBuilderPreview'
 import { DEFAULT_STORE_CONFIG } from '@/types/storeConfig'
 import type { HomepageBuilderSection } from './homepageBuilderUtils'
-import { sectionRendererSpy } from '@/components/sections/SectionRenderer'
+const sectionRendererSpy = vi.hoisted(() => vi.fn(() => null))
 
 vi.mock('@/components/sections/SectionRenderer', () => {
-    const spy = vi.fn(() => null)
-
     return {
         __esModule: true,
-        SectionRenderer: spy,
-        default: spy,
-        sectionRendererSpy: spy,
+        SectionRenderer: sectionRendererSpy,
+        default: sectionRendererSpy,
     }
 })
 

@@ -78,7 +78,7 @@ vi.mock('react-i18next', () => ({
             if (!options) return template
 
             return Object.entries(options).reduce(
-                (acc, [name, value]) => acc.replaceAll(`{{${name}}}`, `${value}`),
+                (acc, [name, value]) => acc.split(`{{${name}}}`).join(`${value}`),
                 template,
             )
         },

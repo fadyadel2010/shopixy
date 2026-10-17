@@ -105,17 +105,7 @@ public sealed class StorefrontShippingAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-shipping-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS P2-F", ReadRepoFile(path), StringComparison.Ordinal);
-        }
+        HistoricalShippingCertificationBoundary.AssertPriorClosureConditional();
     }
 
     private static string ReadRepoFile(string relativePath)

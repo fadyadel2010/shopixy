@@ -24,7 +24,7 @@ interface UseCommissionPreviewInput {
     debounceMs?: number
 }
 
-export interface UseCommissionPreviewResult extends CommissionBreakdown {
+export interface UseCommissionPreviewResult extends Omit<CommissionBreakdown, 'rate'> {
     rate: number | null
     source: string | null
     ruleId: string | null

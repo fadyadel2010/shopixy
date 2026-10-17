@@ -33,3 +33,10 @@ export function formatPhoneForLocalInput(phone: string, countryCode?: string | n
         ? parsedPhone.formatNational()
         : phone;
 }
+
+/** Preserve incomplete input, but send valid national numbers with their displayed country. */
+export function normalizePhoneForSubmission(phone: string, countryCode?: string | null): string {
+    const country = asSupportedCountryCode(countryCode);
+    const parsed = parsePhoneNumberFromString(phone.trim(), country ?? undefined);
+    return parsed?.isValid() ? parsed.number : phone;
+}

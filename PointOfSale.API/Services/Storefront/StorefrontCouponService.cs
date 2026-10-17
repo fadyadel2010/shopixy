@@ -43,7 +43,7 @@ public class StorefrontCouponService : IStorefrontCouponService
             ? new Dictionary<Guid, Guid>()
             : await _dbContext.Products
                 .AsNoTracking()
-                .Where(product => productIds.Contains(product.Id) && !product.IsDeleted)
+                .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id) && !product.IsDeleted)
                 .Select(product => new { product.Id, product.CategoryId })
                 .ToDictionaryAsync(product => product.Id, product => product.CategoryId, cancellationToken);
 
@@ -54,7 +54,9 @@ public class StorefrontCouponService : IStorefrontCouponService
             new CouponValidationSnapshot
             {
                 OrderSubtotal = cart.Subtotal,
-                AppliedDiscountAmount = cart.AppliedCoupon?.Amount ?? 0m,
+                // A previous cart preview is not an accepted order amount. Reprice
+                // after basket/rule changes; confirmation retains the strict check.
+                AppliedDiscountAmount = 0m,
                 CartItems = cart.Items
                     .Select(item => new CouponScopeValidationItem(
                         item.ProductId,

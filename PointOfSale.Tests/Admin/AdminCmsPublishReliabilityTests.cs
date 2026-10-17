@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -95,7 +97,10 @@ public sealed class AdminCmsPublishReliabilityTests
             Mock.Of<ICmsPagePreviewTokenService>(),
             new NavigationAdmissionService(testContext),
             Mock.Of<IEventPublisher>(),
-            NullLogger<AdminCmsService>.Instance);
+            NullLogger<AdminCmsService>.Instance,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity([
+                new Claim(ClaimTypes.NameIdentifier, "phase2-actor"), new Claim(ClaimTypes.Name, "Fixture administrator")
+            ], "Fixture")) } });
 
         await service.PublishNavigationAsync(
             tenantId,
@@ -112,6 +117,8 @@ public sealed class AdminCmsPublishReliabilityTests
         Assert.Equal(1, config.LiveVersion);
         Assert.Equal(1, snapshot["Version"]!.GetValue<int>());
         Assert.Equal("Navigation Published", snapshot["ChangeType"]!.GetValue<string>());
+        Assert.Equal("phase2-actor", snapshot["PublishedByUserId"]!.GetValue<string>());
+        Assert.Equal("Fixture administrator", snapshot["PublishedBy"]!.GetValue<string>());
         Assert.Equal("Draft Home", snapshotRoot["navigation"]?["live"]?["header"]?["links"]?[0]?["label"]?.GetValue<string>());
     }
 

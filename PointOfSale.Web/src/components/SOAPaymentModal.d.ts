@@ -1,0 +1,3 @@
+import type { ReactElement } from 'react';
+import type { SupplierCardAuthority } from '../services/supplierCardFundingApi';
+export default function SOAPaymentModal(props: { isOpen: boolean; onClose(): void; onSubmit(data: { amount: number; paymentDate: string; paymentMethod: string; notes: string; cashAmount?: number; fundingInstrumentId?: string; fundingInstrumentVersion?: string | number }): void; partyName: string; currentBalance: number; balanceType: string; type: string; loading?: boolean; cardInstruments?: SupplierCardAuthority[]; cardInstrumentsLoading?: boolean; cardInstrumentsError?: string }): ReactElement | null;

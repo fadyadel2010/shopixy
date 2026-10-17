@@ -6,7 +6,7 @@
  * - Real-time validation
  * - Labels above inputs
  * - Inline field errors
- * - Auto-select first shipping method
+ * - Explicit shipping selection; never substitute a failed or stale selection
  * 
  * Phase 7.7: Checkout UI Implementation
  */
@@ -37,7 +37,7 @@ import { useCartStore } from '@/store/cartStore';
 import { useStoreConfigStore } from '@/store/storeConfigStore';
 import { getEffectiveCheckoutFields } from '@/utils/checkoutFieldRules';
 import { normalizeCountryCode } from '@/utils/country';
-import { formatPhoneForLocalInput, getCallingCodeForCountry } from '@/utils/phone';
+import { formatPhoneForLocalInput, getCallingCodeForCountry, normalizePhoneForSubmission } from '@/utils/phone';
 
 interface ShippingStepProps {
     onContinue: () => void;
@@ -175,8 +175,8 @@ const PhoneInputField: React.FC<PhoneInputFieldProps> = ({
     const errorId = `${inputId}-error`;
     const helpId = getFieldHelpId(inputId, Boolean(helpText));
     const hasError = !!error;
-    const callingCode = getCallingCodeForCountry(countryCode);
     const localValue = formatPhoneForLocalInput(value, countryCode);
+    const callingCode = localValue.trim().startsWith('+') ? null : getCallingCodeForCountry(countryCode);
 
     return (
         <div className="space-y-2">
@@ -199,7 +199,10 @@ const PhoneInputField: React.FC<PhoneInputFieldProps> = ({
                     name="phone"
                     value={localValue}
                     onChange={(event) => onChange(event.target.value)}
-                    onBlur={onBlur}
+                    onBlur={() => {
+                        onChange(normalizePhoneForSubmission(value, countryCode));
+                        onBlur?.();
+                    }}
                     placeholder={placeholder}
                     className={`${checkoutControlClassName(hasError)} ${callingCode ? 'rounded-l-none' : ''}`}
                     aria-invalid={hasError}
@@ -754,6 +757,8 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
 
     // Handle continue button
     const handleContinue = () => {
+        const canonicalPhone = normalizePhoneForSubmission(address.phone, phoneCountryCode);
+        if (canonicalPhone !== address.phone) setAddressField('phone', canonicalPhone);
         if (isStepValid('shipping')) {
             onContinue();
         } else {

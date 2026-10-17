@@ -1,4 +1,5 @@
 using MassTransit;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
@@ -122,6 +123,24 @@ public class MassTransitEventPublisher : IEventPublisher
         await EnrichAuthoritativeOrderingMetadataAsync(@event, eventType, cancellationToken);
         EnsureAuthoritativeTenantScope(@event, eventType);
         EnsureTransactionalPublishBoundary(eventType);
+
+        // Consume-scoped endpoints need not participate in a service-owned SQL
+        // transaction. Logistics/fulfillment facts must not escape before commit.
+        if (_dbContext.Database.CurrentTransaction != null &&
+            @event is ShipmentEventBase or OrderFulfillmentEventBase or OrderStatusChangedEvent or OrderDeliveredEvent or OrderShippedEvent)
+        {
+            _dbContext.OutboxMessages.Add(new OutboxMessage
+            {
+                Id = @event.EventId,
+                TenantId = @event.TenantId,
+                AggregateId = IntegrationEventAuthority.TryGetAggregateId(@event),
+                EventVersion = @event.EventVersion,
+                EventType = eventType.AssemblyQualifiedName!,
+                EventPayload = JsonSerializer.Serialize(@event, eventType, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                CreatedAtUtc = @event.OccurredAtUtc
+            });
+            return;
+        }
 
         var shouldFlushOutbox = CanFlushOutboxImmediately();
         

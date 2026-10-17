@@ -101,7 +101,7 @@ export const CartItemRow: React.FC<CartItemRowProps> = ({
             {/* Product Image */}
             <div className="flex gap-4">
                 <a
-                    href={`/products/${item.sku}`}
+                    href={`/products/${encodeURIComponent(item.productId)}`}
                     className="flex-shrink-0"
                 >
                     <div className="w-20 h-20 bg-muted/10 rounded-lg overflow-hidden">
@@ -117,7 +117,7 @@ export const CartItemRow: React.FC<CartItemRowProps> = ({
                 {/* Product Info */}
                 <div className="flex-1 min-w-0">
                     <a
-                        href={`/products/${item.sku}`}
+                        href={`/products/${encodeURIComponent(item.productId)}`}
                         className="block hover:text-primary transition-colors"
                     >
                         <h3 className="font-medium text-text line-clamp-2">

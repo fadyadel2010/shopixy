@@ -23,6 +23,7 @@ namespace PointOfSale.Core.Analytics.Attribution;
 /// </summary>
 public class AttributionContext
 {
+    public Guid? SourceEventId { get; set; }
     /// <summary>
     /// Tenant identifier for multi-tenant isolation.
     /// </summary>

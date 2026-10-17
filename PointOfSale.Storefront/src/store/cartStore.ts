@@ -31,7 +31,7 @@ import {
     applyCoupon as applyCouponApi,
     removeCoupon as removeCouponApi,
     applyOrderDraft,
-} from '@/services/api';
+} from '../services/api/index';
 import type { CartDto, AppliedCouponInfo } from '@/types';
 import type { OrderDraft } from '@/types/chat';
 import { resolveCartFetchFailure } from './cartStateResolver';
@@ -122,6 +122,8 @@ export interface CartState {
     updatingItemId: string | null;
     /** Whether cart has been fetched at least once */
     isInitialized: boolean;
+    /** A displayed snapshot is not checkout authority after a failed refresh. */
+    requiresRefresh: boolean;
     /** Coupon-specific error code (for display) */
     couponError: string | null;
     /** Whether coupon operation is in progress */
@@ -224,6 +226,7 @@ function detectCartStateMismatch(cart: CartDto): string | null {
 }
 
 function rejectMismatchedCart(reason: string): void {
+    useCartStore.setState({ requiresRefresh: true });
     emitCartStateMismatchDetected('cart_store', reason);
 }
 
@@ -267,6 +270,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             couponError: null,
             error: null,
             hydrationSource: 'api',
+            requiresRefresh: false,
             skipNextFetch: false,
             recoveryMessage: null,
         });
@@ -316,6 +320,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
     error: null,
     updatingItemId: null,
     isInitialized: false,
+    requiresRefresh: true,
     couponError: null,
     isApplyingCoupon: false,
     hydrationSource: null,
@@ -358,6 +363,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                         isLoading: false,
                         isInitialized: true,
                         error: CART_MISMATCH_MESSAGE,
+                        requiresRefresh: true,
                     });
                     return;
                 }
@@ -367,6 +373,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                     isLoading: false,
                     isInitialized: true,
                     hydrationSource: 'api',
+                    requiresRefresh: false,
                     skipNextFetch: false,
                     recoveryMessage: null,
                 });
@@ -383,6 +390,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                     cart: resolution.nextCart,
                     isLoading: false,
                     error: resolution.message,
+                    requiresRefresh: true,
                     isInitialized: true,
                     hydrationSource: resolution.preserveLastValidCart ? previousHydrationSource : null,
                     skipNextFetch: false,
@@ -430,6 +438,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                 isLoading: false,
                 isInitialized: true,
                 hydrationSource: 'api',
+                requiresRefresh: false,
                 skipNextFetch: false,
                 recoveryMessage: null,
             });
@@ -527,6 +536,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                 updatingItemId: null,
                 isInitialized: true,
                 hydrationSource: 'api',
+                requiresRefresh: false,
                 skipNextFetch: false,
                 recoveryMessage: null,
             });
@@ -608,6 +618,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                 updatingItemId: null,
                 isInitialized: true,
                 hydrationSource: 'api',
+                requiresRefresh: false,
                 skipNextFetch: false,
                 recoveryMessage: null,
             });
@@ -666,7 +677,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
 
         try {
             await clearCartApi();
-            set({ isLoading: false });
+            set({ isLoading: false, requiresRefresh: false });
             return true;
         } catch (error) {
             console.error('[CartStore] Failed to clear cart:', error);
@@ -724,6 +735,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                 isInitialized: true,
                 couponError: null,
                 hydrationSource: 'api',
+                requiresRefresh: false,
                 skipNextFetch: false,
                 recoveryMessage: null,
             });
@@ -788,6 +800,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                 isInitialized: true,
                 couponError: null,
                 hydrationSource: 'api',
+                requiresRefresh: false,
                 skipNextFetch: false,
                 recoveryMessage: null,
             });
@@ -842,6 +855,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
                 isLoading: false,
                 isInitialized: true,
                 hydrationSource: 'api',
+                requiresRefresh: false,
                 skipNextFetch: false,
                 recoveryMessage: null,
             });
@@ -883,6 +897,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             isInitialized: false,
             isLoading: false,
             hydrationSource: 'recovery',
+            requiresRefresh: true,
             skipNextFetch: false,
             recoveryMessage: message ?? 'Your cart has been restored.',
         });
@@ -955,6 +970,8 @@ export const selectCartCurrencyOrThrow = (state: CartState): string => {
 };
 export const selectIsCartLoading = (state: CartState) => state.isLoading;
 export const selectCartError = (state: CartState) => state.error;
+export const selectCartIsConfirmed = (state: CartState) =>
+    state.requiresRefresh === false && !state.isLoading && !state.updatingItemId && !state.isApplyingCoupon && !state.error;
 export const selectCartRecoveryMessage = (state: CartState) => state.recoveryMessage;
 export const selectCartMergeInProgress = (state: CartState) => state.cartMergeInProgress;
 export const selectIsCartEmpty = (state: CartState) => (state.cart?.items.length ?? 0) === 0;

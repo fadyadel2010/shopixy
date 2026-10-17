@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-    Palette,
     Check,
-    Upload,
-    RotateCcw,
-    Loader2,
     AlertCircle,
     Sun,
     Moon,
@@ -189,6 +185,21 @@ const normalizeThemeState = (theme, fallbackPresetKey = DEFAULT_THEME.presetKey)
     borderRadius: normalizeBorderRadius(theme?.borderRadius),
 })
 
+// The admin contract always supplies complete, materialized draft/live values.
+// Missing fields are not permission to replace merchant content with defaults.
+const requireMaterializedThemes = (response) => {
+    for (const theme of [response?.draftTheme, response?.liveTheme]) {
+        if (!theme || typeof theme !== 'object'
+            || !COLOR_FIELDS.every(({ key }) => typeof theme.colors?.[key] === 'string' && theme.colors[key].length > 0)
+            || typeof theme.presetKey !== 'string' || !theme.presetKey
+            || typeof theme.font !== 'string' || !theme.font
+            || typeof theme.baseSize !== 'string' || !theme.baseSize
+            || theme.borderRadius == null) {
+            throw new Error('Complete materialized draft and live themes are required.')
+        }
+    }
+}
+
 const normalizeRowVersion = (rowVersion) => (
     typeof rowVersion === 'string' && rowVersion.trim() ? rowVersion.trim() : ''
 )
@@ -238,7 +249,7 @@ const ensurePresetOption = (presets, themeState) => {
 export function ThemeEditorPage() {
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
-    const { showSuccess, showError, showInfo } = useToast()
+    const { showSuccess, showInfo } = useToast()
     const { user } = useAuthStore()
 
     const [isLoading, setIsLoading] = useState(true)
@@ -251,6 +262,8 @@ export function ThemeEditorPage() {
     const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false)
     const previewRef = useRef(null)
     const editGenerationRef = useRef(0)
+    const mutationInFlightRef = useRef(false)
+    const mountedRef = useRef(true)
 
     const [themePresets, setThemePresets] = useState([
         {
@@ -268,12 +281,14 @@ export function ThemeEditorPage() {
     const [font, setFont] = useState(DEFAULT_THEME.font)
     const [baseSize, setBaseSize] = useState(DEFAULT_THEME.baseSize)
     const [borderRadius, setBorderRadius] = useState(DEFAULT_THEME.borderRadius)
-    const [publishedState, setPublishedState] = useState(DEFAULT_THEME)
+    const [, setPublishedState] = useState(DEFAULT_THEME)
     const [acceptedDraftState, setAcceptedDraftState] = useState(DEFAULT_THEME)
     const [acceptedRowVersion, setAcceptedRowVersion] = useState('')
 
     useEffect(() => {
+        mountedRef.current = true
         void loadThemeData()
+        return () => { mountedRef.current = false }
     }, [])
 
     const applyThemeState = (themeState) => {
@@ -289,6 +304,7 @@ export function ThemeEditorPage() {
         if (!acceptedResponse) {
             throw new Error('Theme response was rejected by backend store authority admission.')
         }
+        requireMaterializedThemes(acceptedResponse)
 
         const liveTheme = normalizeThemeState(
             acceptedResponse.liveTheme,
@@ -329,6 +345,7 @@ export function ThemeEditorPage() {
             if (!config) {
                 throw new Error('Theme configuration was rejected by backend store authority admission.')
             }
+            requireMaterializedThemes(config)
 
             const presetOptions = (presetResponse || []).map(mapPresetResponse)
             const liveTheme = normalizeThemeState(
@@ -366,9 +383,11 @@ export function ThemeEditorPage() {
             setPublishedState(liveTheme)
             setAcceptedRowVersion(normalizeRowVersion(config?.rowVersion))
             setIsDirty(false)
+            return true
         } catch (err) {
             console.error('Failed to load theme:', err)
             setError(isRTL ? 'فشل تحميل إعدادات الثيم' : 'Failed to load theme settings')
+            return false
         } finally {
             setIsLoading(false)
         }
@@ -391,6 +410,7 @@ export function ThemeEditorPage() {
             borderRadius,
         }, buildIfMatchOptions(rowVersion))
 
+        if (!mountedRef.current) return { nextPresets: themePresets, rowVersion: '', localEditsRetained: true }
         const localEditsRetained = editGenerationRef.current !== submittedGeneration
         const { nextPresets, rowVersion: acceptedResponseRowVersion } = syncThemeResponse(
             response,
@@ -445,6 +465,8 @@ export function ThemeEditorPage() {
     }
 
     const handleSaveDraft = async (rowVersionOverride = null) => {
+        if (mutationInFlightRef.current || !validateThemeCandidate({ colors, font, baseSize }).isValid) return
+        mutationInFlightRef.current = true
         setIsSaving(true)
         try {
             const { localEditsRetained } = await persistDraftTheme({ rowVersionOverride })
@@ -456,14 +478,18 @@ export function ThemeEditorPage() {
             if (err?.response?.status === 409) setConflict({ action: 'save', message: err?.response?.data?.message })
             else setFeedback({ kind: 'error', title: 'Appearance draft not saved', message: err?.response?.data?.message || 'Failed to save draft.' })
         } finally {
+            mutationInFlightRef.current = false
             setIsSaving(false)
         }
     }
 
     const handlePublish = async (rowVersionOverride = null) => {
+        if (mutationInFlightRef.current || !validateThemeCandidate({ colors, font, baseSize }).isValid) return
+        mutationInFlightRef.current = true
         setIsPublishing(true)
         try {
             const { nextPresets: latestPresets, rowVersion: draftRowVersion, localEditsRetained } = await persistDraftTheme({ silent: true, rowVersionOverride })
+            if (!mountedRef.current) return
             if (localEditsRetained) {
                 setIsPublishConfirmOpen(false)
                 setFeedback({ kind: 'info', title: 'Draft saved, publication paused', message: 'Newer unsaved edits were retained. Review and publish again.' })
@@ -491,6 +517,7 @@ export function ThemeEditorPage() {
             }
             else setFeedback({ kind: 'error', title: 'Appearance not published', message: err?.response?.data?.message || 'Failed to publish Colors & Typography.' })
         } finally {
+            mutationInFlightRef.current = false
             setIsPublishing(false)
         }
     }
@@ -516,13 +543,16 @@ export function ThemeEditorPage() {
 
     const handleLoadLatest = async () => {
         setConflict(null)
-        await loadThemeData()
-        setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted Appearance draft replaced your local candidate.' })
+        setFeedback(null)
+        if (await loadThemeData()) {
+            setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted Appearance draft replaced your local candidate.' })
+        }
     }
 
     const handleRetryConflict = async () => {
         try {
             const rawConfig = await storeConfigService.getStoreConfig()
+            if (!mountedRef.current) return
             const config = deriveCurrentStoreIdentityPresentation(rawConfig, user)
             const latestRowVersion = normalizeRowVersion(config?.rowVersion)
             if (!latestRowVersion) throw new Error('Latest Appearance version could not be admitted.')

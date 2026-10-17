@@ -1,22 +1,22 @@
 import { useEffect, useRef } from 'react'
 
+const colors = [
+    '#3b82f6', // blue
+    '#10b981', // green
+    '#f59e0b', // amber
+    '#ef4444', // red
+    '#8b5cf6', // purple
+    '#ec4899', // pink
+    '#06b6d4', // cyan
+    '#84cc16', // lime
+]
+
 /**
  * Simple Donut Chart Component
  * A lightweight chart component without external dependencies
  */
 export default function DonutChart({ data, height = 200 }) {
     const canvasRef = useRef(null)
-
-    const colors = [
-        '#3b82f6', // blue
-        '#10b981', // green
-        '#f59e0b', // amber
-        '#ef4444', // red
-        '#8b5cf6', // purple
-        '#ec4899', // pink
-        '#06b6d4', // cyan
-        '#84cc16', // lime
-    ]
 
     useEffect(() => {
         if (!data || data.length === 0) return

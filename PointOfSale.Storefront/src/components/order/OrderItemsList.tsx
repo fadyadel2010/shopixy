@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from '@/i18n';
 import { formatMoney, resolveProductImage } from '@/utils';
 import type { OrderItemDto } from '@/types/order';
 
@@ -78,6 +79,7 @@ interface OrderItemRowProps {
 }
 
 const OrderItemRow: React.FC<OrderItemRowProps> = ({ item, currency }) => {
+    const { t } = useTranslation();
     const imageSrc = resolveProductImage(item);
 
     return (
@@ -112,7 +114,7 @@ const OrderItemRow: React.FC<OrderItemRowProps> = ({ item, currency }) => {
                 <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center gap-3 text-sm">
                         <span className="text-muted">
-                            Qty: <span className="text-text font-medium">{item.quantity}</span>
+                            {t('product.quantity')}: <span className="text-text font-medium">{item.quantity}</span>
                         </span>
                         <span className="text-muted hidden sm:inline">
                             × {formatMoney(item.unitPrice, currency)}
@@ -140,10 +142,11 @@ export const OrderItemsList: React.FC<OrderItemsListProps> = ({
     currency,
     className = '',
 }) => {
+    const { t } = useTranslation();
     if (!items || items.length === 0) {
         return (
             <div className={`bg-muted/5 rounded-xl p-8 text-center ${className}`}>
-                <p className="text-muted">No items in this order</p>
+                <p className="text-muted">{t('order.tracking.noItems')}</p>
             </div>
         );
     }
@@ -173,15 +176,15 @@ export const OrderItemsList: React.FC<OrderItemsListProps> = ({
                             d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
                         />
                     </svg>
-                    Order Items
-                    <span className="text-sm font-normal text-muted ml-auto">
-                        {totalItems} {totalItems === 1 ? 'item' : 'items'}
+                    {t('order.tracking.items')}
+                    <span className="text-sm font-normal text-muted ms-auto">
+                        {t(totalItems === 1 ? 'order.tracking.itemCountOne' : 'order.tracking.itemCountMany', { count: totalItems })}
                     </span>
                 </h2>
             </div>
 
             {/* Items List */}
-            <ul className="px-5" role="list" aria-label="Order items">
+            <ul className="px-5" role="list" aria-label={t('order.tracking.items')}>
                 {items.map((item) => (
                     <OrderItemRow
                         key={item.productId}

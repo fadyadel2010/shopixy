@@ -13,7 +13,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../services/api', () => ({
     default: apiMock,
-    isRequestCanceled: (error) => error?.code === 'ERR_CANCELED',
+    isRequestCanceled: (error: { code?: string }) => error?.code === 'ERR_CANCELED',
 }))
 
 const usersMock = vi.hoisted(() => ({
@@ -75,11 +75,11 @@ const rolesResponse = {
     ],
 }
 
-const loginAs = (user) => useAuthStore.setState({ user, isAuthenticated: true, hasHydrated: true })
+const loginAs = (user: typeof ownerUser) => useAuthStore.setState({ user, isAuthenticated: true, hasHydrated: true })
 
 // Desktop table and mobile cards render the same row (only one is visible
 // per breakpoint via CSS), so duplicate action labels exist in the DOM.
-const menuButton = (username) => screen.getAllByLabelText(`User actions: ${username}`)[0]
+const menuButton = (username: string) => screen.getAllByLabelText(`User actions: ${username}`)[0]
 
 beforeEach(async () => {
     await i18n.changeLanguage('en')
@@ -95,7 +95,7 @@ afterEach(() => {
     useAuthStore.setState({ user: null, isAuthenticated: false, hasHydrated: true })
 })
 
-const renderPage = async (user) => {
+const renderPage = async (user: typeof ownerUser) => {
     loginAs(user)
     render(<UsersManagementPage />)
     await screen.findByText('Users Management')
@@ -230,7 +230,7 @@ describe('UsersManagementPage mutations', () => {
         await user.click(menuButton('cashier.one'))
         await user.click(screen.getByRole('menuitem', { name: 'Edit profile' }))
 
-        let resolveSave
+        let resolveSave!: (value: unknown) => void
         usersMock.updatePosUserProfile.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
         await user.click(screen.getByRole('button', { name: 'Save changes' }))
 

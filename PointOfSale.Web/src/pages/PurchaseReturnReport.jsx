@@ -6,9 +6,6 @@ import {
     RefreshCw,
     Download,
     Filter,
-    Calculator,
-    Banknote,
-    Scale,
     ShoppingBag
 } from 'lucide-react'
 import { useSettings } from '../contexts/SettingsContext'

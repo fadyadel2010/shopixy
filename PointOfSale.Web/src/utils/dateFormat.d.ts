@@ -1,0 +1,13 @@
+export type DateValue = Date | string | number | null | undefined;
+export function getLocaleForLanguage(language?: string): 'ar-EG' | 'en-US';
+export function parseDateInput(value?: string | null): Date | null;
+export function formatDateInputValue(value: DateValue): string;
+export function formatDate(value: DateValue, locale?: string, options?: Intl.DateTimeFormatOptions): string;
+export const formatDateTime: typeof formatDate;
+export const formatTime: typeof formatDate;
+export function formatNumber(value: unknown, locale?: string, options?: Intl.NumberFormatOptions): string;
+export const formatInteger: typeof formatNumber;
+export const formatCompactNumber: typeof formatNumber;
+export function formatCurrency(value: unknown, currency?: string, locale?: string, options?: Intl.NumberFormatOptions): string;
+export const formatCompactCurrency: typeof formatCurrency;
+export const formatSignedCurrency: typeof formatCurrency;

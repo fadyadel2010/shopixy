@@ -152,7 +152,6 @@ export default function AccountCard({ account, onRefresh }) {
     const isTerminalState = ['POISONED', 'LOGGED_OUT'].includes(account.status)
     const isConnecting = account.status === 'CONNECTING'
     const isConnected = ['Connected', 'CONNECTED'].includes(account.status)
-    const isDisconnected = ['Disconnected', 'DISCONNECTED'].includes(account.status) || isTerminalState
 
     return (
         <>

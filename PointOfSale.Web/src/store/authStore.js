@@ -22,7 +22,7 @@ export const clearLegacyPosTokenStorage = () => {
     LEGACY_AUTH_TOKEN_KEYS.forEach((key) => removeStoredValue(key))
 }
 
-const writeUserSession = (user) => {
+const writeUserSession = () => {
     clearLegacyPosTokenStorage()
     removeStoredValue(STORAGE_KEYS.TENANT_ID)
 }

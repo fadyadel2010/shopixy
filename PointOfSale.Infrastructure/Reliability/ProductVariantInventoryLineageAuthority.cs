@@ -276,8 +276,16 @@ public static class ProductVariantInventoryLineageAuthority
                       !reservation.IsDeleted &&
                       reservation.Status == InventoryReservationStatus.Active &&
                       reservation.ReservedQuantity > reservation.CommittedQuantity + reservation.ReleasedQuantity &&
-                      (reservation.ExpiresAtUtc == null || reservation.ExpiresAtUtc > nowUtc) &&
-                      reservation.ProductId != Guid.Empty &&
+                       (reservation.ExpiresAtUtc == null || reservation.ExpiresAtUtc > nowUtc ||
+                        dbContext.Orders.IgnoreQueryFilters().Any(order =>
+                            order.TenantId == tenantId && order.Id == reservation.OrderId && !order.IsDeleted &&
+                            order.Status != OrderStatus.Cancelled && order.Status != OrderStatus.Refunded &&
+                            (order.PaymentMethodCode.Trim().ToUpper() == "COD" || order.PaymentStatus == PaymentStatus.CashOnDelivery) &&
+                            dbContext.OrderItems.IgnoreQueryFilters().Any(item =>
+                                item.Id == reservation.OrderItemId && item.OrderId == order.Id && !item.IsDeleted &&
+                                item.ProductId == reservation.ProductId && item.VariantId == reservation.VariantId &&
+                                item.WarehouseId == reservation.WarehouseId))) &&
+                       reservation.ProductId != Guid.Empty &&
                       reservation.OrderItemId != Guid.Empty &&
                       !stock.IsDeleted &&
                       stock.ReservedQuantity > 0m

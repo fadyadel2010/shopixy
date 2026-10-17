@@ -5,6 +5,7 @@ import { deriveCurrentStoreIdentityPresentation } from '../auth/commerceHubVendo
 import { useAuthStore } from '../store/authStore'
 import { storeConfigService } from '../modules/storefront/services'
 import { useSettings } from '../contexts/SettingsContext'
+import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 
 /**
  * Storefront Status Card Component
@@ -26,6 +27,7 @@ export default function StorefrontStatusCard() {
     const isRTL = i18n.language === 'ar'
     const dir = isRTL ? 'rtl' : 'ltr'
     const tenantId = user?.tenantId
+    const canManage = canManageStorefrontSettings(user)
 
     const [loading, setLoading] = useState(true)
     const [storeConfig, setStoreConfig] = useState(null)
@@ -43,6 +45,7 @@ export default function StorefrontStatusCard() {
 
         try {
             setLoading(true)
+            setError(null)
             const response = await storeConfigService.getStoreConfig()
 
             if (requestId !== requestIdRef.current) {
@@ -52,12 +55,12 @@ export default function StorefrontStatusCard() {
             const nextStoreConfig = deriveCurrentStoreIdentityPresentation(response, user)
             setStoreConfig(nextStoreConfig)
             setError(nextStoreConfig ? null : t('storefront.failedToLoadStatus', 'Unable to load storefront status'))
-        } catch (err) {
+        } catch {
             if (requestId !== requestIdRef.current) {
                 return
             }
 
-            console.error('Error fetching store config:', err)
+            setStoreConfig(null)
             setError(t('storefront.failedToLoadStatus', 'Unable to load storefront status'))
         } finally {
             if (requestId === requestIdRef.current) {
@@ -151,14 +154,17 @@ export default function StorefrontStatusCard() {
                             {t('storefront.onlineStore', 'Online Store')}
                         </p>
                         <p className="text-sm text-gray-500 mt-2">
-                            {t('storefront.notConfigured', 'Not configured')}
+                            {error || t('storefront.notConfigured', 'Not configured')}
                         </p>
+                        {error ? <button type="button" onClick={fetchStoreConfig} className="mt-2 text-sm text-blue-700 underline">{t('common.retry', 'Retry')}</button> : null}
+                        {!error && canManage ? (
                         <button
                             onClick={goToSettings}
                             className="text-sm text-blue-600 hover:text-blue-700 mt-2 underline"
                         >
                             {t('storefront.setupNow', 'Set up now')} →
                         </button>
+                        ) : null}
                     </div>
                     <div className="text-4xl">🌐</div>
                 </div>
@@ -195,11 +201,14 @@ export default function StorefrontStatusCard() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                             </svg>
                         </button>
-                        <button
+                        {canManage ? <button
                             onClick={goToSettings}
                             className={`text-sm ${statusConfig.subtext} hover:underline`}
                         >
                             {t('storefront.manage', 'Manage')} →
+                        </button> : null}
+                        <button type="button" onClick={fetchStoreConfig} className={`text-sm ${statusConfig.subtext} hover:underline`}>
+                            {t('storefront.refreshStatus', 'Refresh status')}
                         </button>
                     </div>
                 </div>

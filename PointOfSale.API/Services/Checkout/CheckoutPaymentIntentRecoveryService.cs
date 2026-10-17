@@ -78,6 +78,10 @@ public sealed class CheckoutPaymentIntentRecoveryService
             .IgnoreQueryFilters()
             .Where(order =>
                 !order.IsDeleted &&
+                // COD deliberately awaits merchant confirmation without a gateway
+                // intent. Recovery must not auto-confirm it or expire it as a
+                // missing provider initiation.
+                (order.PaymentMethodCode == null || order.PaymentMethodCode.Trim().ToUpper() != "COD") &&
                 order.Status == OrderStatus.Pending &&
                 order.PaymentStatus == PaymentStatus.Pending &&
                 order.CreatedAt <= repairCutoffUtc &&

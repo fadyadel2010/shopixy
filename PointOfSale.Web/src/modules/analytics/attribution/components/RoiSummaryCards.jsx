@@ -43,7 +43,7 @@ export default function RoiSummaryCards({ data, loading }) {
     const overallRoi = data.overallRoi
 
     // Calculate CPA (Cost Per Acquisition)
-    const cpa = totalOrders > 0 && totalCost > 0 ? totalCost / totalOrders : null
+    const cpa = data.costPerAcquisition ?? null
 
     // Determine overall ROI status
     const getRoiStatus = () => {

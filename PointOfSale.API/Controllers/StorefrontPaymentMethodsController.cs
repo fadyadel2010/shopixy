@@ -71,7 +71,6 @@ public class StorefrontPaymentMethodsController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetPaymentMethods(CancellationToken cancellationToken)
     {
-        SetNoStoreHeaders();
 
         var traceId = GetTraceId();
         if (_tenantContext.TenantId is not Guid tenantId || tenantId == Guid.Empty)
@@ -219,11 +218,6 @@ public class StorefrontPaymentMethodsController : ControllerBase
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
     }
 
-    private void SetNoStoreHeaders()
-    {
-        Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
-        Response.Headers["Pragma"] = "no-cache";
-    }
 }
 
 /// <summary>

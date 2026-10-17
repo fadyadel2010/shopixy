@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useFormatting } from '../../hooks/useFormatting'
 import type { CreateReviewRequest, MarketingPlatform } from '../types'
 
 const RATING_VALUES = [1, 2, 3, 4, 5] as const
@@ -37,15 +36,15 @@ function StarIcon({ filled }: { filled: boolean }) {
 }
 
 interface ReviewModalProps {
+    isRTL: boolean
     requestId: string
     serviceCategory?: string
     onSubmit: (review: CreateReviewRequest) => Promise<void>
     onClose: () => void
 }
 
-export function ReviewModal({ requestId, serviceCategory, onSubmit, onClose }: ReviewModalProps) {
+export function ReviewModal({ requestId, serviceCategory, onSubmit, onClose, isRTL }: ReviewModalProps) {
     const { t } = useTranslation()
-    const { isRTL } = useFormatting()
     const isMarketing = serviceCategory?.toLowerCase() === 'marketing'
 
     const [rating, setRating] = useState<number | null>(null)

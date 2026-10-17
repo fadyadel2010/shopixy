@@ -1507,7 +1507,7 @@ public sealed class EventOutboxConsistencyArchitectureTests
         while (currentDir != null)
         {
             if (currentDir.GetFiles("*.sln").Any() ||
-                currentDir.GetDirectories("PointOfSale.API").Any())
+                File.Exists(Path.Combine(currentDir.FullName, "PointOfSale.API", "PointOfSale.API.csproj")))
             {
                 return currentDir.FullName;
             }

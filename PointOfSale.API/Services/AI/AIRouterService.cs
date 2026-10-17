@@ -76,6 +76,8 @@ public class AIRouterService : IAIRouterService
         }
 
         // Legacy single-model behavior (Phase 1)
+        if (!AIProviderTransport.ValidConfiguration(_options.Endpoint, _options.Model, _options.ApiKey, _options.TimeoutSeconds, _options.MaxTokens, _options.Temperature))
+            return CreateFallbackResponse("The assistant needs server configuration before it can answer.");
         return await ProcessLegacyAsync(context, cancellationToken);
     }
 
@@ -102,6 +104,8 @@ public class AIRouterService : IAIRouterService
             // Build prompts
             var systemPrompt = _promptManager.GetSystemPrompt();
             var userPrompt = _promptManager.BuildUserPrompt(context);
+            if (!AIProviderTransport.WithinPromptBudget(systemPrompt, userPrompt))
+                return CreateFallbackResponse("This request contains too much context. Please narrow your question.");
 
             if (_options.EnableDebugLogging)
             {
@@ -143,19 +147,17 @@ public class AIRouterService : IAIRouterService
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
 
-            var response = await _httpClient.SendAsync(request, cts.Token);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogError(
-                    "AI API error | CorrelationId: {CorrelationId} | Status: {Status} | Error: {Error}",
-                    correlationId, response.StatusCode, errorBody);
+                    "AI API error | CorrelationId: {CorrelationId} | Status: {Status}", correlationId, response.StatusCode);
                 return CreateFallbackResponse("I'm having trouble processing your request right now.");
             }
 
             // Parse response
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseBody = await AIProviderTransport.ReadBoundedAsync(response.Content, cts.Token);
             var aiResponse = ParseAIResponse(responseBody);
             var tokensUsed = ExtractTokenUsage(responseBody);
             await _rateLimiter.RecordRequestAsync(
@@ -175,8 +177,7 @@ public class AIRouterService : IAIRouterService
             if (_options.EnableDebugLogging)
             {
                 _logger.LogDebug(
-                    "AI Response | CorrelationId: {CorrelationId} | Response: {Response}",
-                    correlationId, aiResponse);
+                    "AI Response | CorrelationId: {CorrelationId} | Length: {Length}", correlationId, aiResponse.Length);
             }
 
             // Validate and parse response
@@ -195,6 +196,7 @@ public class AIRouterService : IAIRouterService
                 return CreateFallbackResponse("I need a bit more information to help you correctly.");
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (OperationCanceledException)
         {
             _logger.LogWarning("AI request timed out | CorrelationId: {CorrelationId}", correlationId);
@@ -256,6 +258,7 @@ public class AIRouterService : IAIRouterService
                 choices.GetArrayLength() > 0)
             {
                 var firstChoice = choices[0];
+                if (firstChoice.TryGetProperty("finish_reason", out var finish) && finish.GetString() is "length" or "content_filter") return null;
                 if (firstChoice.TryGetProperty("message", out var message) &&
                     message.TryGetProperty("content", out var content))
                 {
@@ -275,7 +278,7 @@ public class AIRouterService : IAIRouterService
                 return directResponse.GetString();
             }
 
-            _logger.LogWarning("Could not parse AI response format: {ResponseBody}", responseBody);
+            _logger.LogWarning("Could not parse AI response format");
             return null;
         }
         catch (JsonException ex)
@@ -301,4 +304,3 @@ public class AIRouterService : IAIRouterService
         };
     }
 }
-

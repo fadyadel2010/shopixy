@@ -130,6 +130,9 @@ public class OrderDeliveredEvent : IntegrationEvent, IAuthoritativeIntegrationEv
     public Guid OrderId { get; set; }
     public string OrderNumber { get; set; } = string.Empty;
     public DateTime DeliveredAt { get; set; }
+    public Guid? ShipmentId { get; set; }
+    public string? DeliveryReference { get; set; }
+    public string? ProofOfDeliveryUrl { get; set; }
 }
 
 /// <summary>

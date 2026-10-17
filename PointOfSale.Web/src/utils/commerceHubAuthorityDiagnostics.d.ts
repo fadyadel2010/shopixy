@@ -1,0 +1,1 @@
+export function deriveCommerceHubAuthorityDiagnostic(input: { surface: string; endpoint: string; query?: { isFetching?: boolean; isSuccess?: boolean; status?: string; error?: unknown }; presentation?: unknown }): { surface: string; endpoint: string; failureKind: string; status: number | null; code: string | null; traceId: string | null; requestId: string | null } | null;

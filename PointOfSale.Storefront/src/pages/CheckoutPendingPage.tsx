@@ -9,6 +9,7 @@ import { normalizeError, paymentStatusApi } from '@/services/api';
 import {
     type CanonicalPaymentStatusResponse,
     isPaymentStatusAccessDeniedFailure,
+    isAwaitingCodCollection,
     resolvePendingCheckoutAction,
 } from '@/features/checkout/paymentFlow';
 import { readPendingCheckoutRouteEvidence } from '@/features/checkout/postOrderNavigation';
@@ -258,6 +259,7 @@ export const CheckoutPendingPage: React.FC = () => {
         : hasFailed
             ? 'border-red-200 bg-red-50'
             : 'border-amber-200 bg-amber-50';
+    const awaitingCod = !isAccessDenied && !hasFailed && !requiresManualReview && isAwaitingCodCollection(paymentStatus);
     const statusTitleTone = isAccessDenied || hasFailed
         ? 'text-red-900'
         : requiresManualReview
@@ -329,9 +331,11 @@ export const CheckoutPendingPage: React.FC = () => {
                                 ? t('checkout.pending.accessDeniedTitle')
                                 : requiresManualReview
                                 ? t('checkout.pending.reviewTitle')
-                                : hasFailed
-                                ? t('checkout.pending.failedTitle')
-                                : t('checkout.pending.title')}
+                                 : hasFailed
+                                 ? t('checkout.pending.failedTitle')
+                                 : awaitingCod
+                                 ? t('checkout.pending.codTitle')
+                                 : t('checkout.pending.title')}
                         </h1>
 
                         <p className="mt-3 text-muted">
@@ -339,9 +343,11 @@ export const CheckoutPendingPage: React.FC = () => {
                                 ? t('checkout.pending.accessDeniedDescription')
                                 : requiresManualReview
                                 ? t('checkout.pending.reviewDescription')
-                                : hasFailed
-                                ? t('checkout.pending.failedDescription')
-                                : t('checkout.pending.description')}
+                                 : hasFailed
+                                 ? t('checkout.pending.failedDescription')
+                                 : awaitingCod
+                                 ? t('checkout.pending.codDescription')
+                                 : t('checkout.pending.description')}
                         </p>
 
                         <div className="mt-6 rounded-2xl border border-primary/10 bg-primary/5 p-4">
@@ -361,18 +367,22 @@ export const CheckoutPendingPage: React.FC = () => {
                                 <p className={`font-medium ${statusTitleTone}`}>
                                     {isAccessDenied
                                         ? t('checkout.pending.accessDeniedStatusTitle')
-                                        : requiresManualReview
-                                        ? t('checkout.pending.reviewStatusTitle')
-                                        : isTimedOut
+                                         : requiresManualReview
+                                         ? t('checkout.pending.reviewStatusTitle')
+                                         : awaitingCod
+                                         ? t('checkout.pending.codWaitingTitle')
+                                         : isTimedOut
                                         ? t('checkout.pending.timeoutTitle')
                                         : t('checkout.pending.waitingTitle')}
                                 </p>
                                 <p className={`mt-2 text-sm ${statusDescriptionTone}`}>
                                     {isAccessDenied
                                         ? t('checkout.pending.accessDeniedStatusDescription')
-                                        : requiresManualReview
-                                        ? t('checkout.pending.reviewStatusDescription')
-                                        : isTimedOut
+                                         : requiresManualReview
+                                         ? t('checkout.pending.reviewStatusDescription')
+                                         : awaitingCod
+                                         ? t('checkout.pending.codWaitingDescription')
+                                         : isTimedOut
                                         ? t('checkout.pending.timeoutDescription')
                                         : t('checkout.pending.waitingDescription')}
                                 </p>

@@ -76,7 +76,7 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
         ValidatePromoCrossChecks(context, findings);
         ValidateRefunds(context, findings);
         ValidateOrphanLedgers(context, findings);
-        ValidateExternalMoneyLifecycle(context, findings);
+        await ValidateExternalMoneyLifecycleAsync(context, findings, cancellationToken);
 
         var aggregateValidation = await ValidateAggregatesAsync(snapshotBoundaryUtc, findings, cancellationToken);
         var reportStatus = DetermineReportStatus(findings);
@@ -668,9 +668,10 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
         }
     }
 
-    private static void ValidateExternalMoneyLifecycle(
+    private async Task ValidateExternalMoneyLifecycleAsync(
         ReconciliationContext context,
-        ICollection<ReconciliationFinding> findings)
+        ICollection<ReconciliationFinding> findings,
+        CancellationToken cancellationToken)
     {
         foreach (var payment in context.Payments.Where(payment => IsExternalProvider(payment.Provider)))
         {
@@ -753,15 +754,21 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
         {
             if (refund.PaymentId.HasValue &&
                 context.PaymentById.TryGetValue(refund.PaymentId.Value, out var payment) &&
-                IsExternalProvider(payment.Provider) &&
-                (string.IsNullOrWhiteSpace(refund.Reference) || !IsConfirmedGatewayStatus(refund.GatewayStatus)))
+                IsExternalProvider(payment.Provider))
             {
+                if (!string.IsNullOrWhiteSpace(refund.Reference) && RefundCompletionEvidenceAuthority.IsProviderConfirmed(refund.GatewayStatus))
+                    continue;
+                if (await RefundCompletionEvidenceAuthority.HasManualPayoutEvidenceAsync(_dbContext, refund, payment, cancellationToken))
+                {
+                    context.OperatorAttestedManualRefundIds.Add(refund.Id);
+                    continue;
+                }
                 findings.Add(new ReconciliationFinding(
                     "ERROR",
                     "EXTERNAL_REFUND_CONFIRMATION_MISSING",
                     "Refund",
                     refund.Id,
-                    "External refund is locally completed without a confirmed provider refund reference.",
+                    "Refund of an external payment is completed without provider confirmation or qualified operator-attested manual payout evidence.",
                     refund.Currency,
                     refund.Amount,
                     null,
@@ -1333,6 +1340,7 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
             CheckedSubOrders = context.SubOrders.Count,
             CheckedRefunds = context.CompletedRefunds.Count,
             CheckedPromoUsages = context.PromoUsages.Count,
+            OperatorAttestedManualRefundIds = context.OperatorAttestedManualRefundIds.OrderBy(id => id).ToArray(),
             CheckedVendorIds = ResolveCheckedVendorIds(context),
             AffectedVendorIds = ResolveAffectedVendorIds(context, findings),
             CompensationActionCount = findings.Count(finding => !string.IsNullOrWhiteSpace(finding.CompensationAction)),
@@ -1611,20 +1619,6 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
     private static bool IsExternalProvider(PaymentProvider provider) =>
         provider is PaymentProvider.Stripe or PaymentProvider.Paymob;
 
-    private static bool IsConfirmedGatewayStatus(string? gatewayStatus)
-    {
-        if (string.IsNullOrWhiteSpace(gatewayStatus))
-        {
-            return false;
-        }
-
-        return gatewayStatus.Equals("confirmed", StringComparison.OrdinalIgnoreCase) ||
-               gatewayStatus.Equals("succeeded", StringComparison.OrdinalIgnoreCase) ||
-               gatewayStatus.Equals("success", StringComparison.OrdinalIgnoreCase) ||
-               gatewayStatus.Equals("paid", StringComparison.OrdinalIgnoreCase) ||
-               gatewayStatus.Equals("settled", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static decimal ResolveStoredFinalCommission(CommerceHubSubOrder subOrder)
     {
         var storedFinal = RoundCurrency(Math.Max(0m, subOrder.FinalPlatformCommissionAmount));
@@ -1663,6 +1657,7 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
 
     private sealed class ReconciliationContext
     {
+        public HashSet<Guid> OperatorAttestedManualRefundIds { get; } = [];
         public DateTime SnapshotBoundaryUtc { get; init; }
         public IReadOnlyList<CommerceHubSubOrder> SubOrders { get; init; } = [];
         public IReadOnlyDictionary<Guid, CommerceHubSubOrder> SubOrderById { get; init; } =
@@ -1765,6 +1760,7 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
 
     private sealed class FinancialReconciliationReportDetails
     {
+        public IReadOnlyList<Guid> OperatorAttestedManualRefundIds { get; init; } = [];
         public DateTime SnapshotBoundaryUtc { get; init; }
         public int CheckedSubOrders { get; init; }
         public int CheckedRefunds { get; init; }

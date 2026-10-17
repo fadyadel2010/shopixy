@@ -23,8 +23,7 @@
  * ```
  */
 
-import { useCallback, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useCallback } from 'react';
 import { AnalyticsEventType, type AnalyticsPayload } from '../eventTypes';
 import { buildAnalyticsEvent } from '../AnalyticsEventBuilder';
 import { enqueueAnalyticsEvent, flushAnalyticsQueue } from '../AnalyticsQueue';
@@ -33,12 +32,12 @@ import { markSessionActivity } from '../AnalyticsSession';
 /**
  * Debounce helper for filter/search events
  */
-function debounce<T extends (...args: any[]) => void>(fn: T, delay: number): T {
+function debounce<Args extends unknown[]>(fn: (...args: Args) => void, delay: number): (...args: Args) => void {
     let timeoutId: ReturnType<typeof setTimeout>;
-    return ((...args: Parameters<T>) => {
+    return (...args: Args) => {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => fn(...args), delay);
-    }) as T;
+    };
 }
 
 /**
@@ -83,19 +82,9 @@ export interface UseAnalyticsReturn {
  * Automatically tracks page views on route changes.
  */
 export function useAnalytics(): UseAnalyticsReturn {
-    const location = useLocation();
-    const lastPageViewRef = useRef<string>('');
-    const isFirstRenderRef = useRef(true);
-
     // Track page view
     const pageView = useCallback((customUrl?: string) => {
         const url = customUrl || window.location.href;
-
-        // Prevent duplicate page views for the same URL
-        if (url === lastPageViewRef.current) {
-            return;
-        }
-        lastPageViewRef.current = url;
 
         markSessionActivity();
 
@@ -107,20 +96,6 @@ export function useAnalytics(): UseAnalyticsReturn {
 
         enqueueAnalyticsEvent(event);
     }, []);
-
-    // Automatic page view on route change
-    useEffect(() => {
-        // Skip the first render to avoid duplicate page view
-        // (component mounts, then location effect fires)
-        if (isFirstRenderRef.current) {
-            isFirstRenderRef.current = false;
-            // Still fire page view on initial load
-            pageView();
-            return;
-        }
-
-        pageView();
-    }, [location.pathname, location.search, pageView]);
 
     // Track product impression
     const productImpression = useCallback((

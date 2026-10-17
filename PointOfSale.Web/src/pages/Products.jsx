@@ -18,7 +18,7 @@ import ProductExportPrintArea from '../components/ProductExportPrintArea'
 import ProductFeedDialog from '../components/ProductFeedDialog'
 import BulkMutationResult from '../components/bulk/BulkMutationResult'
 import { formatDateTime } from '../utils/dateFormat'
-import { useHasPermission } from '../components/PermissionGuard'
+import { useHasPermission } from '../hooks/usePosSessionPermission'
 import {
     EXPORT_SCOPE_CURRENT_VIEW,
     EXPORT_SCOPE_SELECTED,
@@ -606,7 +606,7 @@ export default function Products() {
 
     // PDF printing is asynchronous. Snapshot the click-time rows instead of
     // allowing later table/selection changes to mutate the pending document.
-    const pdfProducts = pdfExportRequest?.products || []
+    const pdfProducts = useMemo(() => pdfExportRequest?.products || [], [pdfExportRequest?.products])
 
     const pdfRows = useMemo(
         () => buildProductExportRows(pdfProducts, { t, formatCurrency }),

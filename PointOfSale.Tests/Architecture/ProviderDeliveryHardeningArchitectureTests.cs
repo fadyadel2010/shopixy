@@ -43,7 +43,7 @@ public sealed class ProviderDeliveryHardeningArchitectureTests
     public void ProviderDeliveryMigrationSnapshot_MustContainOutboxAndReplayAudit()
     {
         var snapshot = ReadRepoFile("PointOfSale.Infrastructure/Migrations/ApplicationDbContextModelSnapshot.cs");
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260722130000_HardenProviderDeliveryOutbox.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("ProviderDeliveryOutboxMessage", snapshot, StringComparison.Ordinal);
         Assert.Contains("ProviderDeliveryReplayAudit", snapshot, StringComparison.Ordinal);

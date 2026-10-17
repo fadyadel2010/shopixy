@@ -1,5 +1,6 @@
 export {
     ThemeAddToCartButton,
+    ThemeActionLink,
     ThemeBadge,
     ThemeButton,
     ThemeCategoryCard,

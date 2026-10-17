@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RefreshCw } from 'lucide-react'
 import DeliveryFunnel from '../components/DeliveryFunnel'
@@ -7,23 +7,23 @@ import { useToast } from '../../../components/Toast'
 
 export default function WhatsAppAnalyticsPage() {
     const { t } = useTranslation()
-    const { getAnalytics, loading, error } = useWhatsAppAnalytics()
+    const { getAnalytics, loading } = useWhatsAppAnalytics()
     const { showError } = useToast()
     const [metrics, setMetrics] = useState(null)
-    const [dateRange, setDateRange] = useState({ from: '', to: '' }) // Defaults to backend logic (e.g. 30 days)
+    const [dateRange] = useState({ from: '', to: '' }) // Defaults to backend logic (e.g. 30 days)
 
-    const fetchAnalytics = async () => {
+    const fetchAnalytics = useCallback(async () => {
         try {
             const data = await getAnalytics(dateRange.from, dateRange.to)
             setMetrics(data)
         } catch (err) {
             showError(err.message)
         }
-    }
+    }, [getAnalytics, dateRange.from, dateRange.to, showError])
 
     useEffect(() => {
         fetchAnalytics()
-    }, [dateRange])
+    }, [fetchAnalytics])
 
     const kpiCards = [
         { name: t('whatsapp.analytics.kpis.totalMessages'), value: metrics?.totalMessages || 0, color: 'text-gray-900' },

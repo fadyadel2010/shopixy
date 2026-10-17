@@ -17,7 +17,7 @@ namespace PointOfSale.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class WarehousesController : ControllerBase
+public partial class WarehousesController : ControllerBase
 {
     private const string IdempotencyKeyHeader = "Idempotency-Key";
     private const string RequestIdHeader = "X-Request-Id";

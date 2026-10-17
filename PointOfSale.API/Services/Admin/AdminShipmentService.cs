@@ -12,6 +12,8 @@ using PointOfSale.Core.Interfaces.Fulfillment;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Payments;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.EventBus;
+using PointOfSale.Infrastructure.Shipping;
 
 namespace PointOfSale.API.Services.Admin;
 
@@ -34,19 +36,22 @@ public class AdminShipmentService : IAdminShipmentService
     private readonly IOrderFulfillmentService _fulfillmentService;
     private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<AdminShipmentService> _logger;
+    private readonly IShipmentCancellationService? _cancellation;
 
     public AdminShipmentService(
         ApplicationDbContext context,
         IEventPublisher eventPublisher,
         IOrderFulfillmentService fulfillmentService,
         IMarketplaceEventOutboxService marketplaceEventOutbox,
-        ILogger<AdminShipmentService> logger)
+        ILogger<AdminShipmentService> logger,
+        IShipmentCancellationService? cancellation = null)
     {
         _context = context;
         _eventPublisher = eventPublisher;
         _fulfillmentService = fulfillmentService;
         _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
+        _cancellation = cancellation;
     }
 
     /// <inheritdoc />
@@ -73,8 +78,9 @@ public class AdminShipmentService : IAdminShipmentService
 
         if (!string.IsNullOrWhiteSpace(query.Carrier))
         {
+            var carrier = CarrierCodes.Normalize(query.Carrier);
             queryBuilder = queryBuilder.Where(s => 
-                s.CarrierCode.ToLower().Contains(query.Carrier.ToLower()));
+                s.CarrierCode.ToLower() == carrier);
         }
 
         if (query.FromDate.HasValue)
@@ -95,6 +101,15 @@ public class AdminShipmentService : IAdminShipmentService
         }
 
         // Get total count
+        if (query.IsCod.HasValue)
+            queryBuilder = queryBuilder.Where(s => s.IsCashOnDelivery == query.IsCod.Value);
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var search = query.Search.Trim();
+            queryBuilder = queryBuilder.Where(s => s.ShipmentNumber.Contains(search) ||
+                (s.TrackingNumber != null && s.TrackingNumber.Contains(search)) ||
+                s.Order.OrderNumber.Contains(search));
+        }
         var totalCount = await queryBuilder.CountAsync(cancellationToken);
 
         // Apply ordering and pagination
@@ -120,6 +135,16 @@ public class AdminShipmentService : IAdminShipmentService
                 UpdatedAt = s.UpdatedAt
             })
             .ToListAsync(cancellationToken);
+
+        var shipmentIds = shipments.Select(s => s.ShipmentId).ToArray();
+        var cancellationOperations = await _context.ShipmentCancellationOperations.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && shipmentIds.Contains(x.ShipmentId)).ToDictionaryAsync(x => x.ShipmentId, cancellationToken);
+        foreach (var item in shipments)
+            item.Cancellation = ShipmentCancellationService.ReadResult(new Shipment
+            {
+                Id = item.ShipmentId, TenantId = tenantId, OrderId = item.OrderId,
+                CarrierCode = item.CarrierCode, ShipmentNumber = item.ShipmentNumber, Status = item.Status
+            }, cancellationOperations.GetValueOrDefault(item.ShipmentId));
 
         _logger.LogInformation(
             "ListShipments | TenantId: {TenantId} | TotalCount: {TotalCount} | ReturnedCount: {ReturnedCount} | CorrelationId: {CorrelationId}",
@@ -155,6 +180,8 @@ public class AdminShipmentService : IAdminShipmentService
         }
 
         var details = MapToDetailsDto(shipment);
+        details.Cancellation = ShipmentCancellationService.ReadResult(shipment,
+            await _context.ShipmentCancellationOperations.AsNoTracking().SingleOrDefaultAsync(x => x.TenantId == tenantId && x.ShipmentId == shipmentId, cancellationToken));
 
         _logger.LogInformation(
             "GetShipmentDetails | TenantId: {TenantId} | ShipmentId: {ShipmentId} | ShipmentNumber: {ShipmentNumber} | Status: {Status} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
@@ -177,6 +204,8 @@ public class AdminShipmentService : IAdminShipmentService
 
         // CONCURRENCY GUARD: Use serializable isolation to prevent concurrent read-modify-write races.
         // Retry on serialization failures (PostgreSQL error code 40001).
+        var retryState = _context.Database.CurrentTransaction == null && !_context.ChangeTracker.HasChanges()
+            ? OwnedTransactionRetryState.Capture(_context) : null;
         const int maxRetries = 3;
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -337,7 +366,9 @@ public class AdminShipmentService : IAdminShipmentService
                 FulfillmentRequestSource.Manual,
                 "admin",
                 correlationId,
-                cancellationToken);
+                cancellationToken,
+                request.DeliveryReference,
+                request.ProofOfDeliveryUrl);
         }
         else
         {
@@ -370,9 +401,9 @@ public class AdminShipmentService : IAdminShipmentService
             UpdatedAtUtc = DateTime.UtcNow
         };
             }
-            catch (Exception ex) when (IsSerializationFailure(ex))
+            catch (Exception ex) when (retryState != null && IsSerializationFailure(ex))
             {
-                _context.ChangeTracker.Clear();
+                retryState.ClearRolledBackAttempt();
                 
                 if (attempt < maxRetries)
                 {
@@ -387,9 +418,9 @@ public class AdminShipmentService : IAdminShipmentService
                 else
                 {
                     // Terminal serialization failure after exhausting all retries
-                    _logger.LogError(
-                        "UpdateShipmentStatus | TenantId: {TenantId} | ShipmentId: {ShipmentId} | SERIALIZATION_FAILURE_TERMINAL | Attempt: {Attempt}/{MaxRetries} | CorrelationId: {CorrelationId} | Exception: {Exception}",
-                        tenantId, shipmentId, attempt, maxRetries, correlationId, ex.Message);
+                    _logger.LogError(ex,
+                        "UpdateShipmentStatus | TenantId: {TenantId} | ShipmentId: {ShipmentId} | SERIALIZATION_FAILURE_TERMINAL | Attempt: {Attempt}/{MaxRetries} | CorrelationId: {CorrelationId}",
+                        tenantId, shipmentId, attempt, maxRetries, correlationId);
                     
                     throw new InvalidOperationException(
                         $"Failed to update shipment {shipmentId} status after {maxRetries} attempts due to concurrent modifications (serialization failure). CorrelationId: {correlationId}. Please retry.",
@@ -417,6 +448,8 @@ public class AdminShipmentService : IAdminShipmentService
 
         // CONCURRENCY GUARD: Use serializable isolation to prevent concurrent read-modify-write races.
         // Retry on serialization failures (PostgreSQL error code 40001).
+        var retryState = _context.Database.CurrentTransaction == null && !_context.ChangeTracker.HasChanges()
+            ? OwnedTransactionRetryState.Capture(_context) : null;
         const int maxRetries = 3;
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -488,9 +521,9 @@ public class AdminShipmentService : IAdminShipmentService
             UpdatedAtUtc = DateTime.UtcNow
         };
             }
-            catch (Exception ex) when (IsSerializationFailure(ex))
+            catch (Exception ex) when (retryState != null && IsSerializationFailure(ex))
             {
-                _context.ChangeTracker.Clear();
+                retryState.ClearRolledBackAttempt();
                 
                 if (attempt < maxRetries)
                 {
@@ -505,9 +538,9 @@ public class AdminShipmentService : IAdminShipmentService
                 else
                 {
                     // Terminal serialization failure after exhausting all retries
-                    _logger.LogError(
-                        "UpdateTracking | TenantId: {TenantId} | ShipmentId: {ShipmentId} | TrackingNumber: {TrackingNumber} | SERIALIZATION_FAILURE_TERMINAL | Attempt: {Attempt}/{MaxRetries} | CorrelationId: {CorrelationId} | Exception: {Exception}",
-                        tenantId, shipmentId, request.TrackingNumber, attempt, maxRetries, correlationId, ex.Message);
+                    _logger.LogError(ex,
+                        "UpdateTracking | TenantId: {TenantId} | ShipmentId: {ShipmentId} | TrackingNumber: {TrackingNumber} | SERIALIZATION_FAILURE_TERMINAL | Attempt: {Attempt}/{MaxRetries} | CorrelationId: {CorrelationId}",
+                        tenantId, shipmentId, request.TrackingNumber, attempt, maxRetries, correlationId);
                     
                     throw new InvalidOperationException(
                         $"Failed to update shipment {shipmentId} tracking after {maxRetries} attempts due to concurrent modifications (serialization failure). CorrelationId: {correlationId}. Please retry.",
@@ -529,111 +562,26 @@ public class AdminShipmentService : IAdminShipmentService
         string correlationId,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation(
-            "CancelShipment | TenantId: {TenantId} | ShipmentId: {ShipmentId} | Reason: {Reason} | CorrelationId: {CorrelationId} | Action: CANCEL",
-            tenantId, shipmentId, request.Reason, correlationId);
-
-        // Validate reason
         if (string.IsNullOrWhiteSpace(request.Reason))
         {
-            _logger.LogWarning(
-                "CancelShipment | TenantId: {TenantId} | ShipmentId: {ShipmentId} | CANCELLATION_REASON_REQUIRED | CorrelationId: {CorrelationId}",
-                tenantId, shipmentId, correlationId);
             throw new ShipmentCancellationReasonRequiredException();
         }
-
-        // CONCURRENCY GUARD: Begin transaction BEFORE reading shipment to prevent stale-read race.
-        // Without this, concurrent cancellation requests could both validate against stale state
-        // (e.g., both see "InTransit") and produce duplicate cancellation events or overwrite
-        // each other's cancellation reasons.
-        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-
-        // Get shipment with tenant isolation inside transaction for row-level lock
-        var shipment = await _context.Shipments
-            .Where(s => s.TenantId == tenantId && s.Id == shipmentId)
-            .Include(s => s.Order)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (shipment == null)
+        var authority = _cancellation ?? throw new InvalidOperationException("Cancellation authority unavailable.");
+        ShipmentCancellationResult result;
+        try
         {
-            _logger.LogWarning(
-                "CancelShipment | TenantId: {TenantId} | ShipmentId: {ShipmentId} | NOT_FOUND | CorrelationId: {CorrelationId}",
-                tenantId, shipmentId, correlationId);
-            throw new AdminShipmentNotFoundException(shipmentId);
+            result = await authority.CancelForAdminAsync(tenantId, shipmentId, request.ActorUserId,
+                request.OperationId, request.Reason, correlationId, cancellationToken);
         }
-
-        // Idempotent cancellation is the only terminal cancellation response.
-        if (shipment.Status == ShipmentStatus.Cancelled)
-        {
-            _logger.LogWarning(
-                "CancelShipment | TenantId: {TenantId} | ShipmentId: {ShipmentId} | Status: {Status} | SHIPMENT_IMMUTABLE | CorrelationId: {CorrelationId}",
-                tenantId, shipmentId, shipment.Status, correlationId);
-            throw new AdminShipmentImmutableException(shipmentId, shipment.Status);
-        }
-
-        // Cancellation is a lifecycle transition, not an administrative overwrite.
-        if (!ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled))
-        {
-            throw new InvalidAdminShipmentStateException(shipmentId, shipment.Status, ShipmentStatus.Cancelled);
-        }
-
-        var oldStatus = shipment.Status;
-
-        // Update shipment
-        shipment.Status = ShipmentStatus.Cancelled;
-        shipment.CancelledAtUtc = DateTime.UtcNow;
-        shipment.CancellationReason = request.Reason;
-        shipment.UpdatedAt = DateTime.UtcNow;
-
-        // Append notes
-        var noteEntry = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm}: Shipment cancelled. Reason: {request.Reason}";
-        shipment.Notes = string.IsNullOrEmpty(shipment.Notes)
-            ? noteEntry
-            : $"{shipment.Notes}\n{noteEntry}";
-
-        // Emit events before SaveChanges so cancellation state and authoritative
-        // shipment outbox rows commit together.
-        await _eventPublisher.PublishAsync(new ShipmentCancelledEvent
-        {
-            TenantId = tenantId,
-            ShipmentId = shipment.Id,
-            OrderId = shipment.OrderId,
-            ShipmentNumber = shipment.ShipmentNumber,
-            OrderNumber = shipment.Order?.OrderNumber ?? string.Empty,
-            CancellationReason = request.Reason,
-            PreviousStatus = oldStatus,
-            CancelledAt = shipment.CancelledAtUtc ?? DateTime.UtcNow,
-            CorrelationId = correlationId
-        });
-
-        await _eventPublisher.PublishAsync(new ShipmentStatusChangedEvent
-        {
-            TenantId = tenantId,
-            ShipmentId = shipment.Id,
-            OrderId = shipment.OrderId,
-            ShipmentNumber = shipment.ShipmentNumber,
-            OrderNumber = shipment.Order?.OrderNumber ?? string.Empty,
-            PreviousStatus = oldStatus,
-            NewStatus = ShipmentStatus.Cancelled,
-            TrackingNumber = shipment.TrackingNumber,
-            CarrierName = shipment.CarrierCode,
-            CorrelationId = correlationId
-        });
-
-        await _context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        _logger.LogInformation(
-            "CancelShipment | TenantId: {TenantId} | ShipmentId: {ShipmentId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: Cancelled | SUCCESS | CorrelationId: {CorrelationId}",
-            tenantId, shipmentId, shipment.OrderId, oldStatus, correlationId);
-
+        catch (KeyNotFoundException) { throw new AdminShipmentNotFoundException(shipmentId); }
         return new AdminShipmentCancellationResponse
         {
-            ShipmentId = shipment.Id,
-            ShipmentNumber = shipment.ShipmentNumber,
-            OldStatus = oldStatus,
-            NewStatus = ShipmentStatus.Cancelled,
-            CancelledAtUtc = shipment.CancelledAtUtc ?? DateTime.UtcNow
+            ShipmentId = shipmentId, ShipmentNumber = result.ShipmentNumber, OldStatus = result.PreviousStatus ?? result.CurrentStatus,
+            OperationId = result.OperationId, Outcome = result.Outcome,
+            ConfirmationBasis = result.ConfirmationBasis, ConfirmedAtUtc = result.ConfirmedAtUtc,
+            CurrentStatus = result.CurrentStatus, NewStatus = result.CurrentStatus,
+            ExternalConfirmationExists = result.ExternalConfirmationExists, Code = result.Code,
+            CancelledAtUtc = result.ConfirmedAtUtc
         };
     }
 
@@ -763,6 +711,9 @@ public class AdminShipmentService : IAdminShipmentService
                     OrderId = shipment.OrderId,
                     OrderNumber = orderNumber,
                     DeliveredAt = shipment.DeliveredAtUtc ?? DateTime.UtcNow,
+                    ShipmentId = shipment.Id,
+                    DeliveryReference = shipment.Order?.DeliveryReference,
+                    ProofOfDeliveryUrl = shipment.Order?.ProofOfDeliveryUrl,
                     CorrelationId = correlationId,
                     OccurredAtUtc = eventClock.Next()
                 });
@@ -852,10 +803,7 @@ public class AdminShipmentService : IAdminShipmentService
     /// </summary>
     private static string? BuildTrackingUrl(ShippingMethod? shippingMethod, string trackingNumber)
     {
-        if (shippingMethod?.TrackingUrlTemplate == null || string.IsNullOrWhiteSpace(trackingNumber))
-            return null;
-
-        return shippingMethod.TrackingUrlTemplate.Replace("{trackingNumber}", trackingNumber);
+        return PointOfSale.Core.Helpers.ShipmentTrackingUrl.Build(shippingMethod?.TrackingUrlTemplate, trackingNumber);
     }
 
     private static string NormalizeManualCarrierCode(string carrierName)
@@ -896,6 +844,33 @@ public class AdminShipmentService : IAdminShipmentService
         {
             ShipmentId = shipment.Id,
             OrderId = shipment.OrderId,
+            CarrierCode = shipment.CarrierCode,
+            ServiceLevel = shipment.ServiceLevel,
+            AwbNumber = shipment.AwbNumber,
+            LabelUrl = shipment.LabelUrl,
+            LabelData = shipment.LabelData,
+            LabelFormat = shipment.LabelFormat,
+            IsCashOnDelivery = shipment.IsCashOnDelivery,
+            CodAmount = shipment.CodAmount,
+            CodCollected = shipment.CodCollected,
+            CodCollectedAtUtc = shipment.CodCollectedAtUtc,
+            LastCarrierSyncAtUtc = shipment.LastCarrierSyncAtUtc,
+            ExternalRegistrationState = shipment.ExternalRegistrationState,
+            ExternalRegistrationError = shipment.ExternalRegistrationError,
+            ExternalRegistrationAttemptCount = shipment.ExternalRegistrationAttemptCount,
+            ExternalRegistrationCompletedAtUtc = shipment.ExternalRegistrationCompletedAtUtc,
+            ExternalRegistrationRecoveryRequired = CarrierRegistrationEvidence.RequiresReconciliation(shipment),
+            ReadyForPickupAtUtc = shipment.ReadyForPickupAtUtc,
+            PickedUpAtUtc = shipment.PickedUpAtUtc,
+            InTransitAtUtc = shipment.ShippedAtUtc,
+            OutForDeliveryAtUtc = shipment.OutForDeliveryAtUtc,
+            FailedAtUtc = shipment.FailedAtUtc,
+            ReturnedAtUtc = shipment.ReturnedAtUtc,
+            FailureReason = shipment.FailureReason,
+            ReturnReason = shipment.ReturnReason,
+            DeliveryAttempts = shipment.DeliveryAttempts,
+            PackageCount = shipment.PackageCount,
+            WeightKg = shipment.WeightKg,
             OrderNumber = shipment.Order?.OrderNumber ?? string.Empty,
             ShipmentNumber = shipment.ShipmentNumber,
             Status = shipment.Status,
@@ -959,11 +934,22 @@ public class AdminShipmentService : IAdminShipmentService
         FulfillmentRequestSource source,
         string actor,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? deliveryReference = null,
+        string? proofOfDeliveryUrl = null)
     {
         var targetStatus = MapShipmentStatusToFulfillmentStatus(requestedStatus);
         OrderFulfillmentResult? result = null;
-        if (IsOutboundFulfillmentSynchronizationTarget(targetStatus))
+        if (requestedStatus == ShipmentStatus.Delivered && source == FulfillmentRequestSource.Manual)
+        {
+            result = await _fulfillmentService.SynchronizeFromShipmentAsync(shipment.OrderId, FulfillmentStatus.OutForDelivery,
+                source, shipment.Id, shipment.TrackingNumber, actor, $"shipment:{shipment.Id:N}:dispatch", cancellationToken);
+            if (result.Success)
+                result = await _fulfillmentService.MarkDeliveredAsync(shipment.OrderId, source,
+                    deliveryReference ?? shipment.Order.DeliveryReference, proofOfDeliveryUrl ?? shipment.Order.ProofOfDeliveryUrl,
+                    deliveredBy: actor, idempotencyKey: $"shipment:{shipment.Id:N}:delivered", ct: cancellationToken);
+        }
+        else if (IsOutboundFulfillmentSynchronizationTarget(targetStatus))
         {
             result = await _fulfillmentService.SynchronizeFromShipmentAsync(
                 shipment.OrderId,

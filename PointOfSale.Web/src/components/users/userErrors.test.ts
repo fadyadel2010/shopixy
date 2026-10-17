@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { userErrorKey, isVersionConflict, isAccessDenied } from './userErrors'
 
-const err = (status, code) => ({ response: { status, data: { code } } })
+const err = (status: number, code?: string) => ({ response: { status, data: { code } } })
 
 describe('userErrors', () => {
     it('maps version conflicts to the stale-data message', () => {

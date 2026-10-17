@@ -362,7 +362,7 @@ export async function executeDevelopmentCodRefundSimulation(refundId: string): P
         throw new Error('Development refund simulation is unavailable outside Development.')
     }
 
-    const idempotencyKey = `M1D-${refundId.replaceAll('-', '')}`
+    const idempotencyKey = `M1D-${refundId.replace(/-/g, '')}`
     const result = await superAdminApiClient.postRaw<{
         refundId: string
         idempotencyKey: string
@@ -395,7 +395,7 @@ export async function executeDevelopmentOnlineRefundSimulation(refundId: string)
         throw new Error('Development refund simulation is unavailable outside Development.')
     }
 
-    const idempotencyKey = `GATE3R-${refundId.replaceAll('-', '')}`
+    const idempotencyKey = `GATE3R-${refundId.replace(/-/g, '')}`
     const result = await superAdminApiClient.postRaw<{
         refundId: string
         idempotencyKey: string

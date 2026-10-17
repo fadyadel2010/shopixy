@@ -236,7 +236,8 @@ public sealed class StorefrontCartCouponRevalidationTests
             Mock.Of<ISmartOfferRedeemTokenService>(),
             dbContext,
             new CommerceReliabilityTelemetry(),
-            NullLogger<StorefrontCartController>.Instance)
+            NullLogger<StorefrontCartController>.Instance,
+            Mock.Of<PointOfSale.API.Services.Promotions.ICartDiscountAuthority>())
         {
             ControllerContext = new ControllerContext
             {

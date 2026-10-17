@@ -62,7 +62,7 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
     if ((status === 'unknown' && isLoading) || status === 'degraded') {
         return variant === 'desktop' ? (
             <div className="flex items-center gap-1">
-                <div className="rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white/80">
+                <div className="rounded-lg border border-current px-3 py-2 text-sm text-inherit opacity-80">
                     {status === 'degraded' ? t('auth.reconnecting') : t('auth.loading')}
                 </div>
             </div>
@@ -77,8 +77,9 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
                     {/* Account dropdown or link */}
                     <Link
                         to="/account"
+                        aria-label={t('header.account')}
                         onClick={onLinkClick}
-                        className="px-3 py-2 rounded-lg transition-all font-medium text-white/80 hover:text-white hover:bg-white/10 flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-white/50"
+                        className="px-3 py-2 rounded-lg transition-all font-medium text-inherit hover:opacity-80 flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-current"
                     >
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -90,7 +91,8 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
                     </Link>
                     <button
                         onClick={handleLogout}
-                        className="px-3 py-2 rounded-lg transition-all font-medium text-white/60 hover:text-white hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50"
+                        className="px-3 py-2 rounded-lg transition-all font-medium text-inherit hover:opacity-80 focus-visible:ring-2 focus-visible:ring-current"
+                        aria-label={t('header.logout')}
                         title={t('header.logout')}
                     >
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -108,14 +110,14 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
                 <Link
                     to={getAuthUrl('/login')}
                     onClick={onLinkClick}
-                    className="px-3 py-2 rounded-lg transition-all font-medium text-white/80 hover:text-white hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50"
+                    className="px-3 py-2 rounded-lg transition-all font-medium text-inherit hover:opacity-80 focus-visible:ring-2 focus-visible:ring-current"
                 >
                     {t('header.login')}
                 </Link>
                 <Link
                     to={getAuthUrl('/register')}
                     onClick={onLinkClick}
-                    className="px-3 py-2 rounded-lg transition-all font-medium bg-white/10 text-white hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/50"
+                    className="px-3 py-2 rounded-lg transition-all font-medium border border-current text-inherit hover:opacity-80 focus-visible:ring-2 focus-visible:ring-current"
                 >
                     {t('header.register')}
                 </Link>
@@ -131,7 +133,7 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
                 <Link
                     to="/account"
                     onClick={onLinkClick}
-                    className="flex items-center px-4 py-3.5 min-h-[44px] text-text hover:bg-primary/10 hover:text-primary transition-colors"
+                    className="flex items-center px-4 py-3.5 min-h-[44px] text-inherit hover:opacity-80 transition-colors"
                 >
                     <svg className="w-5 h-5 ltr:mr-3 rtl:ml-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -167,7 +169,7 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
             <Link
                 to={getAuthUrl('/login')}
                 onClick={onLinkClick}
-                className="flex items-center px-4 py-3.5 min-h-[44px] text-text hover:bg-primary/10 hover:text-primary transition-colors"
+                className="flex items-center px-4 py-3.5 min-h-[44px] text-inherit hover:opacity-80 transition-colors"
             >
                 <svg className="w-5 h-5 ltr:mr-3 rtl:ml-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -178,7 +180,7 @@ export const AuthNavItems: React.FC<AuthNavItemsProps> = ({
             <Link
                 to={getAuthUrl('/register')}
                 onClick={onLinkClick}
-                className="flex items-center px-4 py-3.5 min-h-[44px] text-primary font-medium hover:bg-primary/10 transition-colors"
+                className="flex items-center px-4 py-3.5 min-h-[44px] text-inherit font-medium hover:opacity-80 transition-colors"
             >
                 <svg className="w-5 h-5 ltr:mr-3 rtl:ml-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

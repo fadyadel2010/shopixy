@@ -17,7 +17,6 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
-    ArrowLeft,
     Save,
     Globe,
     Plus,
@@ -25,7 +24,6 @@ import {
     GripVertical,
     ChevronUp,
     ChevronDown,
-    Loader2,
     ExternalLink,
     FileText,
     Home,
@@ -108,7 +106,7 @@ export function NavigationEditor() {
     const [isSaving, setIsSaving] = useState(false)
     const [isPublishing, setIsPublishing] = useState(false)
     const [error, setError] = useState(null)
-    const [saveStatus, setSaveStatus] = useState('idle')
+    const [, setSaveStatus] = useState('idle')
     const [saveErrorBanner, setSaveErrorBanner] = useState(null)
     const [publishStatus, setPublishStatus] = useState('idle')
     const [publishErrorBanner, setPublishErrorBanner] = useState(null)
@@ -132,6 +130,8 @@ export function NavigationEditor() {
     const navigationLoadAbortRef = useRef(null)
     const targetsLoadAbortRef = useRef(null)
     const acceptedNavigationRef = useRef(null)
+    const publishInFlightRef = useRef(false)
+    const mountedRef = useRef(true)
 
     useEffect(() => {
         setActiveTab(resolveNavigationView(location.pathname, location.search))
@@ -168,11 +168,12 @@ export function NavigationEditor() {
 
         try {
             const admittedTargets = await cmsService.getNavigationTargets({ signal: controller.signal })
+            if (controller.signal.aborted) return null
             setTargets(admittedTargets)
             setTargetsStatus('ready')
             return admittedTargets
         } catch (err) {
-            if (isRequestCanceled(err)) {
+            if (controller.signal.aborted || isRequestCanceled(err)) {
                 return null
             }
             console.error('Failed to load navigation targets:', err)
@@ -205,9 +206,11 @@ export function NavigationEditor() {
 
     // Load navigation and selectable targets independently so one failure cannot hide the other.
     useEffect(() => {
+        mountedRef.current = true
         loadNavigation()
         void loadTargets()
         return () => {
+            mountedRef.current = false
             reset()
             clearScheduledSave(true)
             navigationLoadAbortRef.current?.abort()
@@ -232,10 +235,11 @@ export function NavigationEditor() {
         setConflict(null)
         try {
             const data = await cmsService.getNavigation({ signal: controller.signal })
+            if (controller.signal.aborted) return
             setNavigation(data)
             acceptedNavigationRef.current = data
         } catch (err) {
-            if (isRequestCanceled(err)) {
+            if (controller.signal.aborted || isRequestCanceled(err)) {
                 return
             }
             console.error('Failed to load navigation:', err)
@@ -257,6 +261,7 @@ export function NavigationEditor() {
         clearScheduledSave(false)
 
         const saveOperation = async () => {
+            if (!mountedRef.current) return false
             const submittedNavigation = candidate ?? useCmsStore.getState().navigation
             if (!submittedNavigation?.draft) {
                 return false
@@ -302,7 +307,7 @@ export function NavigationEditor() {
 
                 return savedNavigation
             } catch (err) {
-                if (isRequestCanceled(err)) {
+                if (controller.signal.aborted || isRequestCanceled(err)) {
                     return false
                 }
 
@@ -358,6 +363,7 @@ export function NavigationEditor() {
 
     // Debounced auto-save
     const debouncedSave = useCallback(() => {
+        if (publishInFlightRef.current) return
         clearScheduledSave(false)
         setSaveStatus('unsaved')
         setSaveErrorBanner(null)
@@ -374,10 +380,14 @@ export function NavigationEditor() {
     }, [isNavigationDirty, navigation, debouncedSave])
 
     const handlePublish = async () => {
-        if (!navigation?.draft || (!isNavigationDirty && !navigation.hasPendingChanges)) return
+        if (publishInFlightRef.current || !navigation?.draft || (!isNavigationDirty && !navigation.hasPendingChanges)) return
+        publishInFlightRef.current = true
+        setIsPublishing(true)
 
         const savedNavigation = await handleSave(true)
-        if (!savedNavigation) {
+        if (!savedNavigation || !mountedRef.current) {
+            publishInFlightRef.current = false
+            setIsPublishing(false)
             return
         }
 
@@ -387,11 +397,14 @@ export function NavigationEditor() {
         setConflict(null)
         try {
             const publishedNavigation = await cmsService.publishNavigation(savedNavigation.rowVersion)
-            setNavigation(publishedNavigation)
+            if (!mountedRef.current) return
+            const currentNavigation = useCmsStore.getState().navigation
+            const hasNewerEdits = getNavigationDraftFingerprint(currentNavigation) !== getNavigationDraftFingerprint(savedNavigation)
+            setNavigation(hasNewerEdits ? { ...publishedNavigation, draft: currentNavigation.draft, hasPendingChanges: true } : publishedNavigation)
             acceptedNavigationRef.current = publishedNavigation
-            setNavigationDirty(false)
+            setNavigationDirty(hasNewerEdits)
             setLastSavedAt(new Date().toISOString())
-            setSaveStatus('saved')
+            setSaveStatus(hasNewerEdits ? 'unsaved' : 'saved')
             setPublishStatus('published')
             setIsPublishConfirmOpen(false)
         } catch (err) {
@@ -416,6 +429,7 @@ export function NavigationEditor() {
                 setPublishErrorBanner(message)
             }
         } finally {
+            publishInFlightRef.current = false
             setIsPublishing(false)
         }
     }

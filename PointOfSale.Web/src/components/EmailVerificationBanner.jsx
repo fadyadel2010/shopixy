@@ -22,7 +22,7 @@ export default function EmailVerificationBanner() {
         try {
             const response = await api.get('/auth/verification-status')
             setStatus(response.data)
-        } catch (err) {
+        } catch {
             // If not authenticated or error, don't show banner
             setStatus({ emailVerified: true })
         }

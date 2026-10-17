@@ -137,8 +137,8 @@ describe('Wave 4 localization', () => {
     })
 
     it('keeps the variants namespace symmetric between en and ar (incl. common.stay)', () => {
-        expect(Object.keys((en as Record<string, Record<string, string>>).variants).sort())
-            .toEqual(Object.keys((ar as Record<string, Record<string, string>>).variants).sort())
+        expect(Object.keys(en.variants).sort())
+            .toEqual(Object.keys(ar.variants).sort())
         expect(lookup(en as unknown as Record<string, unknown>, 'common.stay')).toBe('Stay')
         expect(lookup(ar as unknown as Record<string, unknown>, 'common.stay')).toBeTruthy()
     })
@@ -165,7 +165,7 @@ describe('Wave 4 localization', () => {
     })
 
     it('uses canonical business Arabic terminology for the new variant keys', () => {
-        const variantsAr = (ar as Record<string, Record<string, string>>).variants
+        const variantsAr = ar.variants
         expect(variantsAr.optionBuilder).toBe('خيارات المتغير')
         expect(variantsAr.generateVariants).toBe('إنشاء المتغيرات')
         expect(variantsAr.skuBuilder).toBe('منشئ SKU')

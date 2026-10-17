@@ -43,15 +43,10 @@ public sealed class ShipmentFinalAuthorityCertificationTests
     public void FinalCertificationRecord_MustFreezeNoFrontendShipmentAuthorityEmergence()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/shipment-final-authority-certification-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         Assert.Contains("PASS M7-H Shipment Final Authority Certification", findings, StringComparison.Ordinal);
         Assert.Contains("No new shipment runtime code change was required", findings, StringComparison.Ordinal);
         Assert.Contains("Can frontend fabricate shipment authority? No.", findings, StringComparison.Ordinal);
-        Assert.Contains("PASS M7-H Shipment Final Authority Certification", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS M7-H Shipment Final Authority", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS M7-H Shipment Final Authority Rule", codexRules, StringComparison.Ordinal);
+        HistoricalShippingCertificationBoundary.AssertPriorClosureConditional();
     }
 }

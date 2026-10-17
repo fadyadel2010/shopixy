@@ -81,6 +81,7 @@
         "total": "Total",
         "previewTotal": "Preview Total",
         "beforeShipping": "Before shipping",
+        "refreshRequired": "These items are not confirmed. Refresh your cart before checkout.",
         "shippingCalculated": "Calculated at checkout",
         "previewShippingNotice": "Checkout recalculates shipping and overrides this preview total.",
         "checkout": "Proceed to Checkout",
@@ -157,6 +158,15 @@
         "cashOnDelivery": "Cash on Delivery",
         "review": "Review Order",
         "reviewOrder": "Review Order",
+        "reviewLabels": {
+            "note": "Note", "additional": "Additional details", "secure": "Your information is secure and encrypted",
+            "orderDate": "Order Date", "trackingNumber": "Tracking Number"
+        },
+        "confidence": {
+            "pricing": "Prices are revalidated when you place the order",
+            "shipping": "Shipping and stock are revalidated when you place the order",
+            "payment": "Delivery, customer payment and merchant remittance are separate"
+        },
         "backToCart": "Back to Cart",
         "backToShipping": "Back to Shipping",
         "backToPayment": "Back to Payment",
@@ -189,6 +199,7 @@
             "quantity": "Qty: {count}",
             "unitPrice": "{amount} each",
             "calculatingTotals": "Calculating server-side totals...",
+            "selectShipping": "Select a shipping method",
             "promotionSavings": "Promotion Savings",
             "cartPromotion": "Cart Promotion",
             "coupon": "Coupon",
@@ -392,6 +403,10 @@
             }
         },
         "pending": {
+            "codTitle": "Order saved — cash on delivery pending",
+            "codDescription": "Payment is due on delivery. No customer collection or merchant remittance has been confirmed.",
+            "codWaitingTitle": "Awaiting order processing",
+            "codWaitingDescription": "The backend controls order and delivery progress. This is not a gateway payment in progress.",
             "title": "Your payment is being processed",
             "description": "We have your order and we're waiting for backend payment confirmation before showing success.",
             "loading": "Checking the latest payment status...",
@@ -475,6 +490,17 @@
         }
     },
     "order": {
+        "tracking": {
+            "number": "Order #{number}", "estimated": "Estimated Delivery", "timeline": "Order Progress Timeline",
+            "progress": "Order progress", "current": "Current step", "completed": "Completed", "currentStatus": "Current order status",
+            "shipmentUnavailable": "Shipment information not available yet", "shipment": "Shipment Tracking", "carrier": "Carrier",
+            "trackingNumber": "Tracking Number", "trackWith": "Track with {carrier}", "shipmentHistory": "Shipment History",
+            "recipient": "Recipient", "phone": "Phone", "address": "Address", "notes": "Delivery Notes",
+            "items": "Order Items", "itemCountOne": "{count} item", "itemCountMany": "{count} items", "noItems": "No items in this order",
+            "refresh": "Refresh Status", "help": "Need Help?", "faq": "Frequently Asked Questions", "support": "Contact Support",
+            "labels": { "pending": "Order Placed", "confirmed": "Confirmed", "preparing": "Preparing", "shipped": "Shipped", "out_for_delivery": "Out for Delivery", "delivered": "Delivered", "cancelled": "Cancelled", "returned": "Returned", "failed": "Delivery Failed" },
+            "descriptions": { "pending": "Your order has been received", "confirmed": "Order confirmed and being processed", "preparing": "Your items are being prepared", "shipped": "Order is on the way", "out_for_delivery": "Your order will arrive today", "delivered": "Order has been delivered", "cancelled": "Order was cancelled", "returned": "Shipment was returned", "failed": "Delivery was unsuccessful" }
+        },
         "confirmation": "Order Confirmation",
         "thankYou": "Thank you for your order!",
         "orderNumber": "Order Number",
@@ -490,6 +516,7 @@
         "cancelled": "Cancelled"
     },
     "product": {
+        "selectOptions": "Select options",
         "addToCart": "Add to Cart",
         "outOfStock": "Out of Stock",
         "inStock": "In Stock",
@@ -779,6 +806,23 @@
             "nameTooShort": "Name must be at least 2 characters"
         },
         "verifyEmail": {
+            "verified": "Email Verified!",
+            "verifying": "Verifying your email...",
+            "pleaseWait": "Please wait while we verify your email address...",
+            "success": "Your email has been verified successfully!",
+            "alreadyVerified": "Your email is already verified!",
+            "alreadyVerifiedTitle": "Already Verified",
+            "invalidLink": "This verification link is invalid.",
+            "invalidLinkTitle": "Invalid Link",
+            "noToken": "No verification token provided.",
+            "expired": "This verification link has expired. Please request a new one.",
+            "alreadyUsed": "This verification link has already been used.",
+            "goToAccount": "Go to My Account",
+            "continueShopping": "Continue Shopping",
+            "requestNew": "Request New Verification",
+            "dispatchFailed": "Your account was created, but we could not send the verification email. Sign in to request another link.",
+            "pending": "Please verify your email address. You can request a new verification link below.",
+            "signInToResend": "Sign in to request a verification email",
             "title": "Verify your email",
             "description": "We sent a verification link to {email}. Please check your inbox.",
             "resendButton": "Resend verification email",
@@ -787,6 +831,7 @@
             "resendError": "Could not send verification email. Please try again later."
         },
         "social": {
+            "unavailable": "Social sign-in options could not be loaded. Email sign-in is still available.",
             "orContinueWith": "Or continue with",
             "loginWithGoogle": "Sign in with Google",
             "loginWithFacebook": "Sign in with Facebook",
@@ -796,6 +841,9 @@
             "facebookFailed": "Facebook Login failed. Please try again."
         },
         "errors": {
+            "INVALID_LOGIN_STATE": "This sign-in attempt expired or did not match this browser. Start again.",
+            "ACCOUNT_LINK_REQUIRED": "Sign in with your existing account method to resolve this identity.",
+            "PROVIDER_UNAVAILABLE": "The sign-in provider is unavailable. Please try again later.",
             "INVALID_CREDENTIALS": "Invalid email or password. Please try again.",
             "EMAIL_NOT_VERIFIED": "Please verify your email address to continue.",
             "ACCOUNT_DEACTIVATED": "Your account has been deactivated. Please contact support.",

@@ -168,19 +168,20 @@ export default function PurchaseInvoice() {
         }
     }, [showError, t])
 
+    const abortPendingRequests = useCallback(() => {
+        initialDataRequestControllerRef.current?.abort()
+        productSearchRequestControllerRef.current?.abort()
+        productPreparationControllersRef.current.forEach(controller => controller.abort())
+        productPreparationControllersRef.current.clear()
+        invoiceLoadRequestControllerRef.current?.abort()
+        printRequestControllerRef.current?.abort()
+    }, [])
+
     useEffect(() => {
         const controller = startAbortableRequest(initialDataRequestControllerRef)
         void fetchInitialData(controller.signal)
-
-        return () => {
-            initialDataRequestControllerRef.current?.abort()
-            productSearchRequestControllerRef.current?.abort()
-            productPreparationControllersRef.current.forEach(controller => controller.abort())
-            productPreparationControllersRef.current.clear()
-            invoiceLoadRequestControllerRef.current?.abort()
-            printRequestControllerRef.current?.abort()
-        }
-    }, [fetchInitialData])
+        return abortPendingRequests
+    }, [fetchInitialData, abortPendingRequests])
 
     useEffect(() => {
         productSearchRequestControllerRef.current?.abort()

@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from '@/i18n';
 import type { TimelineStep } from '@/types/order';
 
 // ============================================================================
@@ -99,6 +100,7 @@ interface MobileTimelineStepProps {
 }
 
 const MobileTimelineStep: React.FC<MobileTimelineStepProps> = ({ step, isLast }) => {
+    const { t, language } = useTranslation();
     return (
         <li
             className="relative pb-8 last:pb-0"
@@ -108,7 +110,7 @@ const MobileTimelineStep: React.FC<MobileTimelineStepProps> = ({ step, isLast })
             {!isLast && (
                 <div
                     className={`
-                        absolute top-12 left-6 w-0.5 h-full -ml-px
+                        absolute top-12 start-6 w-0.5 h-full -ms-px
                         ${step.status === 'completed' ? 'bg-green-300' : 'bg-muted/20'}
                     `}
                     aria-hidden="true"
@@ -129,10 +131,10 @@ const MobileTimelineStep: React.FC<MobileTimelineStepProps> = ({ step, isLast })
                     >
                         {step.label}
                         {step.status === 'current' && (
-                            <span className="sr-only"> (Current step)</span>
+                            <span className="sr-only"> ({t('order.tracking.current')})</span>
                         )}
                         {step.status === 'completed' && (
-                            <span className="sr-only"> (Completed)</span>
+                            <span className="sr-only"> ({t('order.tracking.completed')})</span>
                         )}
                     </p>
                     {step.description && (
@@ -147,7 +149,7 @@ const MobileTimelineStep: React.FC<MobileTimelineStepProps> = ({ step, isLast })
                     )}
                     {step.timestamp && (
                         <p className="text-xs text-muted mt-1">
-                            {new Date(step.timestamp).toLocaleString()}
+                            {new Date(step.timestamp).toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US')}
                         </p>
                     )}
                 </div>
@@ -209,6 +211,7 @@ export const OrderStatusTimeline: React.FC<OrderStatusTimelineProps> = ({
     steps,
     className = '',
 }) => {
+    const { t } = useTranslation();
     if (!steps || steps.length === 0) {
         return null;
     }
@@ -227,7 +230,7 @@ export const OrderStatusTimeline: React.FC<OrderStatusTimelineProps> = ({
             >
                 {currentStep && (
                     <>
-                        Current order status: {currentStep.label}.
+                        {t('order.tracking.currentStatus')}: {currentStep.label}.
                         {currentStep.description}
                     </>
                 )}
@@ -235,7 +238,7 @@ export const OrderStatusTimeline: React.FC<OrderStatusTimelineProps> = ({
 
             {/* Desktop Timeline - Horizontal */}
             <nav
-                aria-label="Order progress"
+                aria-label={t('order.tracking.progress')}
                 className="hidden md:block"
             >
                 <div
@@ -244,7 +247,7 @@ export const OrderStatusTimeline: React.FC<OrderStatusTimelineProps> = ({
                 >
                     {steps.map((step, index) => (
                         <DesktopTimelineStep
-                            key={step.id}
+                            key={step.eventKey ?? step.id}
                             step={step}
                             isLast={index === steps.length - 1}
                         />
@@ -254,13 +257,13 @@ export const OrderStatusTimeline: React.FC<OrderStatusTimelineProps> = ({
 
             {/* Mobile Timeline - Vertical */}
             <nav
-                aria-label="Order progress"
+                aria-label={t('order.tracking.progress')}
                 className="md:hidden"
             >
                 <ol className="relative">
                     {steps.map((step, index) => (
                         <MobileTimelineStep
-                            key={step.id}
+                            key={step.eventKey ?? step.id}
                             step={step}
                             isLast={index === steps.length - 1}
                         />

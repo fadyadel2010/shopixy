@@ -15,6 +15,8 @@ import ReportTruthBadge from '../../components/ReportTruthBadge'
 import * as finApi from '../../services/financialReportsApi'
 import { useRTL } from '../../hooks/useRTL'
 import { formatDate, formatDateInputValue, formatDateTime, parseDateInput } from '../../utils/dateFormat'
+import { useAuthStore } from '../../store/authStore'
+import { hasPosPermission } from '../../auth/posPermissions'
 
 export default function TreasuryClearingAging() {
     const { t } = useTranslation()
@@ -22,6 +24,7 @@ export default function TreasuryClearingAging() {
     const { showError, showSuccess } = useToast()
     const { formatCurrency } = useSettings()
     const { dir, locale } = useRTL()
+    const user = useAuthStore(state => state.user)
 
     const [loading, setLoading] = useState(true)
     const [report, setReport] = useState(null)
@@ -165,10 +168,18 @@ export default function TreasuryClearingAging() {
 
             {/* Evidence boundary: clearing is read-only money in transit. */}
             <div className="p-4 rounded-lg bg-slate-50 border border-slate-200" role="note">
+                {hasPosPermission(user, 'storefront.payments.manage') && <button className="btn-primary mb-3" onClick={() => navigate('/treasury/manual-cod-settlements')}>
+                    {t('manualCod.title')}
+                </button>}
+                {hasPosPermission(user, 'storefront.payments.manage') && hasPosPermission(user, 'finance.operate') &&
+                    <button className="btn-primary mb-3 ms-3" onClick={() => navigate('/treasury/carrier-remittances')}>{t('carrierRemittance.title')}</button>}
                 <p className="text-sm text-slate-700">
                     <strong>{t('treasury.inTransit', 'In transit')}: </strong>
-                    {t('treasury.clearingEvidenceBoundary', 'Clearing balances settle only through authenticated provider or carrier evidence in the payment lifecycle. Manual transfer or settlement from this screen is not possible.')}
-                </p>
+                     {t('treasury.clearingEvidenceBoundary', 'Clearing balances settle only through authenticated provider or carrier evidence in the payment lifecycle. Manual transfer or settlement from this screen is not possible.')}
+                 </p>
+                 <p className="text-sm text-slate-700 mt-2">
+                     {t('treasury.clearingSettlementUnavailable', 'COD and gateway clearing settlement is currently unavailable because authenticated carrier remittance or provider payout evidence is not integrated. Clearing balances cannot be moved through Treasury Transfers.')}
+                 </p>
             </div>
 
             {/* Status Banner */}

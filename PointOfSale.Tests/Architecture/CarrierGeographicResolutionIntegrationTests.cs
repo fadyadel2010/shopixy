@@ -81,7 +81,12 @@ public sealed class CarrierGeographicResolutionIntegrationTests
         var shipment = Read("PointOfSale.Core/Entities/Shipment.cs");
         var order = Read("PointOfSale.Core/Entities/Order.cs");
         var customerAddress = Read("PointOfSale.Core/Entities/Customer.cs");
-        var migration = Read("PointOfSale.Infrastructure/Migrations/20260705200000_Geo9CarrierGeographicResolution.cs");
+        const string retiredMigration = "20260705200000_Geo9CarrierGeographicResolution.cs";
+        Assert.False(File.Exists(Path.Combine(FindRoot(), "PointOfSale.Infrastructure/Migrations", retiredMigration)));
+        var migration = Read($"docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/{retiredMigration}");
+        var baseline = Read("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
+        Assert.Contains("CarrierGeographicMappingSnapshotJson", baseline, StringComparison.Ordinal);
+        Assert.Contains("CarrierGeographicMappingReleaseId", baseline, StringComparison.Ordinal);
 
         Assert.Contains("CarrierGeographicMappingSnapshotJson", shipment, StringComparison.Ordinal);
         Assert.Contains("CarrierGeographicMappingReleaseId", shipment, StringComparison.Ordinal);

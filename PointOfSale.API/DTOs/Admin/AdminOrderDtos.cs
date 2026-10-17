@@ -478,6 +478,7 @@ public class AdminPaymentIntentDto
 /// </summary>
 public class AdminShipmentDto
 {
+    public PointOfSale.Infrastructure.Shipping.ShipmentCancellationResult? Cancellation { get; set; }
     public Guid ShipmentId { get; set; }
     public string ShipmentNumber { get; set; } = string.Empty;
     public ShipmentStatus Status { get; set; }

@@ -34,7 +34,7 @@ export default function ShipmentSummaryCard({ shipment }) {
     }
 
     return (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden min-w-0 break-words">
             {/* Header with status */}
             <div className={`px-6 py-4 ${statusConfig.bgColor} border-b ${statusConfig.borderColor}`}>
                 <div className="flex items-center justify-between">
@@ -42,16 +42,16 @@ export default function ShipmentSummaryCard({ shipment }) {
                         <span className="text-2xl">{statusConfig.icon}</span>
                         <div>
                             <h2 className={`text-lg font-bold ${statusConfig.textColor}`}>
-                                {shipment.status}
+                                {t(`shipping.closure.statuses.${shipment.status}`, { defaultValue: shipment.status })}
                             </h2>
                             <p className="text-sm text-gray-600">
-                                Shipment #{shipment.shipmentNumber}
+                                {t('shipping.closure.shipment')} #{shipment.shipmentNumber}
                             </p>
                         </div>
                     </div>
                     {statusConfig.isTerminal && (
                         <span className="px-3 py-1 bg-gray-800 text-white text-xs font-medium rounded-full">
-                            FINAL
+                            {t('shipping.closure.final')}
                         </span>
                     )}
                 </div>
@@ -66,12 +66,12 @@ export default function ShipmentSummaryCard({ shipment }) {
                         <div className="flex items-start gap-3">
                             <ShoppingCart size={18} className="text-gray-400 mt-0.5" />
                             <div>
-                                <p className="text-sm text-gray-500">Order</p>
+                                <p className="text-sm text-gray-500">{t('shipping.closure.order')}</p>
                                 <Link
                                     to={`/ecommerce/orders?id=${shipment.orderId}`}
                                     className="text-blue-600 hover:underline font-medium flex items-center gap-1"
                                 >
-                                    View Order
+                                    {t('shipping.closure.viewOrder')}
                                     <ExternalLink size={14} />
                                 </Link>
                             </div>
@@ -81,7 +81,7 @@ export default function ShipmentSummaryCard({ shipment }) {
                         <div className="flex items-start gap-3">
                             <Truck size={18} className="text-gray-400 mt-0.5" />
                             <div>
-                                <p className="text-sm text-gray-500">Carrier</p>
+                                <p className="text-sm text-gray-500">{t('shipping.closure.carrier')}</p>
                                 <CarrierBadge carrierCode={shipment.carrierCode} />
                             </div>
                         </div>
@@ -91,7 +91,7 @@ export default function ShipmentSummaryCard({ shipment }) {
                             <div className="flex items-start gap-3">
                                 <Tag size={18} className="text-gray-400 mt-0.5" />
                                 <div>
-                                    <p className="text-sm text-gray-500">Service Level</p>
+                                    <p className="text-sm text-gray-500">{t('shipping.closure.service')}</p>
                                     <p className="font-medium text-gray-900">{shipment.serviceLevel}</p>
                                 </div>
                             </div>
@@ -102,9 +102,9 @@ export default function ShipmentSummaryCard({ shipment }) {
                             <div className="flex items-start gap-3">
                                 <Hash size={18} className="text-gray-400 mt-0.5" />
                                 <div>
-                                    <p className="text-sm text-gray-500">Tracking Number</p>
+                                    <p className="text-sm text-gray-500">{t('shipping.closure.tracking')}</p>
                                     <div className="flex items-center gap-2">
-                                        <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono">
+                                        <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono break-all">
                                             {shipment.trackingNumber}
                                         </code>
                                         {shipment.trackingUrl && (
@@ -114,7 +114,7 @@ export default function ShipmentSummaryCard({ shipment }) {
                                                 rel="noopener noreferrer"
                                                 className="text-blue-600 hover:underline text-sm flex items-center gap-1"
                                             >
-                                                Track
+                                                {t('shipping.closure.track')}
                                                 <ExternalLink size={12} />
                                             </a>
                                         )}
@@ -130,7 +130,7 @@ export default function ShipmentSummaryCard({ shipment }) {
                         <div className="flex items-start gap-3">
                             <Package size={18} className="text-gray-400 mt-0.5" />
                             <div>
-                                <p className="text-sm text-gray-500">Payment</p>
+                                <p className="text-sm text-gray-500">{t('shipping.closure.payment')}</p>
                                 <CodStatusBadge
                                     isCod={shipment.isCashOnDelivery}
                                     codAmount={shipment.codAmount}
@@ -144,15 +144,13 @@ export default function ShipmentSummaryCard({ shipment }) {
                         <div className="flex items-start gap-3">
                             <MapPin size={18} className="text-gray-400 mt-0.5" />
                             <div>
-                                <p className="text-sm text-gray-500">Recipient</p>
-                                <p className="font-medium text-gray-900">{shipment.recipientName}</p>
-                                {shipment.recipientPhone && (
-                                    <p className="text-sm text-gray-600">{shipment.recipientPhone}</p>
+                                <p className="text-sm text-gray-500">{t('shipping.closure.recipient')}</p>
+                                <p className="font-medium text-gray-900">{shipment.recipient?.name}</p>
+                                {shipment.recipient?.phone && (
+                                    <p className="text-sm text-gray-600">{shipment.recipient.phone}</p>
                                 )}
                                 <p className="text-sm text-gray-600 mt-1">
-                                    {shipment.shippingAddress}
-                                    {shipment.shippingCity && `, ${shipment.shippingCity}`}
-                                    {shipment.shippingCountry && `, ${shipment.shippingCountry}`}
+                                    {[shipment.recipient?.address, shipment.recipient?.city, shipment.recipient?.country].filter(Boolean).join(', ')}
                                 </p>
                             </div>
                         </div>
@@ -161,8 +159,8 @@ export default function ShipmentSummaryCard({ shipment }) {
                         <div className="flex items-start gap-3">
                             <Clock size={18} className="text-gray-400 mt-0.5" />
                             <div>
-                                <p className="text-sm text-gray-500">Created</p>
-                                <p className="font-medium text-gray-900">{formatDate(shipment.createdAt)}</p>
+                                <p className="text-sm text-gray-500">{t('shipping.closure.created')}</p>
+                                <p className="font-medium text-gray-900">{formatDate(shipment.createdAtUtc)}</p>
                             </div>
                         </div>
 
@@ -171,7 +169,7 @@ export default function ShipmentSummaryCard({ shipment }) {
                             <div className="flex items-start gap-3">
                                 <Clock size={18} className="text-gray-400 mt-0.5" />
                                 <div>
-                                    <p className="text-sm text-gray-500">Last Carrier Sync</p>
+                                    <p className="text-sm text-gray-500">{t('shipping.closure.lastSync')}</p>
                                     <p className="text-sm text-gray-600">{formatDate(shipment.lastCarrierSyncAtUtc)}</p>
                                 </div>
                             </div>
@@ -182,9 +180,9 @@ export default function ShipmentSummaryCard({ shipment }) {
                 {/* Shipping Cost */}
                 <div className="mt-6 pt-4 border-t border-gray-100">
                     <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Shipping Cost</span>
+                        <span className="text-gray-500">{t('shipping.closure.customerCharge')}</span>
                         <span className="text-lg font-bold text-gray-900">
-                            {shipment.shippingCost?.toLocaleString()} {shipment.currency || 'EGP'}
+                            {shipment.shippingCost?.toLocaleString()} {shipment.currency}
                         </span>
                     </div>
                 </div>

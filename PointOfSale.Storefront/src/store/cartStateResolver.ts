@@ -55,11 +55,19 @@ export function resolveCartFetchFailure(
         };
     }
 
+    if (status === 400 || status === 401 || status === 403 || status === 422) {
+        return {
+            nextCart: emptyCart,
+            message: 'Your cart could not be authorized or validated. Please reload it before continuing.',
+            preserveLastValidCart: false,
+        };
+    }
+
     if (isNetworkFailure(error)) {
         return {
             nextCart: previousCart ?? emptyCart,
             message: hasPreviousCart
-                ? 'Network error while syncing your cart. Showing your last saved cart until the backend can confirm it.'
+                ? 'Network error while syncing your cart. Previously loaded items are unconfirmed; refresh your cart before checkout.'
                 : 'Network error while loading your cart. Please try again.',
             preserveLastValidCart: hasPreviousCart,
         };
@@ -68,7 +76,7 @@ export function resolveCartFetchFailure(
     return {
         nextCart: previousCart ?? emptyCart,
         message: hasPreviousCart
-            ? message || 'We could not refresh your cart right now. Showing your last saved cart; retry before continuing.'
+            ? 'We could not refresh your cart. Previously loaded items are unconfirmed; refresh your cart before checkout.'
             : message || 'We could not load your cart right now. Please try again.',
         preserveLastValidCart: hasPreviousCart,
     };

@@ -1,4 +1,5 @@
 import sectionAuthority from '@theme-authority/shopixy-theme-authority.json'
+import { containsAsciiControl } from '../../../security/textCharacterPolicy'
 
 const FIELD_LABEL_OVERRIDES = {
     ctaText: 'CTA Text',
@@ -269,7 +270,7 @@ function isSafeAuthoredUrl(value, fieldType) {
         return true
     }
 
-    if (value.length > DEFAULT_URL_MAX_LENGTH || /[\s\u0000-\u001f\u007f\\]/.test(value) || value.startsWith('//')) {
+    if (value.length > DEFAULT_URL_MAX_LENGTH || containsAsciiControl(value) || /[\s\\]/.test(value) || value.startsWith('//')) {
         return false
     }
 

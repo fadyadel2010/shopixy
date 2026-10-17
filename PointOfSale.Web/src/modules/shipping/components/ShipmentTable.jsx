@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Package } from 'lucide-react'
 import CarrierBadge from './CarrierBadge'
 import CodStatusBadge from './CodStatusBadge'
+import CancellationOutcome from './CancellationOutcome'
 import { getStatusConfig } from '../hooks/useShipmentsApi'
 
 export default function ShipmentTable({
@@ -39,7 +40,7 @@ export default function ShipmentTable({
         return (
             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm font-medium ${config.bgColor} ${config.textColor}`}>
                 <span>{config.icon}</span>
-                {status}
+                {t(`shipping.closure.statuses.${status}`, { defaultValue: status })}
             </span>
         )
     }
@@ -51,7 +52,7 @@ export default function ShipmentTable({
                     <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
                         <Package className="text-gray-400" size={24} />
                     </div>
-                    <p className="text-gray-500">Loading shipments...</p>
+                    <p className="text-gray-500" role="status">{t('shipping.closure.loading')}</p>
                 </div>
             </div>
         )
@@ -83,22 +84,22 @@ export default function ShipmentTable({
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                                Shipment
+                                {t('shipping.closure.shipment')}
                             </th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                                Carrier
+                                {t('shipping.closure.carrier')}
                             </th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                                Status
+                                {t('shipping.closure.status')}
                             </th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                                Payment
+                                {t('shipping.closure.payment')}
                             </th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                                Created
+                                {t('shipping.closure.created')}
                             </th>
                             <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                                Updated
+                                {t('shipping.closure.updated')}
                             </th>
                         </tr>
                     </thead>
@@ -111,9 +112,7 @@ export default function ShipmentTable({
                             >
                                 <td className="px-6 py-4">
                                     <div>
-                                        <p className="font-medium text-gray-900">
-                                            {shipment.shipmentNumber}
-                                        </p>
+                                        <button className="font-medium text-gray-900 underline break-all" onClick={() => navigate(`/admin/shipping/shipments/${shipment.id}`)}>{shipment.shipmentNumber}</button>
                                         {shipment.trackingNumber && (
                                             <p className="text-sm text-gray-500 font-mono">
                                                 {shipment.trackingNumber}
@@ -129,6 +128,7 @@ export default function ShipmentTable({
                                 </td>
                                 <td className="px-6 py-4">
                                     <StatusBadge status={shipment.status} />
+                                    <CancellationOutcome result={shipment.cancellation} />
                                 </td>
                                 <td className="px-6 py-4">
                                     <CodStatusBadge
@@ -156,9 +156,7 @@ export default function ShipmentTable({
             {pagination.totalPages > 1 && (
                 <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
                     <p className="text-sm text-gray-500">
-                        Showing {((pagination.page - 1) * pagination.pageSize) + 1} to{' '}
-                        {Math.min(pagination.page * pagination.pageSize, pagination.totalCount)} of{' '}
-                        {pagination.totalCount} shipments
+                        {t('shipping.closure.total', { count: pagination.totalCount })}
                     </p>
                     <div className="flex items-center gap-2">
                         <button
@@ -170,7 +168,7 @@ export default function ShipmentTable({
                         </button>
 
                         <span className="px-4 py-2 text-sm font-medium text-gray-700">
-                            Page {pagination.page} of {pagination.totalPages}
+                            {t('shipping.closure.page', { page: pagination.page, pages: pagination.totalPages })}
                         </span>
 
                         <button

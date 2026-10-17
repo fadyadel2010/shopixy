@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const service = vi.hoisted(() => ({
     createPage: vi.fn(),
     getPage: vi.fn(),
-    getPageVersion: (page: any) => page?.draft?.version ?? page?.published?.version ?? null,
-    isConcurrencyConflict: (error: any) => (
+    getPageVersion: (page: { draft?: { version?: number } | null; published?: { version?: number } | null } | null) => page?.draft?.version ?? page?.published?.version ?? null,
+    isConcurrencyConflict: (error: { status?: number; code?: string } | null) => (
         error?.status === 409 && error?.code === 'MARKETPLACE_CMS_CONCURRENCY_CONFLICT'
     ),
     previewPage: vi.fn(),

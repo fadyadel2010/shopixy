@@ -320,6 +320,19 @@ export function ThemeButton({
     );
 }
 
+/** Navigation action with the same visual/focus treatment as the theme's buttons. */
+export function ThemeActionLink({ themeId, href, className, children }: {
+    themeId?: string | null;
+    href: string;
+    className?: string;
+    children: React.ReactNode;
+}) {
+    return <AffiliateLink href={href} className={cx(
+        'inline-flex min-h-9 w-full items-center justify-center gap-1',
+        buttonStyles[normalizeThemeComponentTheme(themeId)], className
+    )}>{children}</AffiliateLink>;
+}
+
 export function ThemeBadge({
     themeId,
     children,

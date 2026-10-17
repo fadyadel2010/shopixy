@@ -192,6 +192,17 @@ describe('Wave 0 — Storefront Constitutional Alignment', () => {
     })
 
     describe('5. Discoverability recovery (Shipping link)', () => {
+        it('does not infer shipment permission from CommerceHub orders capability', async () => {
+            useAuthStore.setState({ user: commerceHubVendorUser, isAuthenticated: true, hasHydrated: true })
+            render(
+                <MemoryRouter initialEntries={['/storefront']}>
+                    <Sidebar isOpen onClose={() => {}} />
+                </MemoryRouter>
+            )
+            expect(await screen.findByRole('button', { name: 'Storefront' })).toBeInTheDocument()
+            expect(document.querySelector('a[href="/admin/shipping/shipments"]')).toBeNull()
+        })
+
         it('uses /ecommerce/shipping-methods as the canonical Shipping sidebar link', () => {
             const source = sidebarSource()
             const ia = iaSource()

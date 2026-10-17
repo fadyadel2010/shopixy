@@ -61,7 +61,7 @@ public class AdminPixelTrackingController : ControllerBase
     {
         var tenantId = TenantId;
 
-        if (!Enum.TryParse<PixelOverrideStrategy>(dto.Strategy, true, out var strategy))
+        if (!Enum.TryParse<PixelOverrideStrategy>(dto.Strategy, true, out var strategy) || !Enum.IsDefined(strategy))
         {
             return BadRequest("Invalid strategy. Allowed: Percentage, Fixed");
         }
@@ -71,12 +71,15 @@ public class AdminPixelTrackingController : ControllerBase
         {
             foreach (var p in dto.AppliesTo)
             {
-                if (Enum.TryParse<PixelProvider>(p, true, out var provider))
+                if (Enum.TryParse<PixelProvider>(p, true, out var provider) && Enum.IsDefined(provider))
                 {
                     appliesTo.Add(provider);
                 }
+                else return BadRequest("Invalid pixel provider. Allowed: Meta, Google, TikTok");
             }
         }
+
+        if (!ValidOverride(strategy, dto.Value)) return BadRequest("Invalid override value. Percentage must be 0–100; fixed value must be 0–1000000.");
 
         var config = new PixelTrackingConfig
         {
@@ -84,7 +87,7 @@ public class AdminPixelTrackingController : ControllerBase
             IsEnabled = dto.IsEnabled,
             Strategy = strategy,
             Value = dto.Value,
-            AppliesTo = appliesTo.ToArray(),
+            AppliesTo = appliesTo.Distinct().ToArray(),
             UpdatedBy = User.Identity?.Name ?? "Admin"
         };
 
@@ -103,7 +106,7 @@ public class AdminPixelTrackingController : ControllerBase
     {
         var tenantId = TenantId;
         
-        if (!Enum.TryParse<PixelOverrideStrategy>(strategyStr, true, out var strategy))
+        if (!Enum.TryParse<PixelOverrideStrategy>(strategyStr, true, out var strategy) || !Enum.IsDefined(strategy) || !ValidOverride(strategy, value) || orderTotal < 0 || orderTotal > 1000000000000m)
         {
             return BadRequest("Invalid strategy");
         }
@@ -198,7 +201,7 @@ public class AdminPixelTrackingController : ControllerBase
     {
         var tenantId = TenantId;
 
-        if (!Enum.TryParse<PixelOverrideStrategy>(dto.Strategy, true, out var strategy))
+        if (!Enum.TryParse<PixelOverrideStrategy>(dto.Strategy, true, out var strategy) || !Enum.IsDefined(strategy) || !ValidOverride(strategy, dto.Value))
         {
             return BadRequest("Invalid strategy");
         }
@@ -242,7 +245,7 @@ public class AdminPixelTrackingController : ControllerBase
         [FromQuery] string strategyStr,
         [FromQuery] decimal value)
     {
-        if (!Enum.TryParse<PixelOverrideStrategy>(strategyStr, true, out var strategy))
+        if (!Enum.TryParse<PixelOverrideStrategy>(strategyStr, true, out var strategy) || !Enum.IsDefined(strategy) || !ValidOverride(strategy, value) || lineTotal < 0 || lineTotal > 1000000000000m)
         {
             return BadRequest("Invalid strategy");
         }
@@ -275,6 +278,9 @@ public class AdminPixelTrackingController : ControllerBase
             StrategyDescription = description
         });
     }
+
+    private static bool ValidOverride(PixelOverrideStrategy strategy, decimal value) =>
+        value >= 0 && value <= (strategy == PixelOverrideStrategy.Percentage ? 100m : 1000000m);
 
     private static AdminPixelTrackingDtos.ProductPixelOverrideDto MapToDto(ProductPixelOverride entity)
     {

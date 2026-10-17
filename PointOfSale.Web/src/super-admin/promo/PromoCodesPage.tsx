@@ -463,9 +463,9 @@ export default function PromoCodesPage() {
             }),
     })
 
-    const promoCodes = promoCodesQuery.data?.promoCodes ?? []
-    const categories = categoriesQuery.data ?? []
-    const vendors = vendorsQuery.data ?? []
+    const promoCodes = useMemo(() => promoCodesQuery.data?.promoCodes ?? [], [promoCodesQuery.data?.promoCodes])
+    const categories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
+    const vendors = useMemo(() => vendorsQuery.data ?? [], [vendorsQuery.data])
 
     const categoriesById = useMemo(
         () =>

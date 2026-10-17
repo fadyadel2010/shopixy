@@ -9,7 +9,7 @@
  * DOMAIN-3.1-B: Backed by real READ backend data via useDomainList hook.
  */
 
-import { useState, useMemo, useRef } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search, Filter, ArrowUpDown, MoreVertical, Archive, RotateCcw, Trash2, Shield } from 'lucide-react'
 
@@ -22,7 +22,7 @@ import {
     useAuthoringGuard,
 } from '../../authoringPlatform'
 
-import { useDomainList, useDomainMutations, LOAD_STATES } from '../hooks'
+import { useDomainList, useDomainMutations } from '../hooks'
 
 export function DomainListPage() {
     const { t } = useTranslation()
@@ -33,10 +33,8 @@ export function DomainListPage() {
     const {
         data,
         params,
-        state,
         error,
         isLoading,
-        isRefreshing,
         isEmpty,
         isError,
         isUnauthorized,
@@ -45,9 +43,6 @@ export function DomainListPage() {
         setSort,
         goToPage,
         refetch,
-        refresh,
-        page,
-        pageSize,
     } = useDomainList({ search: searchTerm })
 
     const { requestNavigation } = useAuthoringGuard({ isDirty: false, isBusy: isLoading })
@@ -60,7 +55,6 @@ export function DomainListPage() {
         startDomainVerification,
         isMutating,
         mutationError,
-        clearError,
     } = useDomainMutations()
 
     const handleNavigate = (path) => {
@@ -89,7 +83,7 @@ export function DomainListPage() {
         const canArchive = !isDeleted && !isArchived && !isPrimary
         const canDelete = !isDeleted && !isArchived && !isPrimary
         const canPromote = !isPrimary &&
-            (domain.lifecycleState === 'SslActive' || domain.lifecycleState === 'Verified')
+            domain.lifecycleState === 'SslActive'
         const canStartVerification = !isPrimary && domain.lifecycleState === 'Draft'
 
         if (canStartVerification) actions.push('startVerification')
@@ -132,9 +126,11 @@ export function DomainListPage() {
                     await startDomainVerification(id, { expectedVersion: version })
                     break
             }
-            refetch()
-        } finally {
+            await refetch()
             setConfirmDialog({ open: false, action: null, domain: null })
+        } catch {
+            // The hook renders the error. Retain confirmation for retry and
+            // consume the event handler's rejected promise.
         }
     }
 
@@ -211,11 +207,11 @@ export function DomainListPage() {
     const domains = data?.items || []
 
     const columns = [
-        { key: 'hostName', labelKey: 'storefront.domains.hostname', fallbackLabel: 'Domain' },
-        { key: 'domainType', labelKey: 'storefront.domains.type', fallbackLabel: 'Type' },
-        { key: 'lifecycleState', labelKey: 'storefront.domains.status', fallbackLabel: 'Status' },
-        { key: 'sslStatus', labelKey: 'storefront.domains.ssl', fallbackLabel: 'SSL' },
-        { key: 'createdAtUtc', labelKey: 'storefront.domains.created', fallbackLabel: 'Created' },
+        { key: 'hostName', sortKey: 'hostname', labelKey: 'storefront.domains.hostname', fallbackLabel: 'Domain' },
+        { key: 'domainType', sortKey: 'type', labelKey: 'storefront.domains.type', fallbackLabel: 'Type' },
+        { key: 'lifecycleState', sortKey: 'status', labelKey: 'storefront.domains.status', fallbackLabel: 'Status' },
+        { key: 'sslStatus', labelKey: 'storefront.domains.sslLabel', fallbackLabel: 'SSL' },
+        { key: 'createdAtUtc', sortKey: 'created', labelKey: 'storefront.domains.created', fallbackLabel: 'Created' },
     ]
 
     return (
@@ -327,33 +323,27 @@ export function DomainListPage() {
                         <thead>
                             <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
                                 {columns.map((col) => {
-                                    const isActive = params.sortBy === col.key
+                                    const isActive = params.sortBy === col.sortKey
                                     const direction = isActive ? (params.sortDir === 'asc' ? 'asc' : 'desc') : null
                                     return (
                                         <th
                                             key={col.key}
                                             className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400"
+                                            aria-sort={col.sortKey ? direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none' : undefined}
                                         >
-                                            <button
+                                            {col.sortKey ? <button
                                                 type="button"
-                                                onClick={() => handleSort(col.key)}
+                                                onClick={() => handleSort(col.sortKey)}
                                                 aria-label={t(
                                                     'storefront.domains.sortBy',
                                                     'Sort by {{field}}',
                                                     { field: t(col.labelKey, col.fallbackLabel) },
                                                 )}
-                                                aria-sort={
-                                                    direction === 'asc'
-                                                        ? 'ascending'
-                                                        : direction === 'desc'
-                                                          ? 'descending'
-                                                          : 'none'
-                                                }
                                                 className="flex items-center gap-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                                             >
                                                 {t(col.labelKey, col.fallbackLabel)}
                                                 <ArrowUpDown size={14} aria-hidden="true" />
-                                            </button>
+                                            </button> : t(col.labelKey, col.fallbackLabel)}
                                         </th>
                                     )
                                 })}
@@ -373,7 +363,7 @@ export function DomainListPage() {
                                             key={col.key}
                                             className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100"
                                         >
-                                            {domain[col.key]}
+                                            {col.key === 'hostName' ? <button type="button" onClick={() => handleNavigate(`/storefront/domains/${domain.id}`)} className="text-indigo-700 underline">{domain.hostName}</button> : domain[col.key]}
                                         </td>
                                     ))}
                                     <td className="px-4 py-3 text-right">

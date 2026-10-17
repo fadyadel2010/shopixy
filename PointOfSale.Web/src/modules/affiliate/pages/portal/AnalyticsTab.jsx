@@ -13,13 +13,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
-    LineChart, Line, BarChart, Bar, AreaChart, Area,
+    Line, BarChart, Bar, AreaChart, Area,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
 import affiliateApi from '../../../../services/affiliateApi'
 import {
     MousePointerClick, ShoppingBag, DollarSign, TrendingUp,
-    ArrowUpRight, Package, Store, Calendar, Loader2
+    Package, Store
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 

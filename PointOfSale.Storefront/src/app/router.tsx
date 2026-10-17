@@ -37,6 +37,7 @@ import { Layout } from '@/components/layout'; // AF-27E
 import { useLanguageStore, type SupportedLanguage } from '@/i18n';
 // PHASE 6: Commerce AI Chat Widget
 import { ChatWidget } from '@/components/chat';
+import { usePageViewTracking } from '@/analytics/hooks/usePageViewTracking';
 
 // ============================================================================
 // Root Layout
@@ -47,6 +48,7 @@ import { ChatWidget } from '@/components/chat';
  * Provides global components that need Router context (e.g., ChatWidget).
  */
 const RootLayout: React.FC = () => {
+    usePageViewTracking();
     return (
         <>
             <Outlet />

@@ -12,7 +12,7 @@ import {
     updateCartItemByVariant,
 } from '@/services/api';
 import type { CartDto } from '@/types';
-import { useCartStore } from './cartStore';
+import { selectCartIsConfirmed, useCartStore } from './cartStore';
 
 vi.mock('@/features/cart/cartTelemetry', () => ({
     emitCartStateMismatchDetected: vi.fn(),
@@ -41,6 +41,7 @@ const resetCartStore = () => {
         error: null,
         updatingItemId: null,
         isInitialized: false,
+        requiresRefresh: true,
         couponError: null,
         isApplyingCoupon: false,
         hydrationSource: null,
@@ -225,6 +226,44 @@ describe('cart persistence regression', () => {
         expect(useCartStore.getState().cart?.cartId).toBe('persisted-cart');
         expect(useCartStore.getState().cart?.items[0].productId).toBe('product-refresh');
         expect(useCartStore.getState().cart?.itemCount).toBe(3);
+    });
+
+    it.each([404, 400, 401, 403, 422])('discards a previous cart when the backend rejects it with %s', async (status) => {
+        useCartStore.setState({ cart: makeCart({}), requiresRefresh: false });
+        fetchCartMock.mockRejectedValueOnce({ response: { status, data: {} } });
+        await useCartStore.getState().fetchCart();
+        expect(useCartStore.getState().cart?.items).toEqual([]);
+        expect(selectCartIsConfirmed(useCartStore.getState())).toBe(false);
+    });
+
+    it.each([new Error('Network Error'), { response: { status: 503, data: { message: 'unavailable' } } }])('retains an explicitly unconfirmed snapshot on transient failure, including after dismissal', async (error) => {
+        const previous = makeCart({});
+        useCartStore.setState({ cart: previous, requiresRefresh: false });
+        fetchCartMock.mockRejectedValueOnce(error);
+        await useCartStore.getState().fetchCart();
+        expect(useCartStore.getState().cart).toBe(previous);
+        expect(useCartStore.getState().error).toContain('unconfirmed');
+        useCartStore.getState().clearError();
+        expect(selectCartIsConfirmed(useCartStore.getState())).toBe(false);
+
+        const fresh = makeCart({ quantity: 3 });
+        fetchCartMock.mockResolvedValueOnce(fresh);
+        await useCartStore.getState().fetchCart();
+        expect(useCartStore.getState().cart).toBe(fresh);
+        expect(selectCartIsConfirmed(useCartStore.getState())).toBe(true);
+    });
+
+    it('does not invent cart contents on missing state or admit inconsistent server data', async () => {
+        fetchCartMock.mockRejectedValueOnce(new Error('Network Error'));
+        await useCartStore.getState().fetchCart();
+        expect(useCartStore.getState().cart?.items).toEqual([]);
+        expect(selectCartIsConfirmed(useCartStore.getState())).toBe(false);
+
+        fetchCartMock.mockResolvedValueOnce({ ...makeCart({}), itemCount: 999 });
+        await useCartStore.getState().fetchCart();
+        useCartStore.getState().clearError();
+        expect(useCartStore.getState().cart?.items).toEqual([]);
+        expect(selectCartIsConfirmed(useCartStore.getState())).toBe(false);
     });
 
     it('coalesces concurrent hydration callers and resolves both from one authoritative fetch', async () => {

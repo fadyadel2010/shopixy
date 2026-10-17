@@ -40,7 +40,13 @@ public sealed class AdminOrderLifecycleAuthorityCertificationTests
         Assert.DoesNotContain("GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES", webPage, StringComparison.Ordinal);
         Assert.Contains("getAdminOrderFulfillmentActions", webPage, StringComparison.Ordinal);
         Assert.Contains("runAdminOrderFulfillmentAction", webPage, StringComparison.Ordinal);
-        Assert.Contains("Submit candidate", webPage, StringComparison.Ordinal);
+        Assert.Contains("t('orders.management.details.submitCandidate')", webPage, StringComparison.Ordinal);
+        Assert.Contains("onSubmit={handleSubmitStatus}", webPage, StringComparison.Ordinal);
+        Assert.Contains("disabled={!canSubmitStatusCandidate || isStatusUpdating}", webPage, StringComparison.Ordinal);
+        Assert.Contains("directStatusOptions.includes(statusCandidate)", webPage, StringComparison.Ordinal);
+        Assert.Contains("if (!canSubmitStatusCandidate)", webPage, StringComparison.Ordinal);
+        Assert.Contains("setStatusCandidate(order?.status || '')", webPage, StringComparison.Ordinal);
+        Assert.Contains("statusMutation.mutate(candidate)", webPage, StringComparison.Ordinal);
         Assert.Contains("rowVersion: order.rowVersion", webPage, StringComparison.Ordinal);
         Assert.Contains("'If-Match': rowVersion", webService, StringComparison.Ordinal);
         Assert.Contains("api.get(`/orders/${orderId}/fulfillment/actions`", webService, StringComparison.Ordinal);

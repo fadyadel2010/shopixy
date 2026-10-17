@@ -184,7 +184,6 @@ export function SslManagementPage() {
     const hostname = domain?.hostName || domain?.normalizedHostName || ssl?.hostName || ssl?.normalizedHostName || id
     const certificateId = certificate?.certificateId || ssl?.certificateId
     const certificateStatus = enumName(certificate?.status ?? ssl?.status, CERTIFICATE_STATUS_NAMES) || 'Pending'
-    const operationPhase = enumName(certificate?.operationPhase, OPERATION_PHASE_NAMES) || 'None'
     const lastOperationStatus = enumName(certificate?.lastOperationStatus, OPERATION_STATUS_NAMES)
     const activeOperation = operations.find((operation) => isOperationRunning(enumName(operation.status, OPERATION_STATUS_NAMES)))
     const hasCertificate = Boolean(certificateId)

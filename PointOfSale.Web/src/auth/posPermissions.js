@@ -28,6 +28,7 @@ export const POS_PERMISSIONS = new Set([
     'reports.operational.view',
     'reports.financial.view',
     'storefront.orders.view',
+    'storefront.orders.attachments.download',
     'storefront.orders.manage',
     'storefront.payments.view',
     'storefront.payments.manage',

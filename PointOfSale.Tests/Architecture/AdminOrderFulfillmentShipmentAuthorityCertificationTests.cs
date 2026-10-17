@@ -25,8 +25,12 @@ public sealed class AdminOrderFulfillmentShipmentAuthorityCertificationTests
         Assert.Contains("ShipmentStatus = shipment?.Status", service, StringComparison.Ordinal);
         Assert.Contains("TrackingNumber = shipment.TrackingNumber", service, StringComparison.Ordinal);
         Assert.Contains("CarrierName = shipment.CarrierCode", service, StringComparison.Ordinal);
-        Assert.Contains("order.shipmentStatus || 'No shipment'", webPage, StringComparison.Ordinal);
-        Assert.Contains("order.fulfillmentStatus || fulfillmentAuthority?.currentStatus", webPage, StringComparison.Ordinal);
+        Assert.Contains("order.shipmentStatus || t('orders.management.details.noShipment')", webPage, StringComparison.Ordinal);
+        Assert.Contains("order.fulfillmentStatus || fulfillmentAuthority?.currentStatus || t('common.unavailable')", webPage, StringComparison.Ordinal);
+        Assert.Contains("{order.shipment.status}", webPage, StringComparison.Ordinal);
+        Assert.Contains("<CancellationOutcome result={order?.shipment?.cancellation || administrativeActionResult}", webPage, StringComparison.Ordinal);
+        Assert.Contains("public PointOfSale.Infrastructure.Shipping.ShipmentCancellationResult? Cancellation", dto, StringComparison.Ordinal);
+        Assert.Contains("_context.ShipmentCancellationOperations.AsNoTracking()", service, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", webService, StringComparison.Ordinal);
         Assert.Contains("IsCurrentTenantOrderAsync", fulfillmentController, StringComparison.Ordinal);
         Assert.Contains("order.TenantId == tenantId", fulfillmentController, StringComparison.Ordinal);

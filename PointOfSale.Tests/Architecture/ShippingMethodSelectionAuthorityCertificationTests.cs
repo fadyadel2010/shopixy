@@ -42,7 +42,10 @@ public sealed class ShippingMethodSelectionAuthorityCertificationTests
         Assert.Contains("StoreId = group.Key", checkout, StringComparison.Ordinal);
         Assert.Contains("ShippingMethodId = shippingSelection.ShippingOptionId", checkout, StringComparison.Ordinal);
         Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
-        Assert.Contains("method.Id == order.ShippingMethodId.Value", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("ShippingMethodId = order.ShippingMethodId.Value", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("authoritativeCarrierCode = CarrierCodes.Normalize(order.FulfillmentCarrierCode)", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("authoritativeServiceLevel = order.ShippingServiceLevel.Trim().ToLowerInvariant()", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("ORDER_SHIPPING_METHOD_CARRIER_MISMATCH", carrierShipment, StringComparison.Ordinal);
     }
 
     [Fact]

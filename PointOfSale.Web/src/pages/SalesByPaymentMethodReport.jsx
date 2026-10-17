@@ -4,7 +4,6 @@ import { useReactToPrint } from 'react-to-print'
 import api from '../services/api'
 import { useSettings } from '../contexts/SettingsContext'
 import ReportTruthBadge from '../components/ReportTruthBadge'
-import { format } from 'date-fns'
 import { loadExcelModule } from '../utils/reportExports'
 import AsyncEntitySelect from '../components/AsyncEntitySelect'
 

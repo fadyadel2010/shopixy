@@ -28,6 +28,10 @@ public interface ICampaignCostService
         CreateCampaignCostRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<Core.Analytics.Attribution.CampaignCost?> ReplaceAsync(
+        Guid tenantId, Guid id, CreateCampaignCostRequest request,
+        DateTime? expectedUpdatedAtUtc = null, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Gets all campaign costs for a tenant within a date range.
     /// </summary>

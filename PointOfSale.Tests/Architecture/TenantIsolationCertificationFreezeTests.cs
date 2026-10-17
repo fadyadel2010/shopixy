@@ -83,8 +83,12 @@ public sealed class TenantIsolationCertificationFreezeTests
         Assert.Contains("e.State == EntityState.Deleted", tenantSaveInterceptor, StringComparison.Ordinal);
 
         var abandonedRecovery = File.ReadAllText(ApiPath("Controllers", "Admin", "AdminAbandonedCartRecoveryController.cs"));
-        Assert.Contains("admin_tenant_scope_mismatch", abandonedRecovery, StringComparison.Ordinal);
-        Assert.Contains("_tenantContext.TenantId.Value != request.TenantId", abandonedRecovery, StringComparison.Ordinal);
+        // Recovery no longer accepts tenant authority from its body. Freeze the
+        // current trusted-context assignment and service boundary instead.
+        Assert.Contains("var tenantId = _tenantContext.RequiredTenantId;", abandonedRecovery, StringComparison.Ordinal);
+        Assert.Contains("TenantId = tenantId", abandonedRecovery, StringComparison.Ordinal);
+        Assert.Contains("_settingsService.UpdateSettingsAsync(tenantId, settings, ct)", abandonedRecovery, StringComparison.Ordinal);
+        Assert.DoesNotContain("request.TenantId", abandonedRecovery, StringComparison.Ordinal);
 
         var paymentMethods = File.ReadAllText(ApiPath("Controllers", "PaymentMethodsAdminController.cs"));
         Assert.Contains("private Guid TenantId => _tenantContext.RequiredTenantId;", paymentMethods, StringComparison.Ordinal);

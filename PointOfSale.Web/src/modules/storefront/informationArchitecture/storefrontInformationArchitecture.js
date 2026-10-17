@@ -269,7 +269,6 @@ export const OPERATIONS_NAVIGATION = {
         },
         {
             key: 'operations-shipping',
-            permission: 'shipping.manage',
             labelKey: 'storefront.operationsShipping',
             fallbackLabel: 'Shipping',
             icon: 'Truck',
@@ -277,11 +276,21 @@ export const OPERATIONS_NAVIGATION = {
             children: [
                 {
                     screenIds: ['shipping-methods'],
+                    permission: 'shipping.manage',
                     path: '/ecommerce/shipping-methods',
                     labelKey: 'storefront.shippingSetup',
                     fallbackLabel: 'Shipping Methods',
                     icon: 'Truck',
                     requiredRoles: ['Owner', 'Admin'],
+                },
+                {
+                    screenIds: ['shipments'],
+                    path: '/admin/shipping/shipments',
+                    permission: 'shipping.view',
+                    capability: 'commercehub.storefront.manage',
+                    labelKey: 'shipping.shipments',
+                    fallbackLabel: 'Shipments',
+                    icon: 'Package',
                 },
             ],
         },
@@ -514,7 +523,6 @@ const CONTENT = breadcrumb('storefront.ia.content', 'Content', '/storefront/cont
 const PAGES = breadcrumb('storefront.ia.pages', 'Pages', '/storefront/content/pages')
 const NAVIGATION = breadcrumb('storefront.ia.navigation', 'Navigation', '/storefront/navigation?view=header')
 const APPEARANCE = breadcrumb('storefront.ia.appearance', 'Appearance', '/storefront/appearance/themes')
-const DOMAINS = breadcrumb('storefront.ia.domains', 'Domains', '/storefront/domains')
 
 export const SCREENS = {
     overview: screen('overview', 'storefront.ia.overview', 'Overview', [
@@ -712,6 +720,12 @@ export const SCREENS = {
         OPERATION_SHIPPING,
         breadcrumb('storefront.shippingSetup', 'Shipping Methods'),
     ]),
+    shipments: screen('shipments', 'shipping.shipments', 'Shipments', [
+        ROOT,
+        OPERATIONS,
+        OPERATION_SHIPPING,
+        breadcrumb('shipping.shipments', 'Shipments'),
+    ]),
     'pixel-tracking': screen('pixel-tracking', 'nav.pixelTracking', 'Pixel Tracking', [
         ROOT,
         OPERATIONS,
@@ -822,6 +836,7 @@ export function resolveStorefrontScreen(pathname, search = '') {
     if (path === '/ecommerce/promotions') return SCREENS.promotions
     if (path === '/ecommerce/smart-offers') return SCREENS['smart-offers']
     if (path === '/ecommerce/shipping-methods') return SCREENS['shipping-methods']
+    if (path === '/admin/shipping/shipments' || path.startsWith('/admin/shipping/shipments/')) return SCREENS.shipments
     if (path === '/ecommerce/pixel-tracking') return SCREENS['pixel-tracking']
     if (path === '/analytics/funnels') return SCREENS['conversion-funnels']
     if (path === '/analytics/attribution') return SCREENS['marketing-attribution']
@@ -840,7 +855,7 @@ export function resolveStorefrontScreen(pathname, search = '') {
     if (path.startsWith('/storefront/domains/')) {
         const rest = path.replace(/^\/storefront\/domains\//, '').replace(/\/$/, '')
         if (/^[^/]+$/.test(rest)) return SCREENS['domain-detail']
-        const [domainId, sub] = rest.split('/')
+        const [, sub] = rest.split('/')
         if (sub === 'verification') return SCREENS['dns-verification']
         if (sub === 'ssl') return SCREENS['ssl-management']
         if (sub === 'redirects') return SCREENS.redirects

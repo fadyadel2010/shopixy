@@ -117,7 +117,7 @@ describe('Affiliate checkout frontend certification', () => {
         expect(checkoutStore).toContain("SHIPPING_METHODS: '/api/storefront/shipping-methods'");
         expect(checkoutStore).toContain('admitStorefrontShippingMethodsPreview(response.data)');
         expect(shippingStep).toContain('shippingMethods.map((method)');
-        expect(shippingStep).toContain('name={method.name}');
+        expect(shippingStep).toContain("name={language === 'ar' && method.nameAr?.trim() ? method.nameAr : method.name}");
         expect(shippingStep).toContain('price={method.price}');
         expect(affiliateCombined).not.toMatch(/fedex|dhl|bosta|aramex|mylerz/i);
         expect(affiliateCombined).not.toMatch(/shippingCalculation|calculateShipping|carrierSelection/i);

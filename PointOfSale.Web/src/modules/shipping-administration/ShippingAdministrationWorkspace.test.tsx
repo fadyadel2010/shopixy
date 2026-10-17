@@ -3,7 +3,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import '../../i18n/config'
 import ShippingAdministrationWorkspace from './ShippingAdministrationWorkspace'
+import CarrierAccountCard from './components/CarrierAccountCard'
 import {
     admitCarrierAccounts,
     admitSupportedCarriers,
@@ -15,15 +17,22 @@ import {
 } from './shippingAdministrationApi'
 import PosRoleRouteGuard from '../../components/PosRoleRouteGuard'
 import { useAuthStore } from '../../store/authStore'
-import api from '../../services/api'
+const api = vi.hoisted(() => ({
+    get: vi.fn<(url: string, config?: unknown) => Promise<{ data: unknown }>>(),
+    post: vi.fn<(url: string, data?: unknown) => Promise<{ data: unknown }>>(),
+    put: vi.fn<(url: string, data?: unknown) => Promise<{ data: unknown }>>(),
+}))
 
 vi.mock('../../services/api', () => ({
-    default: {
-        get: vi.fn(),
-        post: vi.fn(),
-        put: vi.fn(),
-    },
+    default: api,
     getSafeApiErrorMessage: vi.fn((error, fallback) => error?.message || fallback),
+}))
+
+vi.mock('../../contexts/SettingsContext', () => ({
+    useSettings: () => ({
+        settings: { currencySymbol: 'EGP' },
+        formatCurrency: (value: number) => `${value} EGP`,
+    }),
 }))
 
 const supportedCarrierPayload = [
@@ -257,7 +266,7 @@ describe('ShippingAdministrationWorkspace', () => {
     })
 
     it('allows only Owner Admin Manager presentation roles through the POS route guard', () => {
-        const renderGuard = (role) => {
+        const renderGuard = (role: string) => {
             useAuthStore.setState({
                 user: { id: 'user', tenantId: 'tenant', role },
                 isAuthenticated: true,
@@ -359,6 +368,103 @@ describe('ShippingAdministrationWorkspace', () => {
         expect(screen.queryByRole('button', { name: 'Policies' })).not.toBeInTheDocument()
     })
 
+    it('saves Bosta operational settings separately from authentication and admits the canonical save contract', async () => {
+        api.post.mockResolvedValue({ data: { succeeded: true, blockers: [] } })
+        const definition = admitSupportedCarriers([{
+            carrierCode: 'bosta',
+            displayName: 'Bosta',
+            isExternal: true,
+            accountRequired: true,
+            readinessRequired: true,
+            productionCapability: 'Partial',
+            environmentSupported: true,
+            connectionTestSupported: true,
+            connectionTestMode: 'Remote',
+            requiresGeographyMapping: true,
+            supportsWebhooks: true,
+            webhookTrustModes: ['shared_secret'],
+            credentialFields: [
+                { key: 'apiKey', label: 'API key', isSecret: true, required: true, target: 'ApiKey' },
+                { key: 'webhookSecret', label: 'Webhook secret', isSecret: true, required: false, target: 'WebhookSecret' },
+                { key: 'codCollectionCurrency', label: 'COD currency', isSecret: false, required: false, target: 'ExtraConfig.codCollectionCurrency' },
+                { key: 'businessLocationId', label: 'Business location', isSecret: false, required: false, target: 'ExtraConfig.businessLocationId' },
+            ],
+            serviceLevels: [{ code: 'standard', name: 'Standard', typicalDaysMin: 2, typicalDaysMax: 4 }],
+        }])[0]
+        const account = admitCarrierAccounts([{
+            ...carrierAccountPayload[0],
+            carrierCode: 'bosta',
+            state: 'Draft',
+            operationalState: 'NotReady',
+            healthState: 'Blocked',
+            lastConnectionTest: null,
+            integrationReadiness: {
+                enabled: false,
+                canExecute: false,
+                environment: 'Sandbox',
+                productionCapability: 'Partial',
+                blockers: ['CARRIER_CONNECTION_NOT_VERIFIED'],
+                originReadinessRequired: false,
+                originReadinessSatisfied: true,
+                credentialAvailability: 'Missing',
+            },
+        }])[0]
+
+        render(<CarrierAccountCard account={account} supportedCarriers={[definition]} onMutated={vi.fn().mockResolvedValue(undefined)} />)
+
+        fireEvent.change(screen.getByLabelText(/API key/i), { target: { value: 'not-retained-test-key' } })
+        fireEvent.change(screen.getByLabelText(/Webhook authorization value/i), { target: { value: 'not-retained-test-secret' } })
+        fireEvent.change(screen.getByLabelText(/COD collection currency/i), { target: { value: 'EGP' } })
+        fireEvent.change(screen.getByLabelText(/Business pickup-location ID/i), { target: { value: 'business-location-1' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+            '/admin/shipping/carrier-accounts/11111111-1111-4111-8111-111111111111/connection-tests',
+            expect.objectContaining({
+                apiKey: 'not-retained-test-key',
+                webhookSecret: 'not-retained-test-secret',
+                extraConfig: { codCollectionCurrency: 'EGP', businessLocationId: 'business-location-1' },
+                useSandbox: true,
+                saveOnly: true,
+            }),
+        ))
+        expect(screen.queryByText(/Connection verification failed/i)).not.toBeInTheDocument()
+    })
+
+    it('saves an unavailable carrier draft without connection verification and clears secret inputs', async () => {
+        api.post.mockResolvedValue({ data: { succeeded: true, blockers: ['CREDENTIALS_SAVED_NOT_CONNECTION_VERIFIED'] } })
+        const definition = admitSupportedCarriers([{
+            carrierCode: 'mylerz', displayName: 'Mylerz', isExternal: true, accountRequired: true, readinessRequired: true,
+            productionCapability: 'Unavailable', environmentSupported: false, connectionTestSupported: false, connectionTestMode: 'Unsupported',
+            credentialFields: [
+                { key: 'apiKey', label: 'Username', isSecret: true, required: true, target: 'ApiKey' },
+                { key: 'apiSecret', label: 'Password', isSecret: true, required: true, target: 'ApiSecret' },
+            ], serviceLevels: [],
+        }])[0]
+        const account = admitCarrierAccounts([{
+            ...carrierAccountPayload[0], carrierCode: 'mylerz', state: 'Draft', lastConnectionTest: null,
+            integrationReadiness: { ...carrierAccountPayload[0].integrationReadiness, enabled: false, canExecute: false,
+                productionCapability: 'Unavailable', credentialAvailability: 'Missing', blockers: ['MYLERZ_ACCOUNT_CONTRACT_QUALIFICATION_REQUIRED'] },
+        }])[0]
+        const onMutated = vi.fn().mockResolvedValue(undefined)
+        render(<CarrierAccountCard account={account} supportedCarriers={[definition]} onMutated={onMutated} />)
+        const key = screen.getByLabelText(/Mylerz username/i)
+        const secret = screen.getByLabelText(/Mylerz password/i)
+        expect(key).toHaveAttribute('type', 'password'); expect(secret).toHaveAttribute('type', 'password')
+        fireEvent.change(key, { target: { value: 'isolated-user' } })
+        fireEvent.change(secret, { target: { value: 'isolated-password' } })
+        expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled()
+        expect(screen.getByRole('button', { name: /^Activate$/i })).toBeDisabled()
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+        expect(api.post).toHaveBeenCalledWith(expect.stringContaining('/connection-tests'), expect.objectContaining({
+            apiKey: 'isolated-user', apiSecret: 'isolated-password', saveOnly: true, useSandbox: false,
+        }))
+        await waitFor(() => expect(onMutated).toHaveBeenCalledTimes(1))
+        expect(key).toHaveValue(''); expect(secret).toHaveValue('')
+        expect(screen.queryByText('Ready for checkout')).not.toBeInTheDocument()
+    })
+
     it('hides legacy manual carrier-account rows from carrier account cards', async () => {
         api.get.mockImplementation((url) => {
             if (url === '/admin/shipping/supported-carriers') return Promise.resolve({ data: supportedCarrierPayload })
@@ -395,6 +501,68 @@ describe('ShippingAdministrationWorkspace', () => {
         await waitFor(() => expect(screen.getAllByText('FedEx').length).toBeGreaterThan(0))
         expect(screen.queryByText('Manual Fulfillment')).not.toBeInTheDocument()
         expect(screen.queryByText('Warehouse Missing')).not.toBeInTheDocument()
+    })
+
+    it('does not present a successful DHL local credential check as verified provider connectivity', () => {
+        const definition = admitSupportedCarriers([{
+            ...supportedCarrierPayload[2], connectionTestSupported: true, connectionTestMode: 'LocalOnly',
+            productionCapability: 'Partial', accountRequired: true, readinessRequired: true,
+        }])[0]
+        const account = admitCarrierAccounts([{
+            ...carrierAccountPayload[0], carrierCode: 'dhl',
+            integrationReadiness: { ...carrierAccountPayload[0].integrationReadiness, canExecute: false,
+                blockers: ['DHL_REMOTE_ACCOUNT_CERTIFICATION_REQUIRED'] },
+        }])[0]
+
+        render(<CarrierAccountCard account={account} supportedCarriers={[definition]} onMutated={vi.fn()} />)
+
+        expect(screen.getByRole('button', { name: 'Test Connection' })).toBeDisabled()
+        expect(screen.queryByText('Connection verified')).not.toBeInTheDocument()
+        expect(screen.queryByText('Authenticated connection succeeded')).not.toBeInTheDocument()
+    })
+
+    it('does not turn unavailable Mylerz accountRequired=false metadata into Manual readiness', () => {
+        const definition = admitSupportedCarriers([{
+            carrierCode: 'mylerz', displayName: 'Mylerz', isExternal: true,
+            accountRequired: false, readinessRequired: false, productionCapability: 'Unavailable',
+            connectionTestSupported: false, connectionTestMode: 'Unsupported', environmentSupported: false,
+            credentialFields: [], serviceLevels: [],
+        }])[0]
+        const account = admitCarrierAccounts([{
+            ...carrierAccountPayload[0], carrierCode: 'mylerz', serviceLevels: [],
+            integrationReadiness: { ...carrierAccountPayload[0].integrationReadiness,
+                canExecute: false, productionCapability: 'Unavailable', credentialAvailability: 'Unverified',
+                blockers: ['MYLERZ_OFFICIAL_CONTRACT_UNAVAILABLE'] },
+        }])[0]
+        render(<CarrierAccountCard account={account} supportedCarriers={[definition]} onMutated={vi.fn()} />)
+        expect(screen.queryByText('Ready for checkout')).not.toBeInTheDocument()
+        expect(screen.queryByText('Connection verified')).not.toBeInTheDocument()
+        expect(screen.queryByText(/Manual Fulfillment/)).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /Activate|Save.*Validate/i })).not.toBeInTheDocument()
+        expect(screen.getAllByText('Not configured').length).toBeGreaterThan(0)
+        expect(api.post).not.toHaveBeenCalled()
+    })
+
+    it('excludes Mylerz from account creation and blocks active methods and unsupported drafts', async () => {
+        api.get.mockImplementation((url: string) => {
+            if (url === '/admin/shipping/supported-carriers') return Promise.resolve({ data: [{
+                carrierCode: 'mylerz', displayName: 'Mylerz', isExternal: true, accountRequired: false,
+                readinessRequired: false, productionCapability: 'Unavailable', connectionTestSupported: false,
+                connectionTestMode: 'Unsupported', credentialFields: [], serviceLevels: [],
+            }] })
+            if (url === '/warehouses') return Promise.resolve({ data: warehousePayload })
+            return Promise.resolve({ data: [] })
+        })
+        render(<ShippingAdministrationWorkspace initialTab="carrier-accounts" />)
+        await screen.findByText('No carrier accounts configured')
+        expect(screen.queryByRole('option', { name: 'Mylerz' })).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole('tab', { name: 'Shipping Methods' }))
+        fireEvent.click(await screen.findByRole('button', { name: /Add Shipping Method/i }))
+        expect(screen.getByRole('option', { name: /Mylerz.*Not ready/i })).toBeDisabled()
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }))
+        fireEvent.change(screen.getByRole('combobox', { name: 'Carrier' }), { target: { value: 'mylerz' } })
+        expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+        expect(api.post).not.toHaveBeenCalled()
     })
 
     it('keeps summary presentation derived from DTO state without activation gate duplication', () => {
@@ -435,6 +603,45 @@ describe('ShippingAdministrationWorkspace', () => {
         expect(methodsTab).toContain('getCarrierDisplayName(supportedCarriers')
         expect(methodsTab).not.toContain('placeholder="Carrier display name"')
         expect(methodsTab).not.toContain('value={formData.carrierName}')
+    })
+
+    it.each([['aramex', 'Aramex', 'standard'], ['dhl', 'DHL', 'express']])(
+      'blocks active %s methods but allows inactive drafts without executable backend readiness', async (carrierCode, displayName, serviceLevel) => {
+        api.get.mockImplementation((url) => {
+            if (url === '/admin/shipping/supported-carriers') return Promise.resolve({ data: [
+                {
+                    carrierCode: 'manual', displayName: 'Manual Fulfillment', isExternal: false,
+                    accountRequired: false, readinessRequired: false, productionCapability: 'ProductionReady',
+                    serviceLevels: [{ code: 'standard', name: 'Standard', typicalDaysMin: 0, typicalDaysMax: 0 }],
+                },
+                {
+                    carrierCode, displayName, isExternal: true,
+                    accountRequired: true, readinessRequired: true, productionCapability: 'Partial',
+                    serviceLevels: [{ code: serviceLevel, name: displayName, typicalDaysMin: 0, typicalDaysMax: 0 }],
+                },
+            ] })
+            if (url === '/admin/shipping/carrier-accounts') return Promise.resolve({ data: [] })
+            if (url === '/warehouses') return Promise.resolve({ data: warehousePayload })
+            if (url === '/admin/shipping/audit') return Promise.resolve({ data: [] })
+            if (url === '/shippingmethods?activeOnly=false') return Promise.resolve({ data: [] })
+            return Promise.resolve({ data: [] })
+        })
+
+        render(<ShippingAdministrationWorkspace initialTab="shipping-methods" />)
+        fireEvent.click(await screen.findByRole('button', { name: /Add Shipping Method/i }))
+
+        expect(screen.getByRole('option', { name: 'Manual Fulfillment' })).not.toBeDisabled()
+        const blockedOption = new RegExp(`${displayName}.*Not ready`, 'i')
+        expect(screen.getByRole('option', { name: blockedOption })).toBeDisabled()
+
+        // Inactive drafts and deactivation remain available; only activation needs readiness.
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }))
+        expect(screen.getByRole('option', { name: blockedOption })).not.toBeDisabled()
+        fireEvent.change(screen.getByRole('combobox', { name: 'Carrier' }), { target: { value: carrierCode } })
+        expect(screen.getByRole('button', { name: 'Save' })).not.toBeDisabled()
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }))
+        expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+        expect(api.post).not.toHaveBeenCalled()
     })
 
     it('uses backend metadata to keep Manual Fulfillment out of carrier-account creation', () => {

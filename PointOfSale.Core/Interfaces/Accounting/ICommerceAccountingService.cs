@@ -377,6 +377,10 @@ public interface ICommerceAccountingService
     // SETTLEMENT OPERATIONS
     // ═══════════════════════════════════════════════════════════════════════════
     
+    Task<PostingResult> PostManualCodSettlementAsync(Guid tenantId, Guid settlementBatchId, CancellationToken ct = default);
+
+    Task<PostingResult> PostCarrierRemittanceAsync(Guid tenantId, Guid remittanceId, CancellationToken ct = default);
+
     /// <summary>
     /// Posts journal entry for gateway settlement (funds received).
     /// 

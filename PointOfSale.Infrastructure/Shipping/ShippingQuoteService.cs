@@ -152,14 +152,11 @@ public class ShippingQuoteService : IShippingQuoteService
                 };
             }
             
-            // Get default pickup location
-            var defaultConfig = carrierConfigs.FirstOrDefault(c => c.IsDefault) ?? carrierConfigs.First();
-            
             var allQuotes = new List<ShippingQuoteOption>();
             
             // Query each enabled carrier in parallel
             var quoteTasks = carrierConfigs
-                .Select(config => GetCarrierQuoteAsync(tenantId, config, request, defaultConfig, cancellationToken))
+                .Select(config => GetCarrierQuoteAsync(tenantId, config, request, cancellationToken))
                 .ToList();
             
             var results = await Task.WhenAll(quoteTasks);
@@ -200,10 +197,14 @@ public class ShippingQuoteService : IShippingQuoteService
         Guid tenantId,
         CarrierIntegrationConfigurationSnapshot config,
         GetShippingQuotesRequest request,
-        CarrierIntegrationConfigurationSnapshot defaultConfig,
         CancellationToken cancellationToken)
     {
+        if (config.UseCarrierRates && CarrierOperationSupports.Describe(config.CarrierCode)
+                .Single(operation => operation.Operation == "quote").Implementation != "Implemented") return null;
         var adapter = _carrierRegistry.GetAdapter(config.CarrierCode);
+        // This anonymous compatibility path has no admitted packed parcel or warehouse
+        // origin. DHL estimates use the authenticated shipment parcel-quote boundary.
+        if (config.CarrierCode == PointOfSale.Core.Constants.CarrierCodes.Dhl) return null;
         if (adapter == null)
         {
             _logger.LogWarning(
@@ -237,11 +238,16 @@ public class ShippingQuoteService : IShippingQuoteService
                 return null;
             }
             
-            // Build quote request
+            // Merchant fixed-price methods are not carrier rates and need no guessed origin.
+            if (!config.UseCarrierRates && config.FixedShippingCost.HasValue)
+                return BuildFixedRateQuotes(config, request);
+            // Never substitute another account's origin or fabricate Cairo/EG.
+            // This compatibility path still is not canonical warehouse/parcel evidence.
+            if (string.IsNullOrWhiteSpace(config.PickupCity) || string.IsNullOrWhiteSpace(config.PickupCountry)) return null;
             var quoteRequest = new ShippingQuoteRequest
             {
-                OriginCity = config.PickupCity ?? defaultConfig.PickupCity ?? "Cairo",
-                OriginCountry = config.PickupCountry ?? defaultConfig.PickupCountry ?? "EG",
+                OriginCity = config.PickupCity,
+                OriginCountry = config.PickupCountry,
                 DestinationCity = request.DestinationCity,
                 DestinationCountry = request.DestinationCountry,
                 DestinationZipCode = request.DestinationZipCode,
@@ -250,12 +256,6 @@ public class ShippingQuoteService : IShippingQuoteService
                 IsCashOnDelivery = request.IsCashOnDelivery,
                 CodAmount = request.CodAmount
             };
-            
-            // Check if using fixed rates
-            if (!config.UseCarrierRates && config.FixedShippingCost.HasValue)
-            {
-                return BuildFixedRateQuotes(config, request);
-            }
             
             // Get quotes from carrier
             var result = await adapter.GetQuoteAsync(quoteRequest, credentialsResolution.Credentials, cancellationToken);

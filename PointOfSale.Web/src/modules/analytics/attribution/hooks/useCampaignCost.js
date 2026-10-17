@@ -36,6 +36,7 @@ export function useCampaignCosts(period = 'last_30_days') {
         try {
             setLoading(true)
             setError(null)
+            setData(null)
             const response = await api.get('/admin/analytics/campaign-costs', {
                 params: { period }
             })
@@ -45,6 +46,7 @@ export function useCampaignCosts(period = 'last_30_days') {
             }
 
             setData(response.data)
+            return true
         } catch (err) {
             if (!isLatestRequest(requestId)) {
                 return
@@ -52,6 +54,7 @@ export function useCampaignCosts(period = 'last_30_days') {
 
             console.error('[CampaignCost] Failed to fetch costs:', err)
             setError(getRequestErrorMessage(err, 'Failed to load campaign costs'))
+            return false
         } finally {
             if (isLatestRequest(requestId)) {
                 setLoading(false)
@@ -98,11 +101,11 @@ export function useUpdateCampaignCost() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
 
-    const updateCost = useCallback(async (id, costData) => {
+    const updateCost = useCallback(async (id, costData, revision) => {
         try {
             setLoading(true)
             setError(null)
-            const response = await api.put(`/admin/analytics/campaign-costs/${id}`, costData)
+            const response = await api.put(`/admin/analytics/campaign-costs/${id}`, costData, { headers: revision ? { 'If-Match': revision } : {} })
             return response.data
         } catch (err) {
             const message = err.response?.data?.message || 'Failed to update campaign cost'
@@ -174,6 +177,7 @@ export function useRoiSummary(model = 'LastTouch', period = 'last_30_days') {
 
             console.error('[ROI] Failed to fetch summary:', err)
             setError(getRequestErrorMessage(err, 'Failed to load ROI summary'))
+            setData(null)
         } finally {
             if (isLatestRequest(requestId)) {
                 setLoading(false)
@@ -221,6 +225,7 @@ export function useRoiByCampaign(model = 'LastTouch', period = 'last_30_days') {
 
             console.error('[ROI] Failed to fetch campaigns:', err)
             setError(getRequestErrorMessage(err, 'Failed to load campaign ROI'))
+            setData(null)
         } finally {
             if (isLatestRequest(requestId)) {
                 setLoading(false)

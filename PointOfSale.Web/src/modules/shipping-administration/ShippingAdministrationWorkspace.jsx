@@ -318,7 +318,7 @@ export default function ShippingAdministrationWorkspace({ initialTab = 'overview
                     {activeTab === 'carrier-accounts' && (
                         <CarrierAccountsTab accounts={carrierAccounts} supportedCarriers={supportedCarriers} onCreated={refresh} />
                     )}
-                    {activeTab === 'shipping-methods' && <ShippingMethodsTab warehouses={warehouses} />}
+                    {activeTab === 'shipping-methods' && <ShippingMethodsTab warehouses={warehouses} carrierAccounts={carrierAccounts} />}
                     {activeTab === 'health' && <HealthTab accounts={carrierAccounts} supportedCarriers={supportedCarriers} />}
                     {activeTab === 'audit' && <AuditTab audit={audit} supportedCarriers={supportedCarriers} accounts={carrierAccounts} />}
                 </>

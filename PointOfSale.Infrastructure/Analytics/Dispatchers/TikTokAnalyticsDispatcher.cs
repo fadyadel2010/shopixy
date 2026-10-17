@@ -242,8 +242,9 @@ public sealed class TikTokAnalyticsDispatcher : IAnalyticsDispatcher
                 var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
                 orderItems = await dbContext.OrderItems
+                    .IgnoreQueryFilters()
                     .AsNoTracking()
-                    .Where(oi => oi.OrderId == analyticsEvent.Payload.OrderId.Value)
+                    .Where(oi => oi.OrderId == analyticsEvent.Payload.OrderId.Value && oi.Order.TenantId == analyticsEvent.TenantId && !oi.Order.IsDeleted && !oi.IsDeleted)
                     .OrderBy(oi => oi.Id)
                     .Select(oi => new TikTokOrderItem(
                         oi.ProductId,
@@ -262,20 +263,12 @@ public sealed class TikTokAnalyticsDispatcher : IAnalyticsDispatcher
                             .ToArray(),
                         PixelProvider.TikTok,
                         ct)
-                    : await _pixelValueResolver.ResolvePixelValueAsync(
-                        analyticsEvent.TenantId,
-                        analyticsEvent.Payload?.Value ?? 0,
-                        PixelProvider.TikTok,
-                        ct);
+                    : throw new InvalidOperationException("TikTok purchase dispatch requires same-tenant SQL order items.");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to fetch order items for TikTok purchase payload. Falling back to simple total override.");
-                resolvedValue = await _pixelValueResolver.ResolvePixelValueAsync(
-                    analyticsEvent.TenantId,
-                    analyticsEvent.Payload?.Value ?? 0,
-                    PixelProvider.TikTok,
-                    ct);
+                _logger.LogWarning(ex, "Failed to fetch authoritative order items for TikTok purchase payload.");
+                throw;
             }
         }
         else

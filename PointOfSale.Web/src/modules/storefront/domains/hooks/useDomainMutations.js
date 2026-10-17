@@ -19,7 +19,7 @@
  *   - Caller should refetch and retry if needed
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import domainManagementService from '../services/domainManagementService'
 import { getSafeApiErrorMessage } from '../../../../services/api'
 
@@ -45,6 +45,7 @@ export function useDomainMutations({ mutationOptions = {} } = {}) {
     const [serverVersion, setServerVersion] = useState(null)
     const [lastMutation, setLastMutation] = useState(null)
     const [mutationStatus, setMutationStatus] = useState('idle')
+    const inFlightRef = useRef(false)
 
     const { onSuccess, onError } = mutationOptions
 
@@ -56,6 +57,8 @@ export function useDomainMutations({ mutationOptions = {} } = {}) {
      * @returns {Promise<*>} - returns the API response data
      */
     const executeMutation = useCallback(async (fn, operationName, options = {}) => {
+        if (inFlightRef.current) throw new Error('A domain operation is already in progress.')
+        inFlightRef.current = true
         setIsMutating(true)
         setError(null)
         setErrorCode(null)
@@ -127,6 +130,7 @@ export function useDomainMutations({ mutationOptions = {} } = {}) {
 
             throw err
         } finally {
+            inFlightRef.current = false
             setIsMutating(false)
         }
     }, [onError, onSuccess])

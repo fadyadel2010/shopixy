@@ -11,6 +11,7 @@ import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { useAuthStore } from '../store/authStore'
 import { hasPosPermission } from '../auth/posPermissions'
 import { StorefrontBreadcrumbs } from '../modules/storefront/informationArchitecture'
+import { useSettings } from '../contexts/SettingsContext'
 
 export default function Settings() {
     const { t } = useTranslation()
@@ -18,6 +19,7 @@ export default function Settings() {
     const { dir, isRTL } = useRTL()
     const { confirm } = useConfirmDialog()
     const { showSuccess, showError, showWarning } = useToast()
+    const { reloadSettings } = useSettings()
     const user = useAuthStore((state) => state.user)
     const [searchParams] = useSearchParams()
     const requestedTab = searchParams.get('tab')
@@ -237,7 +239,7 @@ export default function Settings() {
                 },
             })
             const acceptedSettingsLoaded = await fetchSettings()
-            if (!acceptedSettingsLoaded) {
+            if (!acceptedSettingsLoaded || !await reloadSettings()) {
                 showError(t('settings.failedToLoadSettings'))
                 return
             }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from '../services/api'
 import { useToast } from '../components/Toast'
@@ -18,6 +18,10 @@ export default function CommerceAI() {
 
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
+    const [loadError, setLoadError] = useState(false)
+    const lifetime = useRef(0)
+    const readId = useRef(0)
+    const mutation = useRef(false)
 
     // Full store config state
     const [storeConfig, setStoreConfig] = useState(null)
@@ -35,75 +39,72 @@ export default function CommerceAI() {
 
     // Fetch Store Config
     const fetchConfig = useCallback(async () => {
-        if (!tenantId) return
+        if (!tenantId) return false
+        const generation = lifetime.current
+        const requestId = ++readId.current
         setLoading(true)
         try {
             const response = await api.get('/admin/store-config')
-            if (response.data) {
+            if (generation !== lifetime.current || requestId !== readId.current) return false
+            if (response.data?.commerceAi && response.data?.rowVersion) {
                 setStoreConfig(response.data)
+                setLoadError(false)
                 // Initialize local AI state from response
                 if (response.data.commerceAi) {
                     setAiConfig(response.data.commerceAi)
                 }
-            }
-        } catch (error) {
-            console.error('Error fetching Store Config:', error)
-            showError('Failed to load configuration')
+                return true
+            } else throw new Error('Invalid configuration response')
+        } catch {
+            if (generation !== lifetime.current || requestId !== readId.current) return false
+            setLoadError(true)
+            return false
         } finally {
-            setLoading(false)
+            if (generation === lifetime.current && requestId === readId.current) setLoading(false)
         }
-    }, [tenantId, showError])
+    }, [tenantId])
 
     // Fetch Insights (Phase 9)
     const fetchInsights = useCallback(async () => {
         if (!tenantId) return
+        const generation = lifetime.current
         try {
             const response = await api.get('/admin/commerce-ai/insights')
-            if (response.data) {
+            if (generation === lifetime.current && response.data) {
                 setInsights(response.data)
             }
-        } catch (error) {
-            console.error('Error fetching AI Insights:', error)
-            // Silent fail for insights - don't block main UI
+        } catch {
+            if (generation === lifetime.current) setInsights(null)
         }
     }, [tenantId])
 
     useEffect(() => {
         fetchConfig()
         fetchInsights()
+        return () => { lifetime.current += 1; readId.current += 1 }
     }, [fetchConfig, fetchInsights])
 
     // Save Changes
     const handleSave = async () => {
-        if (!storeConfig) return
+        if (!storeConfig || mutation.current) return
+        mutation.current = true
+        const generation = lifetime.current
         setSaving(true)
         try {
-            // Construct full update payload
-            const payload = {
-                ...storeConfig,
-                commerceAi: aiConfig
-            }
-
-            // Remove read-only fields
-            delete payload.id
-            delete payload.tenantId
-            delete payload.updatedAtUtc
-            delete payload.createdAtUtc
-            delete payload.themePresetKey
-            delete payload.themeDraftOverridesJson
-            delete payload.themeLiveOverridesJson
-
-            const response = await api.put('/admin/store-config', payload)
-
-            if (response.data) {
+            const response = await api.put('/admin/store-config/commerce-ai', aiConfig, {
+                headers: { 'If-Match': `"${storeConfig.rowVersion}"` }
+            })
+            if (generation !== lifetime.current) return
+            if (response.data?.rowVersion) {
                 setStoreConfig(response.data)
-                showSuccess(t('common.saved', 'Settings saved successfully'))
+                if (await fetchConfig()) showSuccess(t('phase7.configurationSaved'))
+                else showError(t('phase7.savedReadbackFailed'))
             }
         } catch (error) {
-            console.error('Error saving Commerce AI settings:', error)
-            showError(t('common.saveFailed', 'Failed to save settings'))
+            if (generation === lifetime.current) showError(t(error.response?.status === 409 ? 'phase7.conflict' : 'common.saveFailed', 'Failed to save settings'))
         } finally {
-            setSaving(false)
+            mutation.current = false
+            if (generation === lifetime.current) setSaving(false)
         }
     }
 
@@ -122,10 +123,14 @@ export default function CommerceAI() {
             </div>
         )
     }
+    if (loadError && !storeConfig) return <div role="alert">{t('phase7.loadFailed')} <button onClick={fetchConfig}>{t('common.retry', 'Retry')}</button></div>
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" dir={isRTL ? 'rtl' : 'ltr'}>
             {/* Header */}
+            <p className="text-sm text-gray-600 mb-4">{t('phase7.aiScope')}</p>
+            <button type="button" onClick={fetchConfig} disabled={saving}>{t('common.refresh', 'Refresh')}</button>
+            {loadError && <div role="alert">{t('phase7.savedReadbackFailed')} <button onClick={fetchConfig}>{t('common.retry', 'Retry')}</button></div>}
             <div className="flex items-start justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
@@ -142,7 +147,7 @@ export default function CommerceAI() {
                 </div>
                 <button
                     onClick={handleSave}
-                    disabled={saving}
+                    disabled={saving || !storeConfig}
                     className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-violet-600 hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 disabled:opacity-50"
                 >
                     {saving ? t('common.saving', 'Saving...') : t('common.saveChanges', 'Save Changes')}
@@ -151,27 +156,27 @@ export default function CommerceAI() {
 
             <div className="flex flex-col lg:flex-row gap-8">
                 {/* Left Column: Controls */}
-                <div className="flex-1 space-y-6">
+                <fieldset disabled={saving} className="flex-1 min-w-0 space-y-6">
 
                     {/* 0. Activity Insights (Phase 9) */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
                             <span className="text-4xl mb-2">💬</span>
                             <div className="text-3xl font-bold text-gray-900 mb-1">
-                                {insights?.chatOpened || 0}
+                                {insights?.chatOpened ?? '—'}
                             </div>
                             <div className="text-sm font-medium text-gray-500">
                                 {t('commerceAi.chatOpened', 'Chat Opened')}
                             </div>
                             <div className="text-xs text-gray-400 mt-2">
-                                {t('commerceAi.last30Days', 'Last 30 Days')}
+                                {t('phase7.activityRetention')}
                             </div>
                         </div>
 
                         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col items-center justify-center text-center">
                             <span className="text-4xl mb-2">🛒</span>
                             <div className="text-3xl font-bold text-gray-900 mb-1">
-                                {insights?.draftCreated || 0}
+                                {insights?.draftCreated ?? '—'}
                             </div>
                             <div className="text-sm font-medium text-gray-500">
                                 {t('commerceAi.draftOrders', 'Draft Orders')}
@@ -190,12 +195,11 @@ export default function CommerceAI() {
                                     {t('commerceAi.enableAssistant', 'Enable Shop Assistant')}
                                 </h3>
                                 <p className="text-sm text-gray-500 mt-1">
-                                    {aiConfig.enabled
-                                        ? t('commerceAi.activeMessage', 'Assistant is active and visible to customers.')
-                                        : t('commerceAi.inactiveMessage', 'Assistant is hidden from the storefront.')}
+                                    {t('phase7.availabilityCandidate')}
                                 </p>
                             </div>
                             <button
+                                role="switch" aria-checked={aiConfig.enabled} aria-label={t('commerceAi.enableAssistant', 'Enable Shop Assistant')}
                                 onClick={() => updateAiConfig('enabled', !aiConfig.enabled)}
                                 className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 ${aiConfig.enabled ? 'bg-green-500' : 'bg-gray-300'
                                     }`}
@@ -207,7 +211,7 @@ export default function CommerceAI() {
                     </div>
 
                     {/* Disable overlay if not enabled */}
-                    <div className={`space-y-6 transition-opacity duration-300 ${!aiConfig.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <fieldset disabled={!aiConfig.enabled || saving} className={`space-y-6 transition-opacity duration-300 ${!aiConfig.enabled ? 'opacity-50' : ''}`}>
 
                         {/* 2. Widget Style */}
                         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
@@ -221,7 +225,7 @@ export default function CommerceAI() {
                                     { id: 'sales', name: 'Sales Assistant', icon: '🛍️' },
                                     { id: 'compact', name: 'Compact Icon', icon: '✨' }
                                 ].map((style) => (
-                                    <div
+                                    <button type="button" aria-pressed={aiConfig.widgetStyle === style.id}
                                         key={style.id}
                                         onClick={() => updateAiConfig('widgetStyle', style.id)}
                                         className={`cursor-pointer border rounded-lg p-4 flex items-center gap-3 transition-all ${aiConfig.widgetStyle === style.id
@@ -230,11 +234,11 @@ export default function CommerceAI() {
                                             }`}
                                     >
                                         <span className="text-2xl">{style.icon}</span>
-                                        <span className="font-medium text-gray-700">{style.name}</span>
+                                        <span className="font-medium text-gray-700">{t(`phase7.style.${style.id}`, style.name)}</span>
                                         {aiConfig.widgetStyle === style.id && (
                                             <span className="ml-auto text-violet-600">✓</span>
                                         )}
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         </div>
@@ -258,7 +262,7 @@ export default function CommerceAI() {
                                             : 'text-gray-500 hover:text-gray-700'
                                             }`}
                                     >
-                                        {pos.label}
+                                        {t(`phase7.position.${pos.id}`, pos.label)}
                                     </button>
                                 ))}
                             </div>
@@ -276,6 +280,7 @@ export default function CommerceAI() {
                                     </p>
                                 </div>
                                 <button
+                                    role="switch" aria-checked={aiConfig.autoGreetingEnabled} aria-label={t('commerceAi.autoGreeting', 'Automatic Greeting')}
                                     onClick={() => updateAiConfig('autoGreetingEnabled', !aiConfig.autoGreetingEnabled)}
                                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 focus:outline-none ${aiConfig.autoGreetingEnabled ? 'bg-violet-600' : 'bg-gray-200'
                                         }`}
@@ -287,10 +292,11 @@ export default function CommerceAI() {
 
                             {aiConfig.autoGreetingEnabled && (
                                 <div className="mt-4">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    <label htmlFor="ai-greeting" className="block text-sm font-medium text-gray-700 mb-1">
                                         {t('commerceAi.message', 'Message')}
                                     </label>
                                     <textarea
+                                        id="ai-greeting"
                                         value={aiConfig.autoGreetingMessage}
                                         onChange={(e) => updateAiConfig('autoGreetingMessage', e.target.value)}
                                         maxLength={120}
@@ -326,16 +332,16 @@ export default function CommerceAI() {
                                             className="mt-1 h-4 w-4 text-violet-600 focus:ring-violet-500 border-gray-300"
                                         />
                                         <div>
-                                            <span className="block text-sm font-medium text-gray-900">{p.name}</span>
-                                            <span className="block text-xs text-gray-500">{p.desc}</span>
+                                            <span className="block text-sm font-medium text-gray-900">{t(`phase7.personality.${p.id}`, p.name)}</span>
+                                            <span className="block text-xs text-gray-500">{t(`phase7.personalityDescription.${p.id}`, p.desc)}</span>
                                         </div>
                                     </label>
                                 ))}
                             </div>
                         </div>
 
-                    </div>
-                </div>
+                    </fieldset>
+                </fieldset>
 
                 {/* Right Column: Live Preview */}
                 <div className="w-full lg:w-96 flex-shrink-0">
@@ -394,11 +400,11 @@ export default function CommerceAI() {
 
                             {/* Preview Label overlay */}
                             <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded-full backdrop-blur-sm">
-                                Live Preview
+                                {t('phase7.appearancePreview')}
                             </div>
                         </div>
                         <p className="text-center text-sm text-gray-500">
-                            Updates in real-time. Try changing the settings!
+                            {t('phase7.previewOnly')}
                         </p>
                     </div>
                 </div>

@@ -22,6 +22,26 @@ const requiredArray = (value, field) => {
     return value
 }
 
+const operationNames = new Set(['quote', 'create', 'tracking', 'label', 'cancellation', 'recovery'])
+const operationStates = new Set(['Implemented', 'LocalOnly', 'StoredOnly', 'Unavailable', 'ReconciliationOnly'])
+export function admitCarrierOperations(payload) {
+    if (payload == null) return [] // Older runtimes convey no positive operation authority.
+    const seen = new Set()
+    return requiredArray(payload, 'carrier operations').map((operation) => {
+        if (!operation || !operationNames.has(operation.operation) || seen.has(operation.operation) || !operationStates.has(operation.implementation)) {
+            throw new Error('Shipping administration DTO rejected malformed carrier operation.')
+        }
+        seen.add(operation.operation)
+        return {
+            operation: operation.operation, implementation: operation.implementation,
+            accountReady: operation.implementation === 'Implemented' && operation.accountReady === true,
+            requiresShipmentEvidence: operation.requiresShipmentEvidence !== false,
+            blockers: Array.isArray(operation.blockers) ? operation.blockers.filter(item => typeof item === 'string') : [],
+            limitations: Array.isArray(operation.limitations) ? operation.limitations.filter(item => typeof item === 'string') : [],
+        }
+    })
+}
+
 export function admitSupportedCarriers(payload) {
     const seen = new Set()
     return requiredArray(payload, 'supported carriers').map((carrier) => {
@@ -38,10 +58,11 @@ export function admitSupportedCarriers(payload) {
         return {
             carrierCode,
             displayName: requiredString(carrier.displayName, 'carrier display name'),
+            operations: admitCarrierOperations(carrier.operations),
             isExternal: carrier.isExternal === true,
             accountRequired: carrier.accountRequired !== false,
             readinessRequired: carrier.readinessRequired === true,
-            productionCapability: stringOrNull(carrier.productionCapability) || 'Partial',
+            productionCapability: ['ProductionReady', 'Partial', 'Unavailable', 'NotCertified'].includes(carrier.productionCapability) ? carrier.productionCapability : 'Unavailable',
             credentialFields: Array.isArray(carrier.credentialFields) ? carrier.credentialFields.map((field) => ({
                 key: requiredString(field?.key, 'credential field key'),
                 label: requiredString(field?.label, 'credential field label'),
@@ -49,9 +70,9 @@ export function admitSupportedCarriers(payload) {
                 required: field?.required === true,
                 target: requiredString(field?.target, 'credential field target'),
             })) : [],
-            environmentSupported: carrier.environmentSupported !== false,
-            connectionTestSupported: carrier.connectionTestSupported !== false,
-            connectionTestMode: stringOrNull(carrier.connectionTestMode) || 'Remote',
+            environmentSupported: carrier.environmentSupported === true,
+            connectionTestSupported: carrier.connectionTestSupported === true && ['LocalOnly', 'Remote'].includes(carrier.connectionTestMode),
+            connectionTestMode: ['LocalOnly', 'Remote'].includes(carrier.connectionTestMode) ? carrier.connectionTestMode : 'Unsupported',
             requiresOriginReadiness: carrier.requiresOriginReadiness === true,
             requiresGeographyMapping: carrier.requiresGeographyMapping === true,
             supportsWebhooks: carrier.supportsWebhooks === true,
@@ -84,6 +105,9 @@ export function admitCarrierAccounts(payload) {
         return {
             id,
             carrierCode: requiredString(account.carrierCode, 'carrier code'),
+            savedCredentialFields: Array.isArray(account.savedCredentialFields) ? account.savedCredentialFields.filter(field => typeof field === 'string') : [],
+            connectionTestIsCurrent: account.connectionTestIsCurrent === true,
+            operations: admitCarrierOperations(account.operations),
             environment: stringOrNull(account.environment),
             activeCredentialReferenceId: stringOrNull(account.activeCredentialReferenceId),
             state: requiredString(account.state, 'activation state'),
@@ -133,7 +157,7 @@ export function admitCarrierAccounts(payload) {
                 enabled: account.integrationReadiness.enabled === true,
                 canExecute: account.integrationReadiness.canExecute === true,
                 environment: stringOrNull(account.integrationReadiness.environment),
-                productionCapability: stringOrNull(account.integrationReadiness.productionCapability) || 'Partial',
+                productionCapability: stringOrNull(account.integrationReadiness.productionCapability) || 'Unavailable',
                 blockers: Array.isArray(account.integrationReadiness.blockers)
                     ? account.integrationReadiness.blockers.filter((item) => typeof item === 'string')
                     : [],
@@ -242,13 +266,28 @@ export async function fetchShippingAdministrationAudit(limit = 100) {
     }
 }
 
+function administrationFailureCodes(payload) {
+    // ApiErrorResponse serializes Details as "data", retaining PascalCase
+    // dictionary keys. Also accept older details envelopes.
+    const details = payload?.data || payload?.details || payload?.Details
+    const failure = payload?.failureCode || details?.failureCode || details?.FailureCode
+    const blockers = payload?.blockers || details?.blockers || details?.Blockers
+    return [...new Set([failure || payload?.code, ...(Array.isArray(blockers) ? blockers : [])]
+        .filter(code => typeof code === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(code)))]
+}
+
 async function mutateShippingAdministration(path, method, payload) {
+    let response
     try {
-        const response = await api[method](`${ADMIN_SHIPPING_BASE}${path}`, payload)
-        return response.data
+        response = await api[method](`${ADMIN_SHIPPING_BASE}${path}`, payload)
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Shipping administration action failed.'))
+        const codes = administrationFailureCodes(error?.response?.data)
+        throw new Error(codes.join(' — ') || getSafeApiErrorMessage(error, 'Shipping administration action failed.'))
     }
+    if (response.data?.succeeded !== true) {
+        throw new Error(administrationFailureCodes(response.data).join(' — ') || 'Shipping administration action was not confirmed.')
+    }
+    return response.data
 }
 
 export function createCarrierAccount(carrierCode) {

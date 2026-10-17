@@ -15,13 +15,15 @@ public sealed class ShipmentCodCollectedConsumerTests
     {
         var orderId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
+        var evidenceId = Guid.NewGuid();
         var paymentLifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
         paymentLifecycle
-            .Setup(service => service.MarkOfflineCollectionDeliveredAsync(
+            .Setup(service => service.RecordCarrierCodCollectionAsync(
                 tenantId,
                 orderId,
-                "TRK-123",
-                "Carrier One",
+                shipmentId,
+                evidenceId,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(PaymentTransitionResult.Succeeded(PaymentStatus.Collected));
 
@@ -32,13 +34,14 @@ public sealed class ShipmentCodCollectedConsumerTests
         {
             TenantId = tenantId,
             OrderId = orderId,
-            ShipmentId = Guid.NewGuid(),
+            ShipmentId = shipmentId,
+            CollectionEvidenceId = evidenceId,
             ShipmentNumber = "SHP-123",
             TrackingNumber = "TRK-123",
             CarrierCode = "carrier-one",
             CarrierName = "Carrier One",
-            CodAmount = 250m,
-            Currency = "EGP",
+            CodAmount = 999999m, // The consumer forwards locators, never this money assertion.
+            Currency = "USD",
             CollectedAt = new DateTime(2026, 7, 21, 9, 0, 0, DateTimeKind.Utc)
         });
 
@@ -52,13 +55,14 @@ public sealed class ShipmentCodCollectedConsumerTests
     {
         var orderId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
         var paymentLifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
         paymentLifecycle
-            .Setup(service => service.MarkOfflineCollectionDeliveredAsync(
+            .Setup(service => service.RecordCarrierCodCollectionAsync(
                 tenantId,
                 orderId,
-                "SHP-456",
-                "carrier-two",
+                shipmentId,
+                Guid.Empty,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(PaymentTransitionResult.Failed("Order is not a COD order", "NOT_COD"));
 
@@ -69,7 +73,7 @@ public sealed class ShipmentCodCollectedConsumerTests
         {
             TenantId = tenantId,
             OrderId = orderId,
-            ShipmentId = Guid.NewGuid(),
+            ShipmentId = shipmentId,
             ShipmentNumber = "SHP-456",
             CarrierCode = "carrier-two",
             CodAmount = 250m,

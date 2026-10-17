@@ -97,8 +97,8 @@ public class Shipment : BaseEntity, ITenantOwned
     public decimal? CodAmount { get; set; }
     
     /// <summary>
-    /// Whether COD has been collected and remitted.
-    /// Set by carrier via webhook or manual confirmation.
+    /// Whether customer COD cash collection has been recorded by shipment authority.
+    /// This is not evidence of carrier remittance to the merchant.
     /// </summary>
     public bool CodCollected { get; set; }
     
@@ -283,6 +283,12 @@ public class Shipment : BaseEntity, ITenantOwned
     /// Package description (for customs/carrier).
     /// </summary>
     public string? PackageDescription { get; set; }
+
+    // Explicit operator-measured packed parcel, including original units and contents.
+    // Legacy WeightKg/catalog weights do not prove packed-parcel measurement.
+    public string? ParcelEvidenceJson { get; set; }
+    public string? CarrierRequestSnapshotJson { get; set; }
+    public string? CarrierRequestFingerprint { get; set; }
     
     #endregion
     

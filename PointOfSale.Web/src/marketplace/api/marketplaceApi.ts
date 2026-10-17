@@ -7,12 +7,12 @@ import type {
   ServiceDetails,
   ServiceRequest,
   ServiceRequestDetails,
-  ServiceReview,
   ServiceReviewHistory,
   CreateReviewRequest,
   ServiceReviewCreationAuthority,
   CreateServiceRequest,
   MyService,
+  MarketplaceProfileInput,
 } from '../types';
 import type { CreatedServiceRequestAuthority } from '../requestCreationAuthority';
 
@@ -35,11 +35,11 @@ export const marketplaceApi = {
     return apiClient.get(`/marketplace/services/${serviceId}/reviews`);
   },
 
-  createProfile: (data: { displayName: string; bio?: string }): Promise<any> => {
+  createProfile: (data: MarketplaceProfileInput): Promise<unknown> => {
     return apiClient.post('/marketplace/profile', data);
   },
 
-  updateProfile: (data: any): Promise<any> => {
+  updateProfile: (data: MarketplaceProfileInput): Promise<unknown> => {
     return apiClient.put('/marketplace/profile', data);
   },
 
@@ -115,11 +115,11 @@ export const marketplaceApi = {
     return apiClient.get('/marketplace/my-services');
   },
 
-  createService: (data: CreateServiceRequest): Promise<any> => {
+  createService: (data: CreateServiceRequest): Promise<unknown> => {
     return apiClient.post('/marketplace/my-services', data);
   },
 
-  updateService: (serviceId: string, data: { title: string; description: string; category?: string }): Promise<any> => {
+  updateService: (serviceId: string, data: { title: string; description: string; category?: string }): Promise<unknown> => {
     return apiClient.put(`/marketplace/my-services/${serviceId}`, data);
   },
 

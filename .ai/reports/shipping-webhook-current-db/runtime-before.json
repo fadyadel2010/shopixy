@@ -1,0 +1,273 @@
+{
+    "observedAt":  "2026-10-12T14:52:00.3064366Z",
+    "processes":  [
+                      {
+                          "pid":  4464,
+                          "parent":  1608,
+                          "name":  "wslservice.exe",
+                          "started":  "2026-10-12T11:14:41.9962640Z",
+                          "executable":  null,
+                          "command":  null
+                      },
+                      {
+                          "pid":  14180,
+                          "parent":  4500,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:21:58.1353190Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Program Files\\nodejs/node_modules/npm/bin/npm-cli.js\" run dev"
+                      },
+                      {
+                          "pid":  14028,
+                          "parent":  2432,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:21:59.7246960Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"node\"   \"C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.WhatsApp.Baileys\\node_modules\\.bin\\\\..\\ts-node\\dist\\bin.js\" src/index.ts"
+                      },
+                      {
+                          "pid":  13840,
+                          "parent":  13544,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:22:31.7833630Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Program Files\\nodejs/node_modules/npm/bin/npm-cli.js\" run dev"
+                      },
+                      {
+                          "pid":  6656,
+                          "parent":  14796,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:22:32.2599560Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"node\"   \"C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.Web\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" "
+                      },
+                      {
+                          "pid":  13776,
+                          "parent":  14424,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:22:40.9153200Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Program Files\\nodejs/node_modules/npm/bin/npm-cli.js\" run dev"
+                      },
+                      {
+                          "pid":  7776,
+                          "parent":  10488,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:22:41.2171480Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"node\"   \"C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.Storefront\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" "
+                      },
+                      {
+                          "pid":  12692,
+                          "parent":  13792,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:26:03.6882350Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Program Files\\nodejs/node_modules/npm/bin/npx-cli.js\" opencode"
+                      },
+                      {
+                          "pid":  12132,
+                          "parent":  4996,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:28:11.4401050Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\fadya\\AppData\\Roaming\\npm\\node_modules\\@playwright\\cli\\node_modules\\playwright-core\\lib\\entry\\cliDaemon.js opencode-ui-test --headed --browser=msedge"
+                      },
+                      {
+                          "pid":  18568,
+                          "parent":  8720,
+                          "name":  "node.exe",
+                          "started":  "2026-10-12T11:47:00.8484240Z",
+                          "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                          "command":  "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Program Files\\nodejs/node_modules/npm/bin/npx-cli.js\" opencode"
+                      },
+                      {
+                          "pid":  16232,
+                          "parent":  15036,
+                          "name":  "dotnet.exe",
+                          "started":  "2026-10-12T14:43:28.5037500Z",
+                          "executable":  "C:\\Program Files\\dotnet\\dotnet.exe",
+                          "command":  "\"C:\\Program Files\\dotnet\\dotnet.exe\" run"
+                      },
+                      {
+                          "pid":  17600,
+                          "parent":  16232,
+                          "name":  "dotnet.exe",
+                          "started":  "2026-10-12T14:43:29.0517950Z",
+                          "executable":  "C:\\Program Files\\dotnet\\dotnet.exe",
+                          "command":  "\"C:\\Program Files\\dotnet\\dotnet.exe\" \"C:\\Program Files\\dotnet\\sdk\\9.0.308\\MSBuild.dll\" /noautoresponse /nologo /nodemode:1 /nodeReuse:true /low:false"
+                      },
+                      {
+                          "pid":  13916,
+                          "parent":  17600,
+                          "name":  "dotnet.exe",
+                          "started":  "2026-10-12T14:43:30.1002960Z",
+                          "executable":  "C:\\Program Files\\dotnet\\dotnet.exe",
+                          "command":  "\"C:\\Program Files\\dotnet\\dotnet.exe\" exec \"C:\\Program Files\\dotnet\\sdk\\9.0.308\\Roslyn\\bincore\\VBCSCompiler.dll\" \"-pipename:8798aIAQOot5bZOtxc3Jom2digxb4UwyEeeOsAjD1JU\""
+                      },
+                      {
+                          "pid":  13732,
+                          "parent":  16232,
+                          "name":  "PointOfSale.API.exe",
+                          "started":  "2026-10-12T14:44:19.5152230Z",
+                          "executable":  "C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.API\\bin\\Debug\\net9.0\\PointOfSale.API.exe",
+                          "command":  "\"C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.API\\bin\\Debug\\net9.0\\PointOfSale.API.exe\""
+                      },
+                      {
+                          "pid":  19464,
+                          "parent":  14208,
+                          "name":  "dotnet.exe",
+                          "started":  "2026-10-12T14:51:56.9905090Z",
+                          "executable":  "C:\\Program Files\\dotnet\\dotnet.exe",
+                          "command":  "\"C:\\Program Files\\dotnet\\dotnet.exe\" run --project C:/Users/fadya/AppData/Local/Temp/opencode/shipping-reliability/live-db-readonly/live-db-readonly.csproj --no-build --no-restore -- C:/Users/fadya/source/repos/PointOfSale C:/Users/fadya/source/repos/PointOfSale/.ai/reports/shipping-webhook-current-db/preflight-readonly.sql"
+                      },
+                      {
+                          "pid":  15160,
+                          "parent":  3876,
+                          "name":  "dotnet.exe",
+                          "started":  "2026-10-12T14:51:57.0529150Z",
+                          "executable":  "C:\\Program Files\\dotnet\\dotnet.exe",
+                          "command":  "\"C:\\Program Files\\dotnet\\dotnet.exe\" test PointOfSale.Tests/PointOfSale.Tests.csproj -c ShippingReliability --no-build --no-restore --filter FullyQualifiedName~ShippingWebhookClaimPostgresTests --list-tests"
+                      }
+                  ],
+    "connections":  [
+                        {
+                            "LocalAddress":  "::1",
+                            "LocalPort":  5010,
+                            "RemoteAddress":  "::",
+                            "RemotePort":  0,
+                            "State":  2,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  54461,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5672,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  51254,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5432,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  51232,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5432,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  51231,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5432,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  51230,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5432,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  51227,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5432,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "192.168.1.3",
+                            "LocalPort":  51226,
+                            "RemoteAddress":  "192.168.1.5",
+                            "RemotePort":  5432,
+                            "State":  5,
+                            "OwningProcess":  13732
+                        },
+                        {
+                            "LocalAddress":  "127.0.0.1",
+                            "LocalPort":  5010,
+                            "RemoteAddress":  "0.0.0.0",
+                            "RemotePort":  0,
+                            "State":  2,
+                            "OwningProcess":  13732
+                        }
+                    ],
+    "services":  [
+                     {
+                         "Name":  "WSLService",
+                         "State":  "Running",
+                         "ProcessId":  4464
+                     }
+                 ],
+    "configFlags":  [
+                        {
+                            "file":  "appsettings.Development.json",
+                            "webhookClaimsEnabled":  null
+                        },
+                        {
+                            "file":  "appsettings.Development.local.json",
+                            "webhookClaimsEnabled":  null
+                        },
+                        {
+                            "file":  "appsettings.json",
+                            "webhookClaimsEnabled":  null
+                        },
+                        {
+                            "file":  "appsettings.Production.json",
+                            "webhookClaimsEnabled":  null
+                        },
+                        {
+                            "file":  "appsettings.Staging.json",
+                            "webhookClaimsEnabled":  null
+                        },
+                        {
+                            "file":  "appsettings.Test.json",
+                            "webhookClaimsEnabled":  null
+                        },
+                        {
+                            "file":  "appsettings.Test.local.json",
+                            "webhookClaimsEnabled":  null
+                        }
+                    ],
+    "agentEnvironmentFlag":  null,
+    "artifacts":  [
+                      {
+                          "path":  "PointOfSale.API/bin/Debug/net9.0/PointOfSale.API.dll",
+                          "lastWriteUtc":  "2026-10-12T14:44:18.0907858Z",
+                          "sha256":  "84EB3D5B76BB6E51C6CF2B3298D885288319861AD37F0DDD3E54CCED4AD769E0"
+                      },
+                      {
+                          "path":  "PointOfSale.API/bin/Debug/net9.0/PointOfSale.Infrastructure.dll",
+                          "lastWriteUtc":  "2026-10-12T14:44:01.4780709Z",
+                          "sha256":  "EE767D4CABE4F0CE759A173231CBB9108454C181C8E681179F07407F4BB0AC44"
+                      }
+                  ],
+    "health":  [
+                   {
+                       "path":  "/health/live",
+                       "status":  200,
+                       "content":  "{\r\n  \"status\": \"Healthy\",\r\n  \"correlationId\": \"1403cdda-1603-49f9-9714-99cb5f639d10\",\r\n  \"timestampUtc\": \"2026-10-12T14:51:59.5668301Z\",\r\n  \"totalDuration\": 0.2279,\r\n  \"entries\": {}\r\n}"
+                   },
+                   {
+                       "path":  "/health/ready",
+                       "status":  200,
+                       "content":  "{\r\n  \"status\": \"Degraded\",\r\n  \"correlationId\": \"9ca83044-1abb-48ab-9fd5-2b28c50732be\",\r\n  \"timestampUtc\": \"2026-10-12T14:52:00.2400185Z\",\r\n  \"totalDuration\": 644.2853,\r\n  \"entries\": {\r\n    \"masstransit-bus\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Ready\",\r\n      \"duration\": 2.5083,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"Endpoints\": {\r\n          \"rabbitmq://192.168.1.5/storefront-config-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/storefront-config-projection-v2\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-created-event\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-updated-event\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-visibility-lifecycle-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-cache-invalidation\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/redis-invalidation\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-search-index\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-updated-search-index\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-deleted-search-index\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-stock-price-search-index\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-stock-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipping-method-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/storefront-footer-projection-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/cms-page-projection-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/navigation-projection-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipment-created-notification\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipment-shipped-notification\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipment-delivered-notification\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipment-cancelled-notification\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipment-external-registration-requested\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-shipment-orchestration\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/online-customer-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/online-customer-session-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/online-customer-wishlist-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/payment-method-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/coupon-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/promotion-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/smart-offer-projection-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-promotion-search-index\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/tenant-currency-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-projection-v7\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-variant-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/fadya-windows-development-commercehub-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/commercehub-order-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-media-changed-event\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-discovery-projection-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-trust-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-trust-projection-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/analytics-events\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/authoritative-purchase-analytics\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-status-sync\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/fulfillment-delivered-event\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/shipment-cod-collected\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/online-payment-captured-affiliate\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/cod-delivered-affiliate\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/wallet-payment-approved-affiliate\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-collection-accounting-posted-affiliate\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-order-delivered\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-completed-affiliate\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-product-policy-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-product-intelligence-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-category-updated\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-order-attribution\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-attributed-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-commission-earned-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-commission-reversed-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-commission-approved-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-commission-paid-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-lifecycle-affiliate-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-commission-earned-accounting\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-commission-reversed-accounting\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-link-clicked\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-click-conversion\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-analytics-daily-click\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/affiliate-analytics-daily-earning\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-created-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/payment-completed-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/order-delivered-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/refund-processed-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/product-updated-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-review-created-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-review-updated-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-review-approved-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-review-rejected-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-review-deleted-queue\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/homepage-readmodel-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/marketplace-fault-monitor\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/whats-app-order-confirmation\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/whats-app-otp\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/whats-app-session-monitor\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/whats-app-payment-approval-requested\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/whats-app-payment-approved-notification\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/whats-app-payment-rejected-notification\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/cart-activity\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/recovery-orchestration\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/abandoned-cart-recovery-v1\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/checkout-session-projection\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/checkout-session-order-conversion\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready\"\r\n          },\r\n          \"rabbitmq://192.168.1.5/FADYADEL_PointOfSaleAPI_bus_wo4oyyyzytm1rid4bdx1o54or9?temporary=true\": {\r\n            \"status\": \"Healthy\",\r\n            \"description\": \"ready (not started)\"\r\n          }\r\n        }\r\n      }\r\n    },\r\n    \"projection_outbox\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Projection outboxes are delivering within readiness thresholds.\",\r\n      \"duration\": 62.9747,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"StockPendingCount\": 0,\r\n        \"StockRepeatedFailureCount\": 0,\r\n        \"StockCriticalLagCount\": 0,\r\n        \"MarketplacePendingCount\": 0,\r\n        \"MarketplaceRepeatedFailureCount\": 0,\r\n        \"MarketplaceCriticalLagCount\": 0,\r\n        \"MarketplaceProjectionPendingCount\": 0,\r\n        \"MarketplaceProjectionRepeatedFailureCount\": 0,\r\n        \"MarketplaceProjectionCriticalLagCount\": 0,\r\n        \"TotalPendingCount\": 0,\r\n        \"RepeatedFailureCount\": 0,\r\n        \"CriticalLagCount\": 0,\r\n        \"WarningLagCount\": 0\r\n      }\r\n    },\r\n    \"integration_outbox_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Integration outbox is delivering within readiness thresholds.\",\r\n      \"duration\": 22.2752,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"PendingCount\": 0,\r\n        \"ZeroAttemptCriticalLagCount\": 0,\r\n        \"RepeatedFailureCount\": 0,\r\n        \"OperatorReconciliationCount\": 0,\r\n        \"CriticalLagCount\": 0,\r\n        \"WarningLagCount\": 0\r\n      }\r\n    },\r\n    \"payment_cancellation_outbox_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Payment cancellation recovery backlog is within readiness thresholds.\",\r\n      \"duration\": 72.8969,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"PendingCount\": 0,\r\n        \"TerminalFailureCount\": 0,\r\n        \"RepeatedFailureCount\": 0,\r\n        \"CriticalLagCount\": 0,\r\n        \"WarningLagCount\": 0,\r\n        \"ActiveClaimCount\": 0,\r\n        \"ProcessingLeaseSeconds\": 120\r\n      }\r\n    },\r\n    \"provider_delivery_outbox_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Provider delivery outbox is healthy.\",\r\n      \"duration\": 83.7515,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"PendingCount\": 0,\r\n        \"DeadLetterCount\": 0,\r\n        \"RepeatedFailureCount\": 0,\r\n        \"WarningLagCount\": 0,\r\n        \"CriticalLagCount\": 0\r\n      }\r\n    },\r\n    \"mass_transit_bus_outbox_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"MassTransit bus outbox is delivering within readiness thresholds.\",\r\n      \"duration\": 103.4772,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"PendingCount\": 0,\r\n        \"CriticalLagCount\": 0,\r\n        \"WarningLagCount\": 0\r\n      }\r\n    },\r\n    \"accounting_outbox_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Critical accounting outbox delivery is within readiness thresholds.\",\r\n      \"duration\": 127.0324,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"CriticalPendingCount\": 0,\r\n        \"RepeatedFailureCount\": 0,\r\n        \"CriticalLagCount\": 0,\r\n        \"WarningLagCount\": 0\r\n      }\r\n    },\r\n    \"canonical_identity_authority\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Canonical identity authority links are complete and conflict-free.\",\r\n      \"duration\": 138.5857,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"MissingCanonicalIdentityLinks\": 0,\r\n        \"CanonicalIdentityConflicts\": 0\r\n      }\r\n    },\r\n    \"payout_external_truth_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Completed payouts have terminal evidence and recent reconciliation coverage.\",\r\n      \"duration\": 71.5158,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"CompletedPayoutsWithoutExternalEvidence\": 0,\r\n        \"CompletedPayoutCount\": 0,\r\n        \"StaleProcessingPayouts\": 0,\r\n        \"ReconciliationRequiredPayouts\": 0,\r\n        \"LatestReconciliationTimestampUtc\": \"2026-10-12T14:00:16.4094230Z\",\r\n        \"LatestReconciliationStatus\": \"Healthy\",\r\n        \"LatestReconciliationMismatchCount\": 0\r\n      }\r\n    },\r\n    \"commercehub_external_outcome_recovery\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"CommerceHub external side-effect recovery is within readiness thresholds.\",\r\n      \"duration\": 78.1746,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"UnresolvedRefundCount\": 0,\r\n        \"UnresolvedCapturedWebhookCount\": 0,\r\n        \"UnresolvedRefundWebhookCount\": 0,\r\n        \"ReconciliationRequiredShipmentCount\": 0,\r\n        \"CriticalPendingCarrierRegistrations\": 0,\r\n        \"WarningPendingCarrierRegistrations\": 0\r\n      }\r\n    },\r\n    \"postgresql\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"PostgreSQL is reachable.\",\r\n      \"duration\": 51.6367,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"host\": \"192.168.1.5\",\r\n        \"port\": 5432,\r\n        \"database\": \"PosEcommerceDb_Baseline\"\r\n      }\r\n    },\r\n    \"redis\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Redis is reachable.\",\r\n      \"duration\": 9.2715,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabled\": true,\r\n        \"connected\": true,\r\n        \"latencyMs\": 4.0261,\r\n        \"Probe\": \"PING\"\r\n      }\r\n    },\r\n    \"mongodb\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"MongoDB is reachable.\",\r\n      \"duration\": 9.6085,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"database\": \"ecommerce_read_db\",\r\n        \"ok\": \"1\"\r\n      }\r\n    },\r\n    \"elasticsearch\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Elasticsearch is reachable.\",\r\n      \"duration\": 24.8137,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"url\": \"http://192.168.1.5:9200\",\r\n        \"status\": \"Green\",\r\n        \"activeShards\": 65,\r\n        \"unassignedShards\": 0\r\n      }\r\n    },\r\n    \"rabbitmq\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"RabbitMQ is reachable.\",\r\n      \"duration\": 52.4795,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"host\": \"192.168.1.5\",\r\n        \"port\": 5672,\r\n        \"vhost\": \"/\"\r\n      }\r\n    },\r\n    \"r2\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Cloudflare R2 is reachable.\",\r\n      \"duration\": 637.0411,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"bucket\": \"shopixy\",\r\n        \"serviceUrl\": \"https://e0d49325f8bd7676ea13ee30b0c52088.r2.cloudflarestorage.com\"\r\n      }\r\n    },\r\n    \"dns_resolver\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"DNS resolver operational (latency: 78.9599ms)\",\r\n      \"duration\": 84.3334,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"latency_ms\": 78.9599,\r\n        \"resolver\": \"8.8.8.8:53\",\r\n        \"test_hostname\": \"_dmarc.google.com\"\r\n      }\r\n    },\r\n    \"certificate_provider\": {\r\n      \"status\": \"Degraded\",\r\n      \"description\": \"Certificate provider execution is disabled.\",\r\n      \"duration\": 4.5612,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {}\r\n    },\r\n    \"caddy_edge\": {\r\n      \"status\": \"Degraded\",\r\n      \"description\": \"Caddy edge integration is disabled.\",\r\n      \"duration\": 4.0074,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {}\r\n    },\r\n    \"certificate_renewal\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Certificate renewal backlog is within configured bounds.\",\r\n      \"duration\": 125.103,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"dueCount\": 0,\r\n        \"urgentCount\": 0,\r\n        \"unsafeAuthorityCount\": 0,\r\n        \"exhaustedValidCount\": 0,\r\n        \"scanIntervalMinutes\": 60,\r\n        \"renewalThresholdDays\": 30\r\n      }\r\n    },\r\n    \"paymob_foundation\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Paymob foundation configuration is valid.\",\r\n      \"duration\": 2.0553,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabled\": true,\r\n        \"environment\": \"Sandbox\",\r\n        \"sandboxMode\": true,\r\n        \"credentialsConfigured\": false,\r\n        \"callbackConfigured\": true,\r\n        \"officialApiAvailable\": true,\r\n        \"transportName\": \"System.Net.Http.HttpClient\",\r\n        \"baseUri\": \"https://accept.paymob.com/api/\",\r\n        \"usesUnofficialWrapper\": false\r\n      }\r\n    },\r\n    \"paymob_operational_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Paymob operational readiness checks are green.\",\r\n      \"duration\": 217.7971,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabledHealth\": true,\r\n        \"foundationHealth\": true,\r\n        \"providerEnabledHealth\": true,\r\n        \"environmentHealth\": true,\r\n        \"credentialHealth\": true,\r\n        \"merchantIdentifierHealth\": true,\r\n        \"hmacSecretHealth\": true,\r\n        \"callbackUrlHealth\": true,\r\n        \"featureFlagHealth\": true,\r\n        \"capabilityConsistencyHealth\": true,\r\n        \"runtimeBridgeHealth\": true,\r\n        \"applicationServiceHealth\": true,\r\n        \"webhookEndpointHealth\": true,\r\n        \"databaseHealth\": true,\r\n        \"replayStoreHealth\": true,\r\n        \"webhookAuditStoreHealth\": true,\r\n        \"tenantConfigurationHealth\": true,\r\n        \"dependencyHealth\": true,\r\n        \"enabled\": true,\r\n        \"environment\": \"Sandbox\",\r\n        \"sandboxMode\": true,\r\n        \"credentialsConfigured\": true,\r\n        \"globalCredentialsConfigured\": false,\r\n        \"callbackConfigured\": true\r\n      }\r\n    },\r\n    \"stripe_operational_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Stripe operational readiness checks are green.\",\r\n      \"duration\": 181.3159,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabledHealth\": true,\r\n        \"foundationHealth\": true,\r\n        \"credentialHealth\": true,\r\n        \"environmentHealth\": true,\r\n        \"sdkHealth\": true,\r\n        \"webhookEndpointHealth\": true,\r\n        \"runtimeBridgeHealth\": true,\r\n        \"applicationServiceHealth\": true,\r\n        \"databaseHealth\": true,\r\n        \"replayStoreHealth\": true,\r\n        \"webhookAuditStoreHealth\": true,\r\n        \"tenantConfigurationHealth\": true,\r\n        \"outcomeAdmissionHealth\": true,\r\n        \"dependencyHealth\": true,\r\n        \"enabled\": true,\r\n        \"environment\": \"Sandbox\",\r\n        \"sandboxMode\": true\r\n      }\r\n    },\r\n    \"fawry_foundation\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Fawry foundation configuration is valid.\",\r\n      \"duration\": 3.0643,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabled\": false,\r\n        \"environment\": \"Sandbox\",\r\n        \"sandboxMode\": true,\r\n        \"credentialsConfigured\": false,\r\n        \"callbackConfigured\": false,\r\n        \"officialApiAvailable\": true,\r\n        \"transportName\": \"System.Net.Http.HttpClient\",\r\n        \"baseUri\": \"https://atfawry.fawrystaging.com/\",\r\n        \"usesUnofficialWrapper\": false,\r\n        \"officialDotNetSdkAvailable\": false\r\n      }\r\n    },\r\n    \"fawry_operational_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Fawry is disabled; optional provider readiness is not required.\",\r\n      \"duration\": 4.0284,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabled\": false\r\n      }\r\n    },\r\n    \"manual_payment_foundation\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Manual Payment foundation configuration is valid.\",\r\n      \"duration\": 0.9458,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabled\": true,\r\n        \"environment\": \"Sandbox\",\r\n        \"sandboxMode\": true,\r\n        \"instructionsConfigured\": true,\r\n        \"expirationConfigured\": true,\r\n        \"enabledChannelCount\": 1,\r\n        \"acceptedProofTypeCount\": 6,\r\n        \"maximumUploadBytes\": 5242880,\r\n        \"providerCode\": \"manual_payment\",\r\n        \"providerModel\": \"Backend-owned workflow provider\",\r\n        \"externalNetworkRequired\": false,\r\n        \"runtimeExecutionEnabled\": false\r\n      }\r\n    },\r\n    \"manual_payment_operational_readiness\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"Manual Payment operational readiness checks are green.\",\r\n      \"duration\": 13.1068,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"providerEnabledHealth\": true,\r\n        \"configurationValidHealth\": true,\r\n        \"supportedChannelsHealth\": true,\r\n        \"instructionConfigurationHealth\": true,\r\n        \"expirationPolicyHealth\": true,\r\n        \"proofConfigurationHealth\": true,\r\n        \"environmentConsistencyHealth\": true,\r\n        \"featureFlagHealth\": true,\r\n        \"capabilityConsistencyHealth\": true,\r\n        \"secretExposureHealth\": true,\r\n        \"runtimeBridgeHealth\": true,\r\n        \"applicationServiceHealth\": true,\r\n        \"evidenceApplicationServiceHealth\": true,\r\n        \"providerAdapterHealth\": true,\r\n        \"evidenceAdapterHealth\": true,\r\n        \"tenantConfigurationResolverHealth\": true,\r\n        \"alertDefinitionHealth\": true,\r\n        \"telemetryDefinitionHealth\": true,\r\n        \"enabled\": true,\r\n        \"environment\": \"Sandbox\",\r\n        \"sandboxMode\": true,\r\n        \"enabledChannelCount\": 1,\r\n        \"acceptedProofTypeCount\": 6,\r\n        \"maximumUploadBytes\": 5242880,\r\n        \"providerCode\": \"manual_payment\",\r\n        \"externalNetworkRequired\": false\r\n      }\r\n    },\r\n    \"cod_reference_workflow_foundation\": {\r\n      \"status\": \"Healthy\",\r\n      \"description\": \"COD Reference Workflow foundation configuration is valid.\",\r\n      \"duration\": 2.2209,\r\n      \"exceptionCategory\": null,\r\n      \"data\": {\r\n        \"enabled\": false,\r\n        \"disabledByDefaultVerified\": true,\r\n        \"environment\": \"Disabled\",\r\n        \"workflowCode\": \"cod_reference_workflow\",\r\n        \"workflowModel\": \"Hybrid payment method, payment policy, and fulfillment-driven collection reference workflow\",\r\n        \"externalProvider\": false,\r\n        \"runtimeExecutionEnabled\": false,\r\n        \"evidenceAdmissionEnabled\": false,\r\n        \"lifecycleMutationEnabled\": false,\r\n        \"settlementExecutionEnabled\": false,\r\n        \"authorityContractCount\": 8\r\n      }\r\n    }\r\n  }\r\n}"
+                   }
+               ],
+    "head":  "256339621c0ea49f3602097cdacdf89ffe71754f",
+    "stagedNames":  [
+
+                    ]
+}

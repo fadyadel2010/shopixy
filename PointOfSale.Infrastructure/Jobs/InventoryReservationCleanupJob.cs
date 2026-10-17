@@ -97,6 +97,7 @@ public sealed class InventoryReservationCleanupJob
                 OrderId = order.Id,
                 OrderStatus = order.Status,
                 PaymentStatus = order.PaymentStatus,
+                PaymentMethodCode = order.PaymentMethodCode,
                 LatestPaymentIntentStatus = _dbContext.PaymentIntents
                     .Where(intent => intent.OrderId == order.Id && !intent.IsDeleted)
                     .OrderByDescending(intent => intent.CreatedAt)
@@ -459,6 +460,7 @@ public sealed class InventoryReservationCleanupJob
             OrderId = order.Id,
             OrderStatus = order.Status,
             PaymentStatus = order.PaymentStatus,
+            PaymentMethodCode = order.PaymentMethodCode,
             LatestPaymentIntentStatus = latestPaymentIntent?.Status,
             LatestPaymentIntentCreatedAtUtc = latestPaymentIntent?.CreatedAtUtc
         };
@@ -632,6 +634,12 @@ public sealed class InventoryReservationCleanupJob
             return true;
         }
 
+        if (PointOfSale.Core.Policies.CodReservationExpiryPolicy.ProtectsLiveOrder(
+            orderState.PaymentMethodCode, orderState.PaymentStatus, orderState.OrderStatus))
+        {
+            return false;
+        }
+
         // CRITICAL: Never release reservations for active/confirmed orders
         // Active orders include: Confirmed, Processing, Shipped, Delivered, Completed, OnHold
         // Only release for: Pending (with failed payment) or Cancelled
@@ -798,6 +806,7 @@ public sealed class InventoryReservationCleanupJob
         public Guid OrderId { get; init; }
         public OrderStatus OrderStatus { get; init; }
         public PaymentStatus PaymentStatus { get; init; }
+        public string? PaymentMethodCode { get; init; }
         public PaymentIntentStatus? LatestPaymentIntentStatus { get; init; }
         public DateTime? LatestPaymentIntentCreatedAtUtc { get; init; }
     }

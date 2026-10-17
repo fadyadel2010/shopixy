@@ -79,8 +79,8 @@ export default function AttributionOverviewPage() {
         refetchCampaigns()
     }
 
-    const currentModel = ATTRIBUTION_MODELS.find(m => m.value === model)
-    const currentPeriod = DATE_PERIODS.find(p => p.value === period)
+    const modelLabel = value => t(value === 'FirstTouch' ? 'attribution.firstTouch' : 'attribution.lastTouch')
+    const periodLabel = value => t(`attribution.periods.${({ last_7_days: 'last7Days', last_30_days: 'last30Days', this_month: 'thisMonth', last_month: 'lastMonth' })[value] || value}`)
 
     return (
         <div className="max-w-7xl mx-auto">
@@ -134,7 +134,7 @@ export default function AttributionOverviewPage() {
                         className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
                     >
                         <span className="text-sm font-medium text-gray-700">
-                            {currentModel?.label}
+                            {modelLabel(model)}
                         </span>
                         <ChevronDown size={16} className="text-gray-400" />
                     </button>
@@ -150,8 +150,8 @@ export default function AttributionOverviewPage() {
                                     }}
                                     className={`w-full px-4 py-3 text-left hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${model === m.value ? 'bg-indigo-50' : ''}`}
                                 >
-                                    <div className="font-medium text-gray-900">{m.label}</div>
-                                    <div className="text-xs text-gray-500">{m.description}</div>
+                                    <div className="font-medium text-gray-900">{modelLabel(m.value)}</div>
+                                    <div className="text-xs text-gray-500">{t(m.value === 'FirstTouch' ? 'attribution.firstTouchDesc' : 'attribution.lastTouchDesc')}</div>
                                 </button>
                             ))}
                         </div>
@@ -169,7 +169,7 @@ export default function AttributionOverviewPage() {
                     >
                         <Calendar size={16} className="text-gray-400" />
                         <span className="text-sm font-medium text-gray-700">
-                            {currentPeriod?.label}
+                            {periodLabel(period)}
                         </span>
                         <ChevronDown size={16} className="text-gray-400" />
                     </button>
@@ -185,7 +185,7 @@ export default function AttributionOverviewPage() {
                                     }}
                                     className={`w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${period === p.value ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}`}
                                 >
-                                    {p.label}
+                                    {periodLabel(p.value)}
                                 </button>
                             ))}
                         </div>
@@ -194,7 +194,7 @@ export default function AttributionOverviewPage() {
 
                 {/* Current Model Badge */}
                 <div className="ml-auto px-3 py-1.5 bg-gray-100 rounded-lg text-xs text-gray-500">
-                    {t('attribution.modelLabel', 'Model')}: {currentModel?.label}
+                    {t('attribution.modelLabel', 'Model')}: {modelLabel(model)}
                 </div>
             </div>
 

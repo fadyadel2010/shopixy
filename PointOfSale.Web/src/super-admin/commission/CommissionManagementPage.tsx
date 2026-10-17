@@ -171,8 +171,8 @@ export default function CommissionManagementPage() {
     })
 
     const rules = rulesQuery.data?.rules ?? []
-    const categories = categoriesQuery.data ?? []
-    const vendors = vendorsQuery.data ?? []
+    const categories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
+    const vendors = useMemo(() => vendorsQuery.data ?? [], [vendorsQuery.data])
     const activeGlobalRule =
         rules.find((rule) => rule.scopeType === 'Global' && rule.isActive) ?? null
     const activeGlobalRuleCount = rules.filter((rule) => rule.scopeType === 'Global' && rule.isActive).length

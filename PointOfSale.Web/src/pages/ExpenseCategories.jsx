@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import api from '../services/api'
@@ -18,11 +18,7 @@ const ExpenseCategories = () => {
         isActive: true
     })
 
-    useEffect(() => {
-        loadCategories()
-    }, [])
-
-    const loadCategories = async () => {
+    const loadCategories = useCallback(async () => {
         setLoading(true)
         try {
             const response = await api.get('/expensecategories')
@@ -33,7 +29,11 @@ const ExpenseCategories = () => {
         } finally {
             setLoading(false)
         }
-    }
+    }, [showError, t])
+
+    useEffect(() => {
+        loadCategories()
+    }, [loadCategories])
 
     const handleSubmit = async (e) => {
         e.preventDefault()

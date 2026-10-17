@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.API.DTOs.Cart;
+using PointOfSale.API.DTOs.ShippingAdministration;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.API.Services.Pricing;
 using PointOfSale.API.Services.Storefront;
@@ -21,8 +22,70 @@ namespace PointOfSale.Tests.Architecture;
 
 public sealed class CarrierIntegrationStateMachineConvergenceTests
 {
+    [Theory]
+    [InlineData("bosta")][InlineData("mylerz")][InlineData("fedex")]
+    public async Task DraftOnboardingAndCredentialOnlySave_NeverTestConnectivityOrConferActivation(string carrier)
+    {
+        await using var db = CreateDbContext();
+        var adapter = RecordingCarrierAdapter.Success(carrier, carrier);
+        var service = CreateAdministrationService(db, adapter, out var authority);
+        var tenant = Guid.NewGuid();
+        var created = await service.CreateCarrierAccountAsync(tenant, new(carrier), Actor(), "isolated-draft", default);
+        Assert.True(created.Succeeded); Assert.Equal("Draft", created.State);
+        var supported = Assert.Single((await service.ListSupportedCarriersAsync(default)).Where(c => c.CarrierCode == carrier));
+        Assert.True(supported.AccountRequired); Assert.True(supported.ReadinessRequired);
+        var command = new ConnectionTestCommand("isolated-secret-key", "isolated-secret-password", "isolated-account", null, false,
+            new Dictionary<string, string> { ["businessLocationId"] = "isolated-location", ["codCollectionCurrency"] = "EGP", ["WarehouseName"] = "isolated-warehouse" },
+            WebhookSecret: "isolated-webhook-secret", SaveOnly: true);
+        var result = await service.RunConnectionTestAsync(tenant, created.CarrierAccountId!.Value, command, Actor(), "isolated-save-only", default);
+        Assert.True(result.Succeeded); Assert.Contains("CREDENTIALS_SAVED_NOT_CONNECTION_VERIFIED", result.Blockers);
+        var configuration = await db.CarrierConfigurations.IgnoreQueryFilters().SingleAsync();
+        Assert.False(configuration.IsEnabled); Assert.Null(configuration.LastValidatedAtUtc); Assert.Null(configuration.LastValidationSucceeded);
+        Assert.Null(adapter.CapturedCredentials); Assert.Empty(db.CarrierConnectionTestRecords);
+        Assert.StartsWith("ENC:", configuration.ApiKey); Assert.StartsWith("ENC:", configuration.ApiSecret);
+        var dto = await service.GetCarrierAccountAsync(tenant, created.CarrierAccountId.Value, default);
+        Assert.False(dto!.IntegrationReadiness!.CanExecute); Assert.Equal("NotReady", dto.OperationalState); Assert.Equal("Blocked", dto.HealthState);
+        Assert.Equal(6, dto.Operations!.Count);
+        Assert.All(dto.Operations, op => { Assert.False(op.AccountReady); Assert.True(op.RequiresShipmentEvidence); });
+        Assert.Equal("Unavailable", dto.Operations.Single(op => op.Operation == "quote").Implementation);
+        Assert.Equal("ReconciliationOnly", dto.Operations.Single(op => op.Operation == "recovery").Implementation);
+        var outward = System.Text.Json.JsonSerializer.Serialize(new { result, dto, audit = await service.GetAuditAsync(tenant, created.CarrierAccountId, 20, default) });
+        Assert.DoesNotContain(command.ApiKey, outward); Assert.DoesNotContain(command.ApiSecret, outward); Assert.DoesNotContain(command.WebhookSecret, outward);
+        Assert.False((await authority.GetIntegrationReadinessAsync(tenant, carrier)).CanExecute);
+    }
+
     [Fact]
-    public async Task BostaSaveAndValidate_StoresEncryptedConfigurationAndReportsReady()
+    public async Task DhlLocalValidationRecord_CannotPresentRemoteTrackingAccountReadiness()
+    {
+        await using var db = CreateDbContext();
+        var service = CreateAdministrationService(db, RecordingCarrierAdapter.Success(CarrierCodes.Dhl, "DHL"), out _);
+        var tenant = Guid.NewGuid();
+        var created = await service.CreateCarrierAccountAsync(tenant, new(CarrierCodes.Dhl), Actor(), "synthetic-local-only", default);
+        Assert.True(created.Succeeded);
+        await service.RunConnectionTestAsync(tenant, created.CarrierAccountId!.Value,
+            new ConnectionTestCommand("synthetic-local-key", "synthetic-local-secret", "synthetic-local-account", null, false, new Dictionary<string, string>()),
+            Actor(), "synthetic-local-check", default);
+        // The current writer performs versioned authentication. Append a genuine
+        // legacy-shaped local-only record instead of mislabelling today's test.
+        var account = await db.CarrierAccounts.IgnoreQueryFilters().SingleAsync();
+        db.CarrierConnectionTestRecords.Add(new CarrierConnectionTestRecord
+        {
+            Id = Guid.NewGuid(), TenantId = tenant, CarrierAccountId = account.Id,
+            CredentialReferenceId = account.ActiveCredentialReferenceId, Environment = account.Environment!.Value,
+            Status = CarrierConnectionTestStatus.Succeeded, TestedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var dto = await service.GetCarrierAccountAsync(tenant, created.CarrierAccountId.Value, default);
+        Assert.False(dto!.ConnectionTestIsCurrent);
+        Assert.All(dto!.Operations!, operation =>
+        {
+            Assert.False(operation.AccountReady);
+            Assert.Contains("ACCOUNT_CURRENT_VALIDATION_NOT_RECORDED", operation.Blockers);
+        });
+    }
+
+    [Fact]
+    public async Task BostaSaveAndValidate_StoresEncryptedConfigurationWithoutImplicitActivationOrBookingReadiness()
     {
         await using var db = CreateDbContext();
         var adapter = RecordingCarrierAdapter.Success(CarrierCodes.Bosta, "Bosta");
@@ -33,7 +96,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         var result = await service.RunConnectionTestAsync(
             tenantId,
             accountId,
-            new("bosta-live-key", null, null, null, true, null),
+            BostaConnection("bosta-live-key"),
             Actor(),
             "step-2m-bosta-success",
             CancellationToken.None);
@@ -48,8 +111,13 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
 
         var readiness = await authority.GetIntegrationReadinessAsync(tenantId, CarrierCodes.Bosta);
         Assert.Equal("Available", readiness.CredentialAvailability);
-        Assert.True(readiness.CanExecute);
+        Assert.False(readiness.CanExecute);
+        Assert.DoesNotContain("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", readiness.Blockers);
+        Assert.Contains("BOSTA_INTEGRATION_ACTIVATION_REQUIRED", readiness.Blockers);
         Assert.DoesNotContain("CARRIER_CONFIGURATION_MISSING", readiness.Blockers);
+        var account = await service.GetCarrierAccountAsync(tenantId, accountId, default);
+        Assert.True(account!.Operations!.Single(op => op.Operation == "tracking").AccountReady);
+        Assert.False(account.Operations.Single(op => op.Operation == "create").AccountReady);
     }
 
     [Fact]
@@ -63,7 +131,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         await service.RunConnectionTestAsync(
             tenantId,
             accountId,
-            new("same-canonical-key", null, null, null, true, null),
+            BostaConnection("same-canonical-key"),
             Actor(),
             "step-2m-no-split",
             CancellationToken.None);
@@ -73,7 +141,10 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
 
         Assert.Equal(CarrierConnectionTestStatus.Succeeded, test.Status);
         Assert.Equal("Available", readiness.CredentialAvailability);
-        Assert.True(readiness.CanExecute);
+        Assert.False(readiness.CanExecute);
+        Assert.DoesNotContain("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", readiness.Blockers);
+        Assert.Contains("BOSTA_INTEGRATION_ACTIVATION_REQUIRED", readiness.Blockers);
+        Assert.DoesNotContain("CARRIER_CONNECTION_NOT_VERIFIED", readiness.Blockers);
     }
 
     [Fact]
@@ -88,7 +159,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         var result = await service.RunConnectionTestAsync(
             tenantId,
             accountId,
-            new("bad-but-saved-key", null, null, null, true, null),
+            BostaConnection("bad-but-saved-key"),
             Actor(),
             "step-2m-invalid",
             CancellationToken.None);
@@ -116,7 +187,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         var result = await service.RunConnectionTestAsync(
             tenantId,
             accountId,
-            new("saved-key-during-network-failure", null, null, null, true, null),
+            BostaConnection("saved-key-during-network-failure"),
             Actor(),
             "step-2m-network",
             CancellationToken.None);
@@ -154,7 +225,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         await service.RunConnectionTestAsync(
             tenantId,
             accountId,
-            new("ready-key", null, null, null, true, null),
+            BostaConnection("ready-key"),
             Actor(),
             "step-2m-facade",
             CancellationToken.None);
@@ -167,9 +238,11 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         var account = await service.GetCarrierAccountAsync(tenantId, accountId, CancellationToken.None);
 
         Assert.NotNull(account);
-        Assert.True(account!.IntegrationReadiness?.CanExecute);
-        Assert.Equal("Healthy", account.HealthState);
-        Assert.Null(account.HealthReason);
+        Assert.False(account!.IntegrationReadiness?.CanExecute);
+        Assert.DoesNotContain("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", account.IntegrationReadiness!.Blockers);
+        Assert.Contains("BOSTA_PROVIDER_ACCOUNT_ELIGIBILITY_UNVERIFIED", account.IntegrationReadiness.Blockers);
+        Assert.Equal("Blocked", account.HealthState);
+        Assert.Equal("legacy facade blocker", account.HealthReason);
     }
 
     [Fact]
@@ -224,7 +297,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
     }
 
     [Fact]
-    public async Task StorefrontBostaMethod_IsHiddenBeforeCanonicalRuntimeConfigurationAndAdmittedAfterReadiness()
+    public async Task StorefrontBostaMethod_RemainsHiddenUntilPublishedGeographyMappingExists()
     {
         await using var db = CreateDbContext();
         var tenantId = Guid.NewGuid();
@@ -282,8 +355,13 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
             "step-2m-after",
             CancellationToken.None);
 
-        Assert.Single(after.ShippingMethods);
-        Assert.Equal("Bosta", after.ShippingMethods.Single().CarrierName);
+        Assert.Empty(after.ShippingMethods);
+        var readiness = await authority.GetIntegrationReadinessAsync(
+            tenantId,
+            CarrierCodes.Bosta,
+            purpose: CarrierIntegrationPurpose.StorefrontAdmission);
+        Assert.DoesNotContain("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED", readiness.Blockers);
+        Assert.Contains("BOSTA_INTEGRATION_ACTIVATION_REQUIRED", readiness.Blockers);
     }
 
     private static async Task<Guid> CreateBostaAccountAsync(
@@ -299,6 +377,15 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         Assert.True(created.Succeeded);
         return created.CarrierAccountId!.Value;
     }
+
+    private static ConnectionTestCommand BostaConnection(string apiKey) =>
+        new(apiKey, null, null, null, true,
+            new Dictionary<string, string>
+            {
+                ["codCollectionCurrency"] = "EGP",
+                ["businessLocationId"] = "business-location-1"
+            },
+            "test-webhook-authorization");
 
     private static ShippingAdministrationApiService CreateAdministrationService(
         ApplicationDbContext db,
@@ -401,7 +488,7 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
             value?.StartsWith("ENC:", StringComparison.Ordinal) == true;
     }
 
-    private sealed class RecordingCarrierAdapter : IShippingCarrierAdapter
+    private sealed class RecordingCarrierAdapter : IShippingCarrierAdapter, IBostaPickupLocationDiscovery
     {
         private readonly CarrierValidationResult _validationResult;
 
@@ -415,6 +502,10 @@ public sealed class CarrierIntegrationStateMachineConvergenceTests
         public string CarrierCode { get; }
         public string DisplayName { get; }
         public CarrierCredentials? CapturedCredentials { get; private set; }
+        public Task<BostaPickupLocationResult> GetPickupLocationsAsync(CarrierCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(new BostaPickupLocationResult(true,
+                new[] { "isolated-location", "business-location-1" }.Select(id => new BostaPickupLocationOption(id, false, "EG",
+                    "synthetic-city", "Synthetic city", "synthetic-district", "Synthetic district") { CountryId = "synthetic-country" }).ToArray(), null));
 
         public static RecordingCarrierAdapter Success(string carrierCode, string displayName) =>
             new(carrierCode, displayName, new CarrierValidationResult { Success = true, AccountName = $"{displayName} Account" });

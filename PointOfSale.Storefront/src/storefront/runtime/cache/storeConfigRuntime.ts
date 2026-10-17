@@ -1,5 +1,5 @@
 import { fetchStoreConfig } from '@/services/api/storefrontApi';
-import { useStoreConfigStore } from '@/store/storeConfigStore';
+import { useStoreConfigStore } from '../../../store/storeConfigStore';
 import { applyTheme, logLayoutVariants } from '@/theme';
 import type { StoreConfig } from '@/types';
 import {
@@ -65,22 +65,27 @@ export async function refreshStoreConfig(
     const requestGeneration = generation;
     store.setLoading(true);
 
-    let requestRecord!: StoreConfigRequest;
+    let requestRecord: StoreConfigRequest | null = null;
+    const canAcceptResponse = () => requestRecord !== null && inFlightRequest === requestRecord
+        && generation === requestGeneration
+        && getStoreConfigIdentity() === identity
+        && (useStoreConfigStore.getState().configSource !== 'preview'
+            || (options.allowPreviewOverride && useStoreConfigStore.getState().config === store.config));
     const promise = (async () => {
         try {
             const config = await fetchStoreConfig();
 
-            if (inFlightRequest === requestRecord && generation === requestGeneration) {
+            if (canAcceptResponse()) {
                 applyTheme(config.theme);
                 logLayoutVariants(config.theme.layout);
                 useStoreConfigStore.getState().setRuntimeConfig(config);
                 loadedAt = Date.now();
-                loadedIdentity = getStoreConfigIdentity();
+                loadedIdentity = identity;
             }
 
             return config;
         } catch (error) {
-            if (inFlightRequest === requestRecord && generation === requestGeneration) {
+            if (canAcceptResponse()) {
                 const message = error instanceof Error
                     ? error.message
                     : 'Failed to load store configuration';

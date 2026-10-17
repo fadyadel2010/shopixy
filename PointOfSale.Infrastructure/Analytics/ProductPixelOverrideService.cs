@@ -69,6 +69,7 @@ public class ProductPixelOverrideService : IProductPixelOverrideService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var overrides = await dbContext.ProductPixelOverrides
+            .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(o => o.TenantId == tenantId)
             // Include product details if needed for UI, but here we just need the rules
@@ -144,6 +145,7 @@ public class ProductPixelOverrideService : IProductPixelOverrideService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var existing = await dbContext.ProductPixelOverrides
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(o => o.TenantId == tenantId && o.ProductId == productId, ct);
 
         if (existing != null)

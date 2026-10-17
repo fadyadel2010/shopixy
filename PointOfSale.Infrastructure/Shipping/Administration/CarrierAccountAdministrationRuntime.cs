@@ -520,11 +520,17 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
         CancellationToken cancellationToken)
     {
         var blockers = new List<string>();
+        if (CarrierCodes.Normalize(account.CarrierCode) == CarrierCodes.Mylerz)
+        {
+            blockers.Add(Adapters.MylerzAdapter.ContractUnavailableErrorCode);
+        }
         if (account.ActiveCredentialReferenceId == null ||
             !await _db.Set<CarrierCredentialReference>().IgnoreQueryFilters().AnyAsync(
-                reference => reference.Id == account.ActiveCredentialReferenceId &&
-                             reference.TenantId == account.TenantId &&
-                             reference.State == CarrierCredentialReferenceState.Active,
+                 reference => reference.Id == account.ActiveCredentialReferenceId &&
+                              reference.TenantId == account.TenantId &&
+                              reference.CarrierAccountId == account.Id && !reference.IsDeleted &&
+                              (reference.ExpiresAtUtc == null || reference.ExpiresAtUtc > DateTime.UtcNow) &&
+                              reference.State == CarrierCredentialReferenceState.Active,
                 cancellationToken))
         {
             blockers.Add("CREDENTIAL_REFERENCE_MISSING");
@@ -535,11 +541,12 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
             blockers.Add("ENVIRONMENT_MISSING");
         }
 
-        if (!await _db.Set<CarrierConnectionTestRecord>().IgnoreQueryFilters().AnyAsync(
-                test => test.TenantId == account.TenantId &&
-                        test.CarrierAccountId == account.Id &&
-                        test.Status == CarrierConnectionTestStatus.Succeeded,
-                cancellationToken))
+        var latestConnectionTest = await _db.Set<CarrierConnectionTestRecord>().IgnoreQueryFilters()
+            .Where(test => test.TenantId == account.TenantId && test.CarrierAccountId == account.Id && !test.IsDeleted)
+            .OrderByDescending(test => test.TestedAtUtc).FirstOrDefaultAsync(cancellationToken);
+        if (latestConnectionTest?.Status != CarrierConnectionTestStatus.Succeeded ||
+            latestConnectionTest.Environment != account.Environment ||
+            latestConnectionTest.CredentialReferenceId != account.ActiveCredentialReferenceId)
         {
             blockers.Add("CONNECTION_TEST_MISSING");
         }

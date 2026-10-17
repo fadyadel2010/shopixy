@@ -110,11 +110,12 @@ export function requireSuperAdminSessionAuthority(session: SuperAdminSessionResp
 }
 
 export function deriveSuperAdminSessionAuthority(
-    session: SuperAdminSessionResponse | null | undefined,
-): session is SuperAdminSessionResponse {
-    if (!session || typeof session !== 'object') {
+    candidate: unknown,
+): candidate is SuperAdminSessionResponse {
+    if (!candidate || typeof candidate !== 'object') {
         return false
     }
+    const session = candidate as Record<string, unknown>
 
     return (
         isValidGuid(session.superAdminId) &&
@@ -123,11 +124,11 @@ export function deriveSuperAdminSessionAuthority(
         session.tokenType === 'Bearer' &&
         isFutureUtcTimestamp(session.expiresAtUtc) &&
         isFutureUtcTimestamp(session.refreshTokenExpiresAtUtc) &&
-        Number.isInteger(session.tokenVersion) &&
+        typeof session.tokenVersion === 'number' && Number.isInteger(session.tokenVersion) &&
         session.tokenVersion >= 0 &&
         Array.isArray(session.navigationCapabilities) &&
         session.navigationCapabilities.length > 0 &&
-        session.navigationCapabilities.every((capability) => SUPER_ADMIN_NAVIGATION_CAPABILITIES.has(capability)) &&
+        session.navigationCapabilities.every((capability: unknown) => [...SUPER_ADMIN_NAVIGATION_CAPABILITIES].some((allowed) => allowed === capability)) &&
         new Set(session.navigationCapabilities).size === session.navigationCapabilities.length
     )
 }

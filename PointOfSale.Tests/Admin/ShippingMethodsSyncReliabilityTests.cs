@@ -92,6 +92,7 @@ public sealed class ShippingMethodsSyncReliabilityTests
             tenantContext,
             publishEndpoint,
             Mock.Of<IShippingCarrierRegistry>(),
+            Mock.Of<ICarrierIntegrationAuthority>(),
             Mock.Of<IShippingCalculationService>(),
             new CommerceReliabilityTelemetry(),
             NullLogger<ShippingMethodsController>.Instance)

@@ -18,7 +18,7 @@ using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Admin;
 
-public sealed class AdminStoreConfigThemeContractTests
+public sealed partial class AdminStoreConfigThemeContractTests
 {
     // Database names already isolate test data. Reuse the EF provider root to avoid
     // crossing EF Core's internal service-provider limit in combined StoreConfig runs.
@@ -248,6 +248,33 @@ public sealed class AdminStoreConfigThemeContractTests
         Assert.Equal("default", response.ThemeLivePresetKey);
         Assert.Equal("dark-minimal", response.DraftTheme.PresetKey);
         Assert.Equal("default", response.LiveTheme.PresetKey);
+    }
+
+    [Fact]
+    public async Task PublishThemeAsync_ReplayedAcceptedDraft_DoesNotAppendVersionsOrRepublishEvents()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = CreateDbContext(Guid.NewGuid().ToString("N"), tenantId, CreateInMemoryDatabaseRoot());
+        SeedThemePresets(context);
+        context.StoreConfigs.Add(CreateStoreConfig(tenantId, themeDraftOverridesJson: """{"colors":{"primary":"#abcdef"}}"""));
+        await context.SaveChangesAsync();
+        var events = new Mock<IEventPublisher>();
+        events.SetReturnsDefault(Task.CompletedTask);
+        var service = CreateService(context, events);
+        var first = await service.PublishThemeAsync(tenantId, "first");
+        var stored = await context.StoreConfigs.SingleAsync();
+        var versions = stored.VersionsJson;
+        var updated = stored.UpdatedAtUtc;
+        events.Invocations.Clear();
+
+        var replay = await service.PublishThemeAsync(tenantId, "replay");
+
+        Assert.Equal(first.LiveTheme.Colors.Primary, replay.LiveTheme.Colors.Primary);
+        Assert.Equal(versions, stored.VersionsJson);
+        Assert.Equal(updated, stored.UpdatedAtUtc);
+        events.VerifyNoOtherCalls();
+        await Assert.ThrowsAsync<PointOfSale.API.Exceptions.ConcurrencyConflictException>(() =>
+            service.PublishThemeAsync(tenantId, "stale-no-op", expectedRowVersion: stored.RowVersion + 1));
     }
 
     [Fact]

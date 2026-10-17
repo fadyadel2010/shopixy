@@ -15,7 +15,7 @@ const service = vi.hoisted(() => ({
     getHomepageSchemas: vi.fn(),
     getHomepageSections: vi.fn(),
     getHomepageTenants: vi.fn(),
-    isHomepageWorkspaceConflict: (error: any) => (
+    isHomepageWorkspaceConflict: (error: { status?: number; code?: string } | null) => (
         error?.status === 409 && error?.code === 'HOMEPAGE_WORKSPACE_CONFLICT'
     ),
     publishHomepageSections: vi.fn(),

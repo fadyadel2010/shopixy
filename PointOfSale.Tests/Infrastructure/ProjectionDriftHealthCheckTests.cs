@@ -24,6 +24,7 @@ public sealed class ProjectionDriftHealthCheckTests
 
         await using var db = new ApplicationDbContext(options, tenantContext);
         var liveTenantId = Guid.NewGuid();
+        var liveProductId = Guid.NewGuid();
         db.Tenants.Add(new Tenant
         {
             Id = liveTenantId,
@@ -34,7 +35,7 @@ public sealed class ProjectionDriftHealthCheckTests
         db.Products.AddRange(
             new Product
             {
-                Id = Guid.NewGuid(),
+                Id = liveProductId,
                 TenantId = liveTenantId,
                 Name = "Live product",
                 CategoryId = Guid.Empty,
@@ -60,8 +61,8 @@ public sealed class ProjectionDriftHealthCheckTests
                 It.IsAny<CountOptions>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(1)
-            .ReturnsAsync(1)
             .ReturnsAsync(1);
+        SetupVisibleIdentities(collection, new ProductDocument { TenantId = liveTenantId, ProductId = liveProductId });
 
         var mongo = new Mock<IMongoDatabase>();
         mongo
@@ -93,6 +94,7 @@ public sealed class ProjectionDriftHealthCheckTests
 
         await using var db = new ApplicationDbContext(options, tenantContext);
         var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
         db.Tenants.Add(new Tenant
         {
             Id = tenantId,
@@ -102,7 +104,7 @@ public sealed class ProjectionDriftHealthCheckTests
         });
         db.Products.Add(new Product
         {
-            Id = Guid.NewGuid(),
+            Id = productId,
             TenantId = tenantId,
             Name = "Current product",
             CategoryId = Guid.Empty,
@@ -120,8 +122,8 @@ public sealed class ProjectionDriftHealthCheckTests
                 It.IsAny<CountOptions>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(2)
-            .ReturnsAsync(1)
             .ReturnsAsync(1);
+        SetupVisibleIdentities(collection, new ProductDocument { TenantId = tenantId, ProductId = productId });
 
         var mongo = new Mock<IMongoDatabase>();
         mongo
@@ -141,5 +143,14 @@ public sealed class ProjectionDriftHealthCheckTests
         Assert.Equal(0L, result.Data["Drift"]);
         Assert.Equal(1L, result.Data["ForeignTenantDocumentCount"]);
         Assert.Contains("foreign-tenant", result.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void SetupVisibleIdentities(Mock<IMongoCollection<ProductDocument>> collection, params ProductDocument[] documents)
+    {
+        var cursor = new Mock<IAsyncCursor<ProductDocument>>();
+        cursor.SetupGet(c => c.Current).Returns(documents);
+        cursor.SetupSequence(c => c.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
+        collection.Setup(c => c.FindAsync(It.IsAny<FilterDefinition<ProductDocument>>(),
+            It.IsAny<FindOptions<ProductDocument, ProductDocument>>(), It.IsAny<CancellationToken>())).ReturnsAsync(cursor.Object);
     }
 }

@@ -10,10 +10,13 @@ export function StorefrontFooterSettings() {
             note="Saving publishes this tenant footer immediately. Published Pages are the only valid page-link targets."
             localized
             loadCmsPages={async () => {
-                const pages = await cmsService.listPages()
-                return (pages || [])
-                    .filter((page) => page.hasPublished)
-                    .map((page) => ({ slug: page.slug, title: page.title }))
+                // The page list describes the editable draft (including its slug).
+                // Navigation targets own the currently published route even when a
+                // newer draft has renamed the page.
+                const targets = await cmsService.getNavigationTargets()
+                return targets.cmsPages
+                    .filter((page) => page.state === 'published' && /^\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(page.resolvedPath || ''))
+                    .map((page) => ({ slug: page.resolvedPath.slice(1), title: page.label }))
             }}
         />
     )

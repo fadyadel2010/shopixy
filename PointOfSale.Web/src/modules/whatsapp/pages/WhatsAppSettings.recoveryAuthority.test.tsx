@@ -119,4 +119,27 @@ describe('WhatsAppSettings single-account recovery authority', () => {
         ))
         expect(toast.showSuccess).toHaveBeenCalledWith('Account disabled')
     })
+
+    it('does not present a failed account read as an empty configured account list', async () => {
+        whatsappApi.getAccounts.mockRejectedValue(new Error('Account authority unavailable'))
+        render(<WhatsAppSettings />)
+        expect(await screen.findByRole('alert')).toBeTruthy()
+        expect(screen.queryByText('whatsapp.accounts.emptyTitle')).toBeNull()
+        expect(screen.queryByText('whatsapp.accounts.actions.addAccount')).toBeNull()
+    })
+
+    it('allows disabling an enabled but disconnected account', async () => {
+        whatsappApi.getAccounts.mockResolvedValue([account({ status: 'Disconnected' })])
+        render(<WhatsAppSettings />)
+        const button = await screen.findByRole('button', { name: 'Disable' })
+        expect((button as HTMLButtonElement).disabled).toBe(false)
+    })
+
+    it('does not declare messaging operational when safety authority fails', async () => {
+        whatsappApi.getKillSwitchStatus.mockRejectedValue(new Error('unavailable'))
+        render(<WhatsAppSettings />)
+        fireEvent.click(screen.getByRole('button', { name: 'Safety' }))
+        expect(await screen.findByRole('alert')).toBeTruthy()
+        expect(screen.queryByText(/whatsapp.safety.operational/)).toBeNull()
+    })
 })

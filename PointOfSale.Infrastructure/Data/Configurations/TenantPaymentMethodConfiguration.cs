@@ -16,6 +16,7 @@ public class TenantPaymentMethodConfiguration : IEntityTypeConfiguration<TenantP
         builder.ToTable("TenantPaymentMethods");
         
         builder.HasKey(x => x.Id);
+        builder.Property(x => x.Version).IsConcurrencyToken();
         
         // Unique constraint: One payment method code per tenant
         builder.HasIndex(x => new { x.TenantId, x.Code })

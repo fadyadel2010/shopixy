@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import api from '../services/api'
@@ -12,13 +12,11 @@ const SupplierOpeningBalance = () => {
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
     const [balances, setBalances] = useState({})
+    const [loadFailure, setLoadFailure] = useState(null)
 
-    useEffect(() => {
-        loadSuppliers()
-    }, [])
-
-    const loadSuppliers = async () => {
+    const loadSuppliers = useCallback(async () => {
         setLoading(true)
+        setLoadFailure(null)
         try {
             const response = await api.get('/suppliers/opening-balances')
             setSuppliers(response.data)
@@ -47,11 +45,15 @@ const SupplierOpeningBalance = () => {
             setBalances(initialBalances)
         } catch (error) {
             console.error('Failed to load suppliers', error)
-            showError(t('openingBalance.failedToLoadSuppliers'))
+            setLoadFailure(error)
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => { loadSuppliers() }, [loadSuppliers])
+    // Presentation changes must not reload and overwrite unsaved balances.
+    useEffect(() => { if (loadFailure) showError(t('openingBalance.failedToLoadSuppliers')) }, [loadFailure, showError, t])
 
     const handleBalanceChange = (supplierId, field, value) => {
         setBalances(prev => ({
@@ -68,7 +70,7 @@ const SupplierOpeningBalance = () => {
 
         // Prepare data - only include suppliers with amount > 0 and no existing balance
         const supplierBalances = Object.entries(balances)
-            .filter(([supplierId, data]) => !data.hasExisting && parseFloat(data.amount) > 0)
+            .filter(([, data]) => !data.hasExisting && parseFloat(data.amount) > 0)
             .map(([supplierId, data]) => ({
                 supplierId,
                 amount: parseFloat(data.amount),

@@ -24,11 +24,17 @@ namespace PointOfSale.API.Services.Storefront;
 /// </summary>
 public class GoogleLoginRequest
 {
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? State { get; set; }
+    [System.ComponentModel.DataAnnotations.StringLength(16384)]
     public string IdToken { get; set; } = string.Empty;
 }
 
 public class FacebookLoginRequest
 {
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
+    public string? State { get; set; }
+    [System.ComponentModel.DataAnnotations.StringLength(16384)]
     public string AccessToken { get; set; } = string.Empty;
 }
 
@@ -62,7 +68,7 @@ public interface IStorefrontSocialLoginService
         string idToken,
         string ipAddress,
         string? userAgent,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default, string? expectedNonce = null);
 
     /// <summary>
     /// Authenticates a customer with Facebook access token.
@@ -160,7 +166,7 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
         string idToken,
         string ipAddress,
         string? userAgent,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? expectedNonce = null)
     {
         var traceId = Activity.Current?.Id ?? Guid.NewGuid().ToString();
 
@@ -191,8 +197,9 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
             traceId);
 
         // Check if Google is enabled for this tenant
-        var providerEnabled = await IsProviderEnabledAsync(tenantId, AuthProvider.Google, cancellationToken);
-        if (!providerEnabled)
+        var providerSettings = await _dbContext.StorefrontAuthProviderSettings.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.Provider == AuthProvider.Google && s.IsEnabled, cancellationToken);
+        if (providerSettings == null)
         {
             _logger.LogWarning(
                 "[SocialLogin] {Action} | TenantId: {TenantId} | Provider: Google | TraceId: {TraceId}",
@@ -211,6 +218,14 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
         {
             // Verify Google ID token
             var googleUser = await VerifyGoogleTokenAsync(idToken, cancellationToken);
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (googleUser != null && (string.IsNullOrWhiteSpace(providerSettings.ClientId) ||
+                !string.Equals(googleUser.Aud, providerSettings.ClientId, StringComparison.Ordinal) ||
+                googleUser.Iss is not ("https://accounts.google.com" or "accounts.google.com") ||
+                googleUser.Exp <= now || googleUser.Nbf > now ||
+                string.IsNullOrWhiteSpace(googleUser.Sub) || googleUser.Sub.Length > 256 ||
+                !IsValidEmail(googleUser.Email) || (expectedNonce != null && !string.Equals(googleUser.Nonce, expectedNonce, StringComparison.Ordinal))))
+                googleUser = null;
             if (googleUser == null)
             {
                 return new SocialLoginResult
@@ -246,6 +261,8 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
                 traceId,
                 cancellationToken);
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return new() { Error = "PROVIDER_UNAVAILABLE", Message = "The identity provider did not respond in time. Start again." }; }
         catch (TaskCanceledException)
         {
             // TaskCanceledException inherits from OperationCanceledException
@@ -397,12 +414,14 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
                 facebookUser.Email,
                 facebookUser.Name,
                 facebookUser.Picture?.Data?.Url,
-                true, // Facebook doesn't have email_verified flag, assume verified if returned
+                false, // A returned email is not a verified-email assertion for account linking.
                 ipAddress,
                 userAgent,
                 traceId,
                 cancellationToken);
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return new() { Error = "PROVIDER_UNAVAILABLE", Message = "The identity provider did not respond in time. Start again." }; }
         catch (TaskCanceledException)
         {
             // TaskCanceledException inherits from OperationCanceledException
@@ -449,7 +468,7 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
     {
         // Fetch enabled providers WITH their client IDs
         var providerSettings = await _dbContext.StorefrontAuthProviderSettings
-            .Where(s => s.TenantId == tenantId && s.IsEnabled)
+            .Where(s => s.TenantId == tenantId && s.IsEnabled && s.ClientId != null && s.ClientId != "" && s.ClientSecretEncrypted != null && s.ClientSecretEncrypted != "")
             .Select(s => new { s.Provider, s.ClientId })
             .ToListAsync(cancellationToken);
 
@@ -468,14 +487,8 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
 
     #region Private Methods
 
-    private async Task<bool> IsProviderEnabledAsync(
-        Guid tenantId,
-        AuthProvider provider,
-        CancellationToken cancellationToken)
-    {
-        return await _dbContext.StorefrontAuthProviderSettings
-            .AnyAsync(s => s.TenantId == tenantId && s.Provider == provider && s.IsEnabled, cancellationToken);
-    }
+    private static bool IsValidEmail(string? email) => !string.IsNullOrWhiteSpace(email) && email.Length <= 256 &&
+        System.Net.Mail.MailAddress.TryCreate(email, out var address) && address.Address == email;
 
     private async Task<SocialLoginResult> ProcessSocialLoginAsync(
         Guid tenantId,
@@ -490,12 +503,19 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
         string traceId,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(providerUserId) || providerUserId.Length > 256 || !IsValidEmail(email))
+            return new() { Error = "INVALID_IDENTITY", Message = "The provider did not return a valid identity." };
+
+        if (!await _dbContext.StorefrontAuthProviderSettings.AsNoTracking().AnyAsync(s => s.TenantId == tenantId && s.Provider == provider && s.IsEnabled, cancellationToken))
+            return new() { Error = "PROVIDER_DISABLED", Message = "This provider is no longer enabled." };
+        await using var transaction = _dbContext.Database.IsRelational() && _dbContext.Database.CurrentTransaction == null
+            ? await _dbContext.Database.BeginTransactionAsync(cancellationToken) : null;
+
         // Normalize email
         var normalizedEmail = EmailNormalizer.Normalize(email);
 
         // Check if this provider account is already linked
         var existingProvider = await _dbContext.OnlineCustomerAuthProviders
-            .Include(p => p.OnlineCustomer)
             .Where(p => p.TenantId == tenantId && 
                         p.Provider == provider && 
                         p.ProviderUserId == providerUserId)
@@ -508,7 +528,12 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
         if (existingProvider != null)
         {
             // Provider already linked - just login
-            customer = existingProvider.OnlineCustomer!;
+            // Resolve the link and customer separately. A required-navigation
+            // query filter must not hide a corrupt cross-tenant link and make it
+            // look like a first-time identity eligible for re-registration.
+            customer = (await _dbContext.OnlineCustomers.SingleOrDefaultAsync(c => c.Id == existingProvider.OnlineCustomerId && c.TenantId == tenantId, cancellationToken))!;
+            if (customer == null || customer.TenantId != tenantId || !customer.IsActive)
+                return new() { Error = "ACCOUNT_DEACTIVATED", Message = "Your account is unavailable." };
             
             // Update last used
             existingProvider.LastUsedAtUtc = DateTime.UtcNow;
@@ -530,6 +555,12 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
 
             if (existingCustomer != null)
             {
+                if (!existingCustomer.IsActive)
+                    return new() { Error = "ACCOUNT_DEACTIVATED", Message = "Your account is unavailable." };
+                // Never merge an unverified local identity or a second subject by email alone.
+                if (!emailVerified || !existingCustomer.EmailVerified || await _dbContext.OnlineCustomerAuthProviders
+                    .AnyAsync(p => p.TenantId == tenantId && p.OnlineCustomerId == existingCustomer.Id && p.Provider == provider, cancellationToken))
+                    return new() { Error = "ACCOUNT_LINK_REQUIRED", Message = "Sign in using your existing account method to resolve this identity." };
                 // Email exists - attach provider to existing customer
                 customer = existingCustomer;
                 isNewProviderLink = true;
@@ -655,6 +686,7 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
         }
 
         // Save changes
+        customer.LastLoginAtUtc = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         // Generate tokens
@@ -700,6 +732,8 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
             LoginAtUtc = DateTime.UtcNow,
             IsFirstLogin = isNewUser
         }, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
 
         _logger.LogInformation(
             "[SocialLogin] {Action} | Provider: {Provider} | TenantId: {TenantId} | CustomerId: {CustomerId} | IsNewUser: {IsNewUser} | TraceId: {TraceId}",
@@ -725,10 +759,10 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
 
     private async Task<GoogleTokenInfo?> VerifyGoogleTokenAsync(string idToken, CancellationToken cancellationToken)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient("StorefrontOAuth");
         try
         {
-            var response = await client.GetAsync(GoogleTokenInfoUrl + idToken, cancellationToken);
+            using var response = await client.GetAsync(GoogleTokenInfoUrl + Uri.EscapeDataString(idToken), cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -763,18 +797,18 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
         string appSecret,
         CancellationToken cancellationToken)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient("StorefrontOAuth");
         try
         {
             // Step 1: Validate token ownership using debug_token endpoint
             // Construct app access token: {app-id}|{app-secret}
             var appAccessToken = $"{expectedAppId}|{appSecret}";
-            var debugTokenUrl = $"{FacebookDebugTokenUrl}?input_token={accessToken}";
+            var debugTokenUrl = $"{FacebookDebugTokenUrl}?input_token={Uri.EscapeDataString(accessToken)}";
 
-            var request = new HttpRequestMessage(HttpMethod.Get, debugTokenUrl);
+            using var request = new HttpRequestMessage(HttpMethod.Get, debugTokenUrl);
             request.Headers.Add("Authorization", $"Bearer {appAccessToken}");
 
-            var debugResponse = await client.SendAsync(request, cancellationToken);
+            using var debugResponse = await client.SendAsync(request, cancellationToken);
             if (!debugResponse.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
@@ -796,8 +830,7 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
             if (!debugResult.Data.IsValid)
             {
                 _logger.LogWarning(
-                    "[SocialLogin] Facebook token is invalid | Error: {Error}",
-                    debugResult.Data.Error?.Message ?? "Unknown");
+                    "[SocialLogin] Facebook token is invalid");
                 return null;
             }
 
@@ -817,11 +850,17 @@ public class StorefrontSocialLoginService : IStorefrontSocialLoginService
                 return null;
             }
 
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (string.IsNullOrWhiteSpace(debugResult.Data.UserId) || debugResult.Data.Type != "USER" ||
+                (debugResult.Data.ExpiresAt != 0 && debugResult.Data.ExpiresAt <= now) ||
+                (debugResult.Data.DataAccessExpiresAt != 0 && debugResult.Data.DataAccessExpiresAt <= now))
+                return null;
+
             // Step 2: Get user profile information from /me endpoint
             using var profileRequest = new HttpRequestMessage(HttpMethod.Get, FacebookGraphApiUrl);
             profileRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-            var profileResponse = await client.SendAsync(profileRequest, cancellationToken);
+            using var profileResponse = await client.SendAsync(profileRequest, cancellationToken);
             if (!profileResponse.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
@@ -943,6 +982,7 @@ internal class GoogleTokenInfo
     public string Email { get; set; } = null!;
 
     [JsonPropertyName("email_verified")]
+    [JsonConverter(typeof(ProviderBooleanConverter))]
     public bool EmailVerified { get; set; }
 
     [JsonPropertyName("name")]
@@ -953,6 +993,27 @@ internal class GoogleTokenInfo
 
     [JsonPropertyName("aud")]
     public string? Aud { get; set; }
+
+    [JsonPropertyName("iss")]
+    public string? Iss { get; set; }
+    [JsonPropertyName("exp"), JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public long Exp { get; set; }
+    [JsonPropertyName("nbf"), JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+    public long Nbf { get; set; }
+    [JsonPropertyName("nonce")]
+    public string? Nonce { get; set; }
+}
+
+internal sealed class ProviderBooleanConverter : JsonConverter<bool>
+{
+    public override bool Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options) => reader.TokenType switch
+    {
+        JsonTokenType.True => true,
+        JsonTokenType.False => false,
+        JsonTokenType.String when bool.TryParse(reader.GetString(), out var value) => value,
+        _ => throw new JsonException("Invalid provider boolean")
+    };
+    public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options) => writer.WriteBooleanValue(value);
 }
 
 internal class FacebookUserInfo

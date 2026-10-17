@@ -113,6 +113,12 @@ public sealed class PosEndpointPermissionManifestTests
     [InlineData("Warehouses", "AdjustStock", "POST", PosPermissions.InventoryAdjust)]
     [InlineData("Warehouses", "TransferStock", "POST", PosPermissions.InventoryTransfer)]
     [InlineData("PosCarts", "GetWarehouseOptions", "GET", PosPermissions.SalesOperate)]
+    [InlineData("HomepageMedia", "Upload", "POST", PosPermissions.StorefrontDesignManage)]
+    [InlineData("AdminOrders", "DownloadCheckoutAttachment", "GET", PosPermissions.StorefrontOrderAttachmentsDownload)]
+    [InlineData("HomepageMedia", "Preview", "GET", PosPermissions.StorefrontDesignManage)]
+    [InlineData("AdminShipments", "GetParcelEvidence", "GET", PosPermissions.ShippingView)]
+    [InlineData("AdminShipments", "SaveParcelEvidence", "PUT", PosPermissions.ShippingFulfill)]
+    [InlineData("AdminShipments", "QuoteParcel", "POST", PosPermissions.ShippingFulfill)]
     public void RepresentativeNonAdminRoutes_AreInThePermissionManifest(
         string controller,
         string action,

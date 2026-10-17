@@ -116,6 +116,7 @@ export default function SmartOfferEditor({ open, offer, saving, error, onClose, 
 
     const handleSubmit = (event) => {
         event.preventDefault()
+        if (saving) return
 
         onSave({
             ...formData,
@@ -125,9 +126,9 @@ export default function SmartOfferEditor({ open, offer, saving, error, onClose, 
             maxDisplaysPerUser: toOptionalInt(formData.maxDisplaysPerUser),
             couponCode: formData.couponCode?.trim()?.toUpperCase() || null,
             couponDiscountType: formData.couponCode?.trim() ? formData.couponDiscountType : null,
-            couponDiscountValue: toOptionalDecimal(formData.couponDiscountValue),
-            couponMinOrderAmount: toOptionalDecimal(formData.couponMinOrderAmount),
-            couponMaxDiscountAmount: toOptionalDecimal(formData.couponMaxDiscountAmount),
+            couponDiscountValue: formData.couponCode?.trim() ? toOptionalDecimal(formData.couponDiscountValue) : null,
+            couponMinOrderAmount: formData.couponCode?.trim() ? toOptionalDecimal(formData.couponMinOrderAmount) : null,
+            couponMaxDiscountAmount: formData.couponCode?.trim() ? toOptionalDecimal(formData.couponMaxDiscountAmount) : null,
             popupDescription: formData.popupDescription?.trim() || null,
             imageUrl: formData.imageUrl?.trim() || null,
             backgroundColor: formData.backgroundColor?.trim() || null,
@@ -173,6 +174,7 @@ export default function SmartOfferEditor({ open, offer, saving, error, onClose, 
 
                     <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
                         <form onSubmit={handleSubmit} className="space-y-8 px-6 py-6">
+                            <fieldset disabled={saving} className="space-y-8">
                             <section className="space-y-5">
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <Field label={t('SmartOfferEditor.fields.name')}>
@@ -449,6 +451,7 @@ export default function SmartOfferEditor({ open, offer, saving, error, onClose, 
                                             : t('SmartOfferEditor.actions.createOffer')}
                                 </button>
                             </div>
+                            </fieldset>
                         </form>
 
                         <aside className="border-t border-white/10 bg-white/[0.03] px-6 py-6 lg:border-l lg:border-t-0">
@@ -457,7 +460,7 @@ export default function SmartOfferEditor({ open, offer, saving, error, onClose, 
                                 <h3 className="mt-2 text-lg font-semibold">{t('SmartOfferEditor.sections.previewTitle')}</h3>
                             </div>
                             {showPreview ? (
-                                <SmartOfferPreview offer={formData} dir="rtl" />
+                                <SmartOfferPreview offer={formData} dir={document.documentElement.dir || 'ltr'} />
                             ) : (
                                 <div className="rounded-3xl border border-dashed border-white/15 bg-white/[0.03] px-5 py-12 text-center text-sm text-slate-400">
                                     {t('SmartOfferEditor.previewEmpty')}

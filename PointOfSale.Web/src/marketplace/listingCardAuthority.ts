@@ -22,7 +22,7 @@ const parsePrimaryImage = (rawImages: string | undefined) => {
     const images = JSON.parse(rawImages)
     if (!Array.isArray(images) || typeof images[0] !== 'string') return null
 
-    const storageKey = images[0].trim().replaceAll('\\', '/')
+    const storageKey = images[0].trim().replace(/\\/g, '/')
     if (
       !storageKey.startsWith(serviceMediaPrefix)
       || storageKey.includes('..')

@@ -349,6 +349,10 @@ public sealed class EcommerceRefundLifecycleTests
         context.PaymentSettlementOrders.Add(settlementOrder);
         await context.SaveChangesAsync();
 
+        // A batch assertion alone is no longer sufficient refund destination truth.
+        // Seed test-only historical journal models; never invoke settlement execution.
+        await SettlementHistoryFixture.SeedAsync(context, tenantId, order, batch: settlementBatch);
+
         var result = await service.RecordRefundAsync(
             order.Id,
             25m,
@@ -655,6 +659,7 @@ public sealed class EcommerceRefundLifecycleTests
             }
 
             modelBuilder.Entity<Order>().Property<uint>("xmin").HasDefaultValue(1u);
+            modelBuilder.Entity<Account>().Property<uint>("xmin").HasDefaultValue(1u);
             modelBuilder.Entity<Product>().Property(product => product.RowVersion).HasDefaultValue(1u);
             modelBuilder.Entity<PaymentIntent>().Property(intent => intent.RowVersion).HasDefaultValue(1u);
             modelBuilder.Entity<OrderItem>().Property(item => item.PaidAmount).HasConversion<double>();

@@ -22,31 +22,38 @@ export const ProductDetailsPage: React.FC = () => {
     const productViewedRef = useRef<string | null>(null);
 
     useEffect(() => {
+        let active = true;
         const loadProduct = async () => {
             if (!productIdentifier) {
+                setProduct(null);
+                setLoading(false);
                 return;
             }
 
             try {
                 setLoading(true);
+                setProduct(null);
 
                 const [productResult, categoriesResult] = await Promise.all([
                     fetchProductByIdentifier(productIdentifier),
                     fetchCategories(),
                 ]);
 
+                if (!active) return;
                 setProduct(productResult);
                 setCategories(categoriesResult);
                 setError(null);
             } catch (loadError) {
+                if (!active) return;
                 console.error('[ProductDetailsPage] Failed to load product:', loadError);
                 setError('Product not found');
             } finally {
-                setLoading(false);
+                if (active) setLoading(false);
             }
         };
 
         loadProduct();
+        return () => { active = false; };
     }, [productIdentifier]);
 
     useEffect(() => {

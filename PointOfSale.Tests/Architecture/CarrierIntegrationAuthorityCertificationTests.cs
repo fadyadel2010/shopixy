@@ -151,7 +151,7 @@ public sealed class CarrierIntegrationAuthorityCertificationTests
         Assert.DoesNotContain("Set<CarrierConfiguration>", shipment, StringComparison.Ordinal);
         Assert.DoesNotContain("CarrierConfigurations", shipment, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildCredentials", shipment, StringComparison.Ordinal);
-        Assert.Contains("CarrierIntegrationPurpose.Cancellation", shipment, StringComparison.Ordinal);
+        Assert.Contains("CarrierIntegrationPurpose.Cancellation", CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/ShipmentCancellationService.cs"), StringComparison.Ordinal);
         Assert.Contains("CarrierIntegrationPurpose.Tracking", shipment, StringComparison.Ordinal);
 
         foreach (var source in new[] { shipmentService, checkout, storefront, warehouseResolution, commerceHub })
@@ -175,7 +175,21 @@ public sealed class CarrierIntegrationAuthorityCertificationTests
         Assert.Contains("\"ExtraConfig.AccountPin\"", capabilities, StringComparison.Ordinal);
         Assert.Contains("\"ExtraConfig.AccountEntity\"", capabilities, StringComparison.Ordinal);
         Assert.Contains("\"ExtraConfig.AccountCountryCode\"", capabilities, StringComparison.Ordinal);
-        Assert.Contains("CarrierConnectionTestMode.LocalOnly", capabilities, StringComparison.Ordinal);
+        // The connection-authentication remediation added remote tests, not
+        // shipment entitlement. Assert that distinction rather than stale text.
+        var registry = new PointOfSale.Infrastructure.Shipping.CarrierCapabilityRegistry(
+            Moq.Mock.Of<PointOfSale.Infrastructure.Shipping.IShippingCarrierRegistry>());
+        foreach (var code in new[] { "bosta", "aramex", "dhl", "mylerz" })
+        {
+            var capability = registry.GetCapability(code)!;
+            Assert.True(capability.ConnectionTestSupported);
+            Assert.Equal(PointOfSale.Infrastructure.Shipping.CarrierConnectionTestMode.Remote, capability.ConnectionTestMode);
+            Assert.Equal(code == "mylerz"
+                ? PointOfSale.Infrastructure.Shipping.CarrierProductionCapability.Unavailable
+                : PointOfSale.Infrastructure.Shipping.CarrierProductionCapability.Partial, capability.ProductionCapability);
+        }
+        Assert.Equal(PointOfSale.Infrastructure.Shipping.CarrierConnectionTestMode.Unsupported,
+            registry.GetCapability("manual")!.ConnectionTestMode);
         Assert.Contains("CarrierProductionCapability.Unavailable", capabilities, StringComparison.Ordinal);
         Assert.Contains("CarrierProductionCapability.NotCertified", capabilities, StringComparison.Ordinal);
     }

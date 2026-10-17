@@ -75,7 +75,7 @@ export const deriveServiceReviewHistoryPresentation = (
       return null
     }
 
-    const previous = items.at(-1)
+    const previous = items[items.length - 1]
     if (previous) {
       const previousTime = Date.parse(previous.createdAt)
       const currentTime = Date.parse(presentation.createdAt)

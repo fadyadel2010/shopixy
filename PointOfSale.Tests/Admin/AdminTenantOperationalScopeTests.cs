@@ -260,6 +260,7 @@ public sealed class AdminTenantOperationalScopeTests
             new TestTenantContext(tenantId),
             publisher,
             Mock.Of<IShippingCarrierRegistry>(),
+            Mock.Of<ICarrierIntegrationAuthority>(),
             Mock.Of<IShippingCalculationService>(),
             new CommerceReliabilityTelemetry(),
             NullLogger<ShippingMethodsController>.Instance)

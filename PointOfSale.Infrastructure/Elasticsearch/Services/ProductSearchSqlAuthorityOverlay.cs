@@ -273,7 +273,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
             };
 
         product.Media = sqlProduct.Media
-            .Where(media => IsStorefrontProductMediaType(media.MediaType))
+            .Where(media => media.TenantId == tenantId && IsStorefrontProductMediaType(media.MediaType))
             .OrderBy(media => media.Position)
             .ThenBy(media => media.CreatedAtUtc)
             .Select(media => new ProductMediaDocument
@@ -287,7 +287,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
             .ToList();
 
         var sqlVariants = sqlProduct.Variants
-            .Where(variant => !variant.IsDeleted && ProductVariantMergeSplitAuthority.IsCurrentSemanticOwner(variant))
+            .Where(variant => variant.TenantId == tenantId && !variant.IsDeleted && ProductVariantMergeSplitAuthority.IsCurrentSemanticOwner(variant))
             .OrderByDescending(variant => variant.IsDefault)
             .ThenBy(variant => variant.SortOrder)
             .ThenBy(variant => variant.CreatedAt)

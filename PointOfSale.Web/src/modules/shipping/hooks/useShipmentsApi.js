@@ -18,6 +18,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../../../services/api'
 import { requireShipmentActionAuthority } from '../shipmentActionAuthority'
+import { requestShipmentCancellation } from '../cancellationOutcome'
 
 /**
  * Hook for fetching paginated shipments list
@@ -51,10 +52,10 @@ export function useShipmentsList(filters = {}) {
             params.append('pageSize', filters.pageSize || 20)
 
             if (filters.status) params.append('status', filters.status)
-            if (filters.carrierCode) params.append('carrierCode', filters.carrierCode)
+            if (filters.carrierCode) params.append('carrier', filters.carrierCode)
             if (filters.isCod !== undefined) params.append('isCod', filters.isCod)
-            if (filters.dateFrom) params.append('dateFrom', filters.dateFrom)
-            if (filters.dateTo) params.append('dateTo', filters.dateTo)
+            if (filters.dateFrom) params.append('fromDate', filters.dateFrom)
+            if (filters.dateTo) params.append('toDate', filters.dateTo)
             if (filters.search) params.append('search', filters.search)
 
             const response = await api.get(`/admin/shipments?${params.toString()}`)
@@ -182,6 +183,7 @@ export function useShipmentActions() {
     const isMountedRef = useRef(true)
 
     useEffect(() => {
+        isMountedRef.current = true
         return () => {
             isMountedRef.current = false
             pendingRequestsRef.current = 0
@@ -229,10 +231,8 @@ export function useShipmentActions() {
         const actionId = beginLoading()
 
         try {
-            const response = await api.post(`/admin/shipments/${shipmentId}/cancel`, {
-                reason
-            })
-            return { success: true, data: response.data }
+            const data = await requestShipmentCancellation(api, shipmentId, reason)
+            return { success: data.outcome === 'Confirmed', data }
         } catch (err) {
             const errorMessage = err.response?.data?.message || 'Failed to cancel shipment'
             commitError(actionId, errorMessage)
@@ -242,16 +242,20 @@ export function useShipmentActions() {
         }
     }
 
+    const clearError = useCallback(() => {
+        // A target change/dismissal withdraws visibility of older errors,
+        // without retrying or altering the already issued backend command.
+        lastActionIdRef.current += 1
+        if (isMountedRef.current) {
+            setError(null)
+        }
+    }, [])
     return {
         updateStatus,
         cancelShipment,
         loading,
         error,
-        clearError: () => {
-            if (isMountedRef.current) {
-                setError(null)
-            }
-        }
+        clearError,
     }
 }
 
@@ -306,7 +310,7 @@ export function useShipmentActionAuthority(orderId) {
     }, [orderId])
 
     useEffect(() => {
-        fetchAuthority()
+        fetchAuthority().catch(() => {})
     }, [fetchAuthority])
 
     return {
@@ -378,6 +382,9 @@ export function useShippingHealth() {
  * NOTE: These are display-only - NO lifecycle logic
  */
 export const SHIPMENT_STATUS_CONFIG = {
+    PendingExternalRegistration: {
+        bgColor: 'bg-amber-100', textColor: 'text-amber-800', borderColor: 'border-amber-300', icon: '⏳', order: -1
+    },
     Pending: {
         color: 'gray',
         bgColor: 'bg-gray-100',

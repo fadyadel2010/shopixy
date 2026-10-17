@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using System.Globalization;
 using PointOfSale.API.DTOs.SmartOffers;
 using PointOfSale.API.Services.ReadModels;
@@ -186,7 +187,11 @@ public class AdminSmartOffersController : ControllerBase
         }
 
         await PublishCreatedAsync(entity);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try { await _dbContext.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return Conflict(new { message = "A smart offer or coupon with this name/code already exists. Refresh before retrying." });
+        }
 
         _logger.LogInformation(
             "Smart offer created | SmartOfferId: {SmartOfferId} | TenantId: {TenantId} | Name: {Name}",
@@ -547,6 +552,11 @@ public class AdminSmartOffersController : ControllerBase
 
     private static string? ValidateRequest(UpsertSmartOfferRequest request)
     {
+        if (!Enum.IsDefined(request.Status) || !Enum.IsDefined(request.TriggerType) || !Enum.IsDefined(request.PagesScope))
+        {
+            return "Smart offer status, trigger and page scope must be supported values.";
+        }
+
         if (string.IsNullOrWhiteSpace(request.Name))
         {
             return "Name is required.";
@@ -596,6 +606,12 @@ public class AdminSmartOffersController : ControllerBase
         if (request.CouponMaxDiscountAmount.HasValue && request.CouponMaxDiscountAmount.Value < 0)
         {
             return "Coupon max discount amount cannot be negative.";
+        }
+
+        if (request.CouponDiscountType == DiscountType.FixedAmount &&
+            request.CouponMaxDiscountAmount.HasValue && request.CouponMaxDiscountAmount < request.CouponDiscountValue)
+        {
+            return "Maximum discount amount cannot be less than the fixed discount value.";
         }
 
         if (request.Priority < 0)
@@ -692,12 +708,12 @@ public class AdminSmartOffersController : ControllerBase
         coupon.MaxDiscountAmount = request.CouponMaxDiscountAmount;
         
         // Only set default limits when creating a new coupon or when existing values are unset/invalid
-        if (isNewCoupon || coupon.MaxUsage == null || coupon.MaxUsage <= 0)
+        if (isNewCoupon || coupon.MaxUsage == null || coupon.MaxUsage < 0)
         {
             coupon.MaxUsage = DefaultSmartOfferCouponMaxUsage;
         }
         
-        if (isNewCoupon || coupon.MaxUsagePerCustomer == null || coupon.MaxUsagePerCustomer <= 0)
+        if (isNewCoupon || coupon.MaxUsagePerCustomer == null || coupon.MaxUsagePerCustomer < 0)
         {
             coupon.MaxUsagePerCustomer = DefaultSmartOfferCouponMaxUsagePerCustomer;
         }

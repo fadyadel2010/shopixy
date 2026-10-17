@@ -105,7 +105,7 @@ export default function PurchasesBySupplierReport() {
         }
     }
 
-    const handleViewStatement = (supplierId) => {
+    const handleViewStatement = () => {
         // Navigate to Statement of Account, passing state or query params if supported
         // Assuming generic SOA page handles selection manually or we pass props if we could.
         // For now, standard navigation. User will have to select supplier manually or we implement URL param support in SOA later.

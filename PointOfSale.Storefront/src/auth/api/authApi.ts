@@ -11,7 +11,7 @@
  * - All requests use credentials: 'include' for cookies
  */
 
-import { httpClient } from '@/services/api/httpClient';
+import { httpClient, isHttpClientError } from '@/services/api/httpClient';
 import type {
     AuthResponse,
     LoginRequest,
@@ -23,7 +23,6 @@ import type {
     AuthError,
     AuthErrorCode,
 } from '../types';
-import { AxiosError } from 'axios';
 
 // API base path
 const AUTH_BASE = '/api/storefront/auth';
@@ -32,7 +31,7 @@ const AUTH_BASE = '/api/storefront/auth';
  * Normalize API error to AuthError
  */
 function normalizeAuthError(error: unknown): AuthError {
-    if (error instanceof AxiosError && error.response?.data) {
+    if (isHttpClientError(error) && error.response?.data) {
         const data = error.response.data;
         return {
             code: (data.code || 'UNKNOWN_ERROR') as AuthErrorCode,
@@ -45,7 +44,7 @@ function normalizeAuthError(error: unknown): AuthError {
         };
     }
 
-    if (error instanceof AxiosError && !error.response) {
+    if (isHttpClientError(error) && !error.response) {
         return {
             code: 'NETWORK_ERROR',
             message: 'Network error. Please check your connection.',
@@ -132,11 +131,15 @@ export async function getProviders(): Promise<AvailableProviders> {
 /**
  * Login with Google ID token
  */
-export async function googleLogin(idToken: string): Promise<AuthResponse> {
+export async function startSocialLogin(provider: 'google' | 'facebook', signal?: AbortSignal): Promise<{ state: string; nonce: string }> {
+    return (await httpClient.post(`${AUTH_BASE}/social/challenge/${provider}`, {}, { signal })).data;
+}
+
+export async function googleLogin(idToken: string, state?: string, signal?: AbortSignal): Promise<AuthResponse> {
     const response = await httpClient.post<AuthResponse>(
         `${AUTH_BASE}/google`,
-        { idToken },
-        { withCredentials: true }
+        { idToken, state },
+        { withCredentials: true, signal }
     );
     return response.data;
 }
@@ -144,11 +147,11 @@ export async function googleLogin(idToken: string): Promise<AuthResponse> {
 /**
  * Login with Facebook access token
  */
-export async function facebookLogin(accessToken: string): Promise<AuthResponse> {
+export async function facebookLogin(accessToken: string, state?: string, signal?: AbortSignal): Promise<AuthResponse> {
     const response = await httpClient.post<AuthResponse>(
         `${AUTH_BASE}/facebook`,
-        { accessToken },
-        { withCredentials: true }
+        { accessToken, state },
+        { withCredentials: true, signal }
     );
     return response.data;
 }

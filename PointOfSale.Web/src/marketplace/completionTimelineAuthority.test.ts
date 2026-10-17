@@ -11,7 +11,7 @@ const providerCompletedAt = '2026-06-14T00:02:00Z'
 const buyerConfirmedAt = '2026-06-14T00:03:00Z'
 
 const eventId = (eventType: string, ticks: string) =>
-  `${requestId.replaceAll('-', '')}:${eventType}:${ticks}`
+  `${requestId.replace(/-/g, '')}:${eventType}:${ticks}`
 
 const requestDetails = (overrides: Partial<ServiceRequestDetails> = {}): ServiceRequestDetails => ({
   requestId,
@@ -62,7 +62,7 @@ const requestDetails = (overrides: Partial<ServiceRequestDetails> = {}): Service
     requestId,
     status: 'CompletedByBuyer',
     providerCompletion: {
-      evidenceId: `${requestId.replaceAll('-', '')}:ProviderCompletion:638854561200000000`,
+      evidenceId: `${requestId.replace(/-/g, '')}:ProviderCompletion:638854561200000000`,
       requestId,
       evidenceType: 'ProviderCompletion',
       occurredAt: providerCompletedAt,
@@ -70,7 +70,7 @@ const requestDetails = (overrides: Partial<ServiceRequestDetails> = {}): Service
       actorUserId: providerUserId,
     },
     buyerConfirmation: {
-      evidenceId: `${requestId.replaceAll('-', '')}:BuyerConfirmation:638854561800000000`,
+      evidenceId: `${requestId.replace(/-/g, '')}:BuyerConfirmation:638854561800000000`,
       requestId,
       evidenceType: 'BuyerConfirmation',
       occurredAt: buyerConfirmedAt,

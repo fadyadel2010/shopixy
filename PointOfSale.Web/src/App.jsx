@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import PosPermissionRouteGuard from './components/PosPermissionRouteGuard'
+import ShippingAccessDenied from './modules/shipping/components/ShippingAccessDenied'
 import { ToastProvider } from './components/Toast'
 import { ConfirmDialogProvider } from './common/confirm/ConfirmDialogProvider'
 import Login from './pages/Login'
@@ -91,6 +92,7 @@ import { StorefrontBuilderPage, ThemeMarketplacePage, ThemeEditorPage, VersionHi
 // CMS Pages & Navigation (Phase 9.11)
 import { CmsPagesList, CmsPageEditor, NavigationEditor, StorefrontFooterSettings } from './modules/storefront/cms'
 import { StorefrontAdminFrame } from './modules/storefront/informationArchitecture'
+import { StorefrontWorkspaceBoundary } from './modules/storefront/StorefrontWorkspaceBoundary'
 import { CheckoutFieldsPage } from './modules/storefront/checkoutFields'
 // Domain Management (DOMAIN-3.1-A skeleton)
 import {
@@ -132,6 +134,8 @@ import {
     TreasuryCashFlow,
     TreasuryGeneralLedger,
     TreasuryClearingAging,
+    TreasuryManualCodSettlement,
+    TreasuryCarrierRemittance,
     TreasuryTransfers,
     TreasuryHub,
     TreasuryAccountViewer
@@ -381,6 +385,7 @@ function App() {
                                         {/* Storefront Operations domain — POS permission projection */}
                                         {/* These are the store owner's own storefront screens, NOT CommerceHub marketplace routes */}
                                         <Route element={<PosPermissionRouteGuard permission="storefront.orders.view" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             {/* Operations Overview — canonical entry point */}
                                             <Route path="ecommerce/overview" element={<OperationsOverview />} />
                                             {/* Orders */}
@@ -390,28 +395,40 @@ function App() {
                                             <Route path="ecommerce/online-customers" element={<OnlineCustomersPage />} />
                                             <Route path="ecommerce/whatsapp" element={<WhatsAppSettings />} />
                                             <Route path="ecommerce/cart-recovery" element={<AbandonedCartRecovery />} />
-                                            <Route path="ecommerce/abandoned-checkouts" element={<AbandonedCheckouts />} />
+                                             <Route path="ecommerce/abandoned-checkouts" element={<AbandonedCheckouts />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="storefront.payments.manage" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="ecommerce/payment-methods" element={<PaymentMethods />} />
                                             <Route path="ecommerce/manual-payments" element={<ManualPayments />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="storefront.promotions.manage" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="ecommerce/coupons" element={<Coupons />} />
                                             <Route path="ecommerce/promotions" element={<Promotions />} />
                                             <Route path="ecommerce/smart-offers" element={<SmartOffersPage />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>
-                                            <Route path="ecommerce/commerce-ai" element={<CommerceAI />} />
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
+                                             <Route path="ecommerce/commerce-ai" element={<CommerceAI />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="storefront.analytics.configure" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="ecommerce/pixel-tracking" element={<PixelTrackingConfigPage />} />
-                                            <Route path="settings/analytics" element={<AnalyticsSettings />} />
+                                             <Route path="settings/analytics" element={<AnalyticsSettings />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="storefront.auth.manage" />}>
-                                            <Route path="ecommerce/auth-providers" element={<AuthProvidersPage />} />
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
+                                             <Route path="ecommerce/auth-providers" element={<AuthProvidersPage />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="storefront.analytics.view" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="analytics/funnels" element={<FunnelsListPage />} />
                                             <Route path="analytics/funnels/:funnelKey" element={<FunnelDetailsPage />} />
                                             <Route path="analytics/attribution" element={<AttributionOverviewPage />} />
@@ -419,13 +436,17 @@ function App() {
                                             <Route path="analytics/attribution/orders" element={<AttributionOrdersPage />} />
                                             <Route path="analytics/attribution/costs" element={<CampaignCostsPage />} />
                                             <Route path="analytics/attribution/roi" element={<RoiDashboardPage />} />
-                                            <Route path="analytics/storefront" element={<StorefrontAnalyticsDashboard />} />
+                                             <Route path="analytics/storefront" element={<StorefrontAnalyticsDashboard />} />
+                                          </Route>
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="shipping.manage" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="ecommerce/shipping-methods" element={<ShippingMethods />} />
+                                          </Route>
                                         </Route>
                                         {/* Storefront administration: canonical IA routes plus legacy aliases */}
                                         <Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>
+                                            <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="storefront/builder" element={<StorefrontBuilderPage />} />
                                             <Route path="storefront/homepage" element={<StorefrontBuilderPage />} />
                                             <Route path="storefront/catalog/product-template" element={<StorefrontBuilderPage />} />
@@ -463,17 +484,22 @@ function App() {
                                                 <Route path="storefront/domains/:id/redirects" element={<RedirectsPage />} />
                                                 <Route path="storefront/domains/:id/history" element={<DomainHistoryPage />} />
                                             </Route>
+                                            </Route>
                                         </Route>
                                         {/* Shipping Admin Dashboard (Shipping Frontend Phase + Unified Configuration) */}
                                         <Route element={<PosPermissionRouteGuard permission="shipping.manage" />}>
+                                          <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="admin/shipping" element={<ShippingAdministrationWorkspace />} />
                                             <Route path="admin/shipping/setup" element={<ShippingAdministrationWorkspace />} />
+                                          </Route>
                                         </Route>
-                                        <Route element={<PosPermissionRouteGuard permission="shipping.view" />}>
-                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
+                                        <Route element={<PosPermissionRouteGuard permission="shipping.view" deniedElement={<ShippingAccessDenied reason="permission" />} />}>
+                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" deniedElement={<ShippingAccessDenied reason="storefront" />} />}>
+                                              <Route element={<StorefrontWorkspaceBoundary />}>
                                                 <Route path="admin/shipping/shipments" element={<ShipmentsListPage />} />
                                                 <Route path="admin/shipping/shipments/:id" element={<ShipmentDetailsPage />} />
                                                 <Route path="admin/shipping/health" element={<ShippingHealthPage />} />
+                                              </Route>
                                             </Route>
                                         </Route>
 
@@ -517,6 +543,10 @@ function App() {
                                         </Route>
 
                                         {/* Treasury & Finance Control Center (Phase 5 + Phase FTM) */}
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.payments.manage" />}>
+                                            <Route path="treasury/manual-cod-settlements" element={<TreasuryManualCodSettlement />} />
+                                            <Route path="treasury/carrier-remittances" element={<TreasuryCarrierRemittance />} />
+                                        </Route>
                                         <Route element={<PosPermissionRouteGuard permission="reports.financial.view" />}>
                                             <Route path="treasury" element={<TreasuryDashboard />} />
                                             <Route path="treasury/trial-balance" element={<TreasuryTrialBalance />} />

@@ -14,8 +14,8 @@
 
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
-import { httpClient, normalizeError, isRetryableError, isRequestCanceled } from '@/services/api';
-import { useCartStore, waitForCartMerge } from './cartStore';
+import { httpClient, normalizeError, isRetryableError, isRequestCanceled } from '../services/api/index';
+import { useCartStore, waitForCartMerge, selectCartIsConfirmed } from './cartStore';
 import { useAuthStore, selectIsAuthenticated, selectAuthStatus } from '@/auth/store/authStore';
 import { useStoreConfigStore } from './storeConfigStore';
 import { resolveCountryCode } from '@/utils/country';
@@ -974,9 +974,12 @@ function admitStorefrontShippingMethods(payload: unknown): { status: CheckoutDep
     const candidate = payload as { tenantId?: unknown; status?: unknown; shippingMethods?: unknown };
     const expectedTenantId = requireStorefrontShippingTenantScope(candidate.tenantId);
     const methods = admitStorefrontShippingMethodList(candidate.shippingMethods, expectedTenantId);
+    if (typeof candidate.status !== 'string' || !CHECKOUT_DEPENDENCY_STATUSES.has(candidate.status.trim().toUpperCase() as CheckoutDependencyStatus)) {
+        throw new Error('Shipping method response omitted admitted availability status.');
+    }
 
     return {
-        status: normalizeCheckoutDependencyStatus(candidate.status, methods.length > 0 ? 'AVAILABLE' : 'EMPTY'),
+        status: candidate.status.trim().toUpperCase() as CheckoutDependencyStatus,
         methods,
     };
 }
@@ -999,17 +1002,23 @@ function admitStorefrontShippingMethodsPreview(payload: unknown): StorefrontShip
     });
 }
 
-function admitStorefrontShippingMethodSelection(payload: unknown): StorefrontShippingMethodSelectionAdmission {
+function admitStorefrontShippingMethodSelection(payload: unknown, requestedMethodId: string): StorefrontShippingMethodSelectionAdmission {
     if (!payload || typeof payload !== 'object') {
         throw new Error('Shipping method selection response failed admission.');
     }
 
     const candidate = payload as {
+        tenantId?: unknown;
+        shippingMethodId?: unknown;
         warehouseResolutionId?: unknown;
         resolutionVersion?: unknown;
         status?: unknown;
         expiresAtUtc?: unknown;
     };
+    requireStorefrontShippingTenantScope(candidate.tenantId);
+    if (typeof candidate.shippingMethodId !== 'string' || candidate.shippingMethodId.toLowerCase() !== requestedMethodId.toLowerCase()) {
+        throw new Error('Shipping method selection response did not match the requested method.');
+    }
     if (typeof candidate.warehouseResolutionId !== 'string' || !UUID_REGEX.test(candidate.warehouseResolutionId)) {
         throw new Error('Shipping method selection response contained malformed warehouse resolution identity.');
     }
@@ -1021,7 +1030,7 @@ function admitStorefrontShippingMethodSelection(payload: unknown): StorefrontShi
     const resolutionStatus = typeof candidate.status === 'string'
         ? candidate.status.trim().toUpperCase()
         : '';
-    if (!['RESOLVED', 'LOCKED', 'ORDERED', 'INVALIDATED', 'EXPIRED', 'FAILED', 'UNRESOLVED'].includes(resolutionStatus)) {
+    if (resolutionStatus !== 'RESOLVED') {
         throw new Error('Shipping method preview response contained malformed warehouse resolution status.');
     }
 
@@ -1032,7 +1041,7 @@ function admitStorefrontShippingMethodSelection(payload: unknown): StorefrontShi
     if (typeof expiresAtUtc === 'string' && !Number.isFinite(Date.parse(expiresAtUtc))) {
         throw new Error('Shipping method selection response contained malformed warehouse resolution expiry.');
     }
-    if (resolutionStatus === 'RESOLVED' && typeof expiresAtUtc !== 'string') {
+    if (typeof expiresAtUtc !== 'string' || Date.parse(expiresAtUtc) <= Date.now()) {
         throw new Error('Shipping method selection response omitted warehouse resolution expiry.');
     }
 
@@ -2083,7 +2092,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                             },
                         }
                     );
-                    const admittedSelection = admitStorefrontShippingMethodSelection(response.data);
+                    const admittedSelection = admitStorefrontShippingMethodSelection(response.data, id);
                     if (
                         controller.signal.aborted ||
                         selectionSequence !== shippingSelectionRequestSequence ||
@@ -2276,7 +2285,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         const isCurrentSelectionValid = currentId ? methodIds.includes(currentId) : false;
                         const nextShippingMethodId = hasStoredSelection
                             ? currentId
-                            : (methods[0]?.id ?? null);
+                            : null;
                         const nextShippingSelectionStatus: CheckoutSelectionStatus = hasStoredSelection
                             ? (isCurrentSelectionValid ? 'valid' : 'stale')
                             : (nextShippingMethodId ? 'valid' : 'none');
@@ -2828,6 +2837,15 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                     // Refresh cart to ensure we have the latest cart ID
                     await useCartStore.getState().fetchCart();
 
+                    if (!selectCartIsConfirmed(useCartStore.getState())) {
+                        set({
+                            isSubmitting: false,
+                            error: useCartStore.getState().error || 'Refresh your cart before checkout.',
+                            errorCode: 'CART_REFRESH_REQUIRED',
+                        });
+                        return false;
+                    }
+
                     // Refresh warehouse resolution and shipping methods after cart refresh.
                     await get().fetchShippingMethods({ force: true });
                     await get().fetchPaymentMethods();
@@ -3098,7 +3116,19 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     const order = requireStorefrontPaymentSessionAuthority(response.data, latestState.paymentMethod, cart.cartId);
 
+                    // A completed purchase owns the old selections, even when
+                    // Redis reuses the same guest cart ID for the next purchase.
+                    // Cancel in-flight reads before clearing authority so late
+                    // responses cannot rehydrate those purchased selections.
+                    clearCheckoutAutosaveTimer();
+                    cancelCheckoutAutosaveRequest();
+                    cancelCheckoutSessionInit();
+                    cancelPricingPreviewRequest();
+                    cancelCheckoutFieldsRequest();
+                    cancelShippingMethodsRequest();
+                    cancelPaymentMethodsRequest();
                     set({
+                        ...INITIAL_STATE,
                         isSubmitting: false,
                         autosaveStatus: 'idle',
                         autosaveError: null,

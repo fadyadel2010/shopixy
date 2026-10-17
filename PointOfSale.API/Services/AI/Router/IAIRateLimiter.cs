@@ -67,13 +67,13 @@ public interface IAIRateLimiter
 {
     /// <summary>
     /// Check if a request is allowed for the tenant.
-    /// Does NOT consume the limit - just checks.
+    /// Atomically reserves one provider attempt before execution. Fails closed.
     /// </summary>
     Task<RateLimitResult> CheckAsync(Guid tenantId, CancellationToken cancellationToken = default);
     
     /// <summary>
     /// Record a completed request for the tenant.
-    /// Updates counters and tracks tokens used.
+    /// Tracks completed usage and tokens; admission counters are reserved separately.
     /// </summary>
     Task RecordRequestAsync(
         Guid tenantId, 

@@ -91,8 +91,6 @@ public sealed class StorefrontPagesController : ControllerBase
                 }
 
                 Response.Headers["X-Preview-Mode"] = "true";
-                Response.Headers.CacheControl = "private, no-store";
-                Response.Headers.Pragma = "no-cache";
                 ApplyLanguageHeaders(previewPage.Language);
                 return Ok(previewPage);
             }

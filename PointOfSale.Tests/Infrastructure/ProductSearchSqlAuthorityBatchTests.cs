@@ -21,7 +21,7 @@ using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Tests.Infrastructure;
 
-public sealed class ProductSearchSqlAuthorityBatchTests
+public sealed partial class ProductSearchSqlAuthorityBatchTests
 {
     [Fact]
     public async Task ReadOverlays_PreserveProjectionIngestionTime()

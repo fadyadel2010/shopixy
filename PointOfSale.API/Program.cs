@@ -956,9 +956,15 @@ builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.ICarrierCreden
 // Shipping Quote Service (returns quotes from all enabled carriers)
 builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.IShippingQuoteService, PointOfSale.Infrastructure.Shipping.ShippingQuoteService>();
 builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.ICarrierIntegrationAuthority, PointOfSale.Infrastructure.Shipping.CarrierIntegrationAuthority>();
+builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.BostaPickupVerificationCache>();
 
 // Carrier Shipment Service (creates/manages shipments with carriers)
 builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.ICarrierShipmentService, PointOfSale.Infrastructure.Shipping.CarrierShipmentService>();
+builder.Services.Configure<PointOfSale.Infrastructure.Shipping.ShippingWebhookClaimOptions>(
+    builder.Configuration.GetSection("Shipping:WebhookClaims"));
+builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.ShipmentParcelEvidenceService>();
+builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.IShipmentCancellationService, PointOfSale.Infrastructure.Shipping.ShipmentCancellationService>();
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.Payments.ICarrierRemittanceService, PointOfSale.Infrastructure.Payments.CarrierRemittanceService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.ShippingAdministration.ICarrierAccountAdministrationRuntime, PointOfSale.Infrastructure.Shipping.Administration.CarrierAccountAdministrationRuntime>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IShippingAdministrationApiService, PointOfSale.API.Services.Admin.ShippingAdministrationApiService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Shipping.IShippingWebhookTenantResolver, PointOfSale.API.Services.Shipping.ShippingWebhookTenantResolver>();
@@ -966,6 +972,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Shipping.IShippingWebhookReq
 
 // Tracking Sync Job (background job for tracking status sync)
 // IMPORTANT: Schedule this job with Hangfire after app.Build() - see TrackingSyncJobRegistration
+builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.BackgroundJobs.ITrackingTenantDirectory, PointOfSale.Infrastructure.Shipping.BackgroundJobs.TrackingTenantDirectory>();
 builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.BackgroundJobs.ITrackingSyncJob, PointOfSale.Infrastructure.Shipping.BackgroundJobs.TrackingSyncJob>();
 
 // =============================================================================
@@ -988,16 +995,16 @@ builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.IShippingCarri
 // Bosta Adapter (Egypt market - production ready)
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.IShippingCarrierAdapter, PointOfSale.Infrastructure.Shipping.Adapters.BostaAdapter>();
 
-// Aramex Adapter (MENA region - production ready)
+// Aramex Adapter (partial; account, route and geography certification required)
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.IShippingCarrierAdapter, PointOfSale.Infrastructure.Shipping.Adapters.AramexAdapter>();
 
 // Mylerz Adapter (Egypt last-mile delivery - fails closed until official contract is frozen)
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.IShippingCarrierAdapter, PointOfSale.Infrastructure.Shipping.Adapters.MylerzAdapter>();
 
-// DHL Adapter (International express - production ready)
+// DHL Adapter (MyDHL Express - partial; remote account/route certification required)
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.IShippingCarrierAdapter, PointOfSale.Infrastructure.Shipping.Adapters.DhlAdapter>();
 
-// FedEx Adapter (runtime foundation only - registered but all operations fail closed)
+// FedEx REST transport and selected operations; canonical production readiness remains NotCertified.
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.Adapters.FedExOptions>();
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.Adapters.IFedExOAuthClient, PointOfSale.Infrastructure.Shipping.Adapters.FedExOAuthClient>();
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.Adapters.IFedExTransportClient, PointOfSale.Infrastructure.Shipping.Adapters.FedExTransportClient>();
@@ -1315,13 +1322,27 @@ static IHttpClientBuilder ConfigureExternalHttpClient(
 
 ConfigureExternalHttpClient(builder.Services.AddHttpClient(string.Empty), TimeSpan.FromSeconds(15)); // For OAuth token verification and shared external calls
 ConfigureExternalHttpClient(builder.Services.AddHttpClient("Paymob"), TimeSpan.FromSeconds(20));
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("Bosta"), TimeSpan.FromSeconds(15));
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("Aramex"), TimeSpan.FromSeconds(15));
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("DHL"), TimeSpan.FromSeconds(15));
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("Mylerz"), TimeSpan.FromSeconds(15));
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("FedExOAuth"), TimeSpan.FromSeconds(15));
-ConfigureExternalHttpClient(builder.Services.AddHttpClient("FedEx"), TimeSpan.FromSeconds(15));
+// A local reference/Idempotency-Key is not proof of provider duplicate suppression.
+// Do not transparently retry carrier mutations or redirect credential-bearing calls.
+ConfigureExternalHttpClient(builder.Services.AddHttpClient("Bosta"), TimeSpan.FromSeconds(15), enableRetry: false)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+ConfigureExternalHttpClient(builder.Services.AddHttpClient("Aramex"), TimeSpan.FromSeconds(15), enableRetry: false)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+ConfigureExternalHttpClient(builder.Services.AddHttpClient("DHL"), TimeSpan.FromSeconds(15), enableRetry: false)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+ConfigureExternalHttpClient(builder.Services.AddHttpClient("Mylerz"), TimeSpan.FromSeconds(15), enableRetry: false)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddTransient<PointOfSale.Infrastructure.Shipping.Adapters.MylerzPublicContractClient>(sp =>
+    new(sp.GetRequiredService<IHttpClientFactory>().CreateClient("Mylerz")));
+ConfigureExternalHttpClient(builder.Services.AddHttpClient("FedExOAuth"), TimeSpan.FromSeconds(15), enableRetry: false)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+ConfigureExternalHttpClient(builder.Services.AddHttpClient("FedEx"), TimeSpan.FromSeconds(15), enableRetry: false)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontSocialLoginService, PointOfSale.API.Services.Storefront.StorefrontSocialLoginService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.SocialLoginChallengeService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ISocialLoginReplayStore, PointOfSale.API.Services.Storefront.SocialLoginReplayStore>();
+// OAuth introspection URLs contain credentials. Never send them through default URI loggers.
+builder.Services.AddHttpClient("StorefrontOAuth", client => client.Timeout = TimeSpan.FromSeconds(15)).RemoveAllLoggers();
 
 // =============================================================================
 // STOREFRONT AUTH PROVIDER ADMIN SERVICE (Phase P2 - Provider Management)
@@ -1430,6 +1451,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Coupons.ICouponUsageService,
 // Highest priority wins when multiple promotions apply.
 // =============================================================================
 builder.Services.AddScoped<PointOfSale.API.Services.Promotions.IPromotionEngine, PointOfSale.API.Services.Promotions.PromotionEngine>();
+builder.Services.AddScoped<PointOfSale.API.Services.Promotions.ICartDiscountAuthority, PointOfSale.API.Services.Promotions.CartDiscountAuthority>();
 
 // =============================================================================
 // ANALYTICS EVENT SERVICES (PHASE 1: Canonical Analytics Event Foundation)
@@ -1570,6 +1592,7 @@ builder.Services.AddScoped<PointOfSale.Core.Interfaces.Geographic.IGeographicRep
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.Geographic.IGeographicCatalogService, PointOfSale.Infrastructure.Geographic.GeographicCatalogService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.Geographic.IGeographicResolver, PointOfSale.Infrastructure.Geographic.GeographicResolver>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.Geographic.IAddressAdmissionService, PointOfSale.Infrastructure.Geographic.GeographicResolver>();
+builder.Services.AddScoped<PointOfSale.API.Services.Inventory.WarehouseAddressAdmissionService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.Geographic.ICarrierGeographicMappingService, PointOfSale.Infrastructure.Geographic.CarrierGeographicMappingService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.Customs.ICustomsEvidenceAdmissionService, PointOfSale.Infrastructure.Customs.CustomsEvidenceAdmissionService>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.Customs.ICustomsAdministrationWorkflowService, PointOfSale.Infrastructure.Customs.CustomsAdministrationWorkflowService>();
@@ -3601,7 +3624,28 @@ else
 
 var app = builder.Build();
 
+// Fail startup closed when recovery is enabled against an unprepared database.
+// This is a read-only readiness check, not automatic migration or replay.
+await using (var claimStartupScope = app.Services.CreateAsyncScope())
+{
+    var claimOptions = claimStartupScope.ServiceProvider
+        .GetRequiredService<IOptions<PointOfSale.Infrastructure.Shipping.ShippingWebhookClaimOptions>>().Value;
+    await PointOfSale.API.Services.Shipping.ShippingWebhookClaimStartupValidator.ValidateAsync(
+        claimStartupScope.ServiceProvider, app.Logger, app.Lifetime.ApplicationStopping);
+    app.Logger.LogInformation(
+        "Shipping webhook claims initialized | Enabled: {Enabled} | PID: {ProcessId} | API MVID: {ApiMvid} | Infrastructure MVID: {InfrastructureMvid} | Version: {Version}",
+        claimOptions.Enabled, Environment.ProcessId, typeof(Program).Module.ModuleVersionId,
+        typeof(PointOfSale.Infrastructure.Shipping.ShippingWebhookClaimProtocol).Module.ModuleVersionId,
+        typeof(Program).Assembly.GetName().Version);
+}
+
 // Configure forwarded headers FIRST - must run before any middleware that needs client IP
+// Loaded identities are diagnostic evidence, independent of webhook enablement
+// and of a later build replacing files on disk. No configuration or secrets.
+app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ShippingRuntimeIdentity").LogInformation(
+    "API runtime identity | PID: {ProcessId} | Environment: {Environment} | API MVID: {ApiMvid} | Infrastructure MVID: {InfrastructureMvid}",
+    Environment.ProcessId, app.Environment.EnvironmentName, typeof(Program).Module.ModuleVersionId,
+    typeof(PointOfSale.Infrastructure.Shipping.CarrierShipmentService).Module.ModuleVersionId);
 app.UseForwardedHeaders();
 
 // Configure the HTTP request pipeline

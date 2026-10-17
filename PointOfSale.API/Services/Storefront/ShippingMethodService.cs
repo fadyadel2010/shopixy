@@ -123,6 +123,18 @@ public class ShippingMethodService : IShippingMethodService
             documents = await _repository.GetActiveShippingMethodsAsync(tenantId, cancellationToken);
         }
 
+        // A refresh (or an uncached warehouse read) is still a derivative read.
+        // Never admit a foreign or unscoped projection merely because the cache
+        // was invalidated, even when its warehouse happens to belong to this tenant.
+        if (!TryValidateCachedTenantScope(tenantId, documents, correlationId, out var scopeFailure))
+        {
+            _reliabilityTelemetry.RecordCurrencyProjectionMismatch(
+                projection: "shipping_methods_projection", reason: scopeFailure ?? "tenant_scope_mismatch");
+            throw new StorefrontConfigOutOfSyncException(
+                $"Projected shipping method scope is inconsistent for tenant '{tenantId}'.",
+                field: "ShippingMethodTenantScope");
+        }
+
         documents = await ApplyConfiguredWarehouseAuthorityFilterAsync(
             tenantId,
             warehouseId,

@@ -4,6 +4,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
+using System.Text.RegularExpressions;
 
 namespace PointOfSale.API.Services.PhoneRisk;
 
@@ -33,7 +34,13 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
             throw new ArgumentException("Phone number is required.", nameof(phoneNumber));
         }
 
-        var cleaned = CleanPhone(phoneNumber);
+        var input = phoneNumber.Trim();
+        if (input.Any(c => !char.IsDigit(c) && !char.IsWhiteSpace(c) && c is not '+' and not '-' and not '(' and not ')' and not '.') ||
+            input.Count(c => c == '+') > 1 || (input.Contains('+') && !input.StartsWith('+')))
+        {
+            throw new ArgumentException("Phone number format is invalid.", nameof(phoneNumber));
+        }
+        var cleaned = CleanPhone(input);
         if (string.IsNullOrWhiteSpace(cleaned))
         {
             throw new ArgumentException("Phone number is required.", nameof(phoneNumber));
@@ -45,16 +52,10 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
         }
         catch (PhoneNumberNormalizationException ex)
         {
-            var fallback = FallbackNormalize(cleaned);
-
-            _logger.LogDebug(
-                ex,
-                "Falling back to separator-stripped phone normalization | TenantId: {TenantId} | Phone: {Phone} | Fallback: {Fallback}",
-                tenantId,
-                MaskPhone(cleaned),
-                MaskPhone(fallback));
-
-            return fallback;
+            // A rejected number is not an alternative canonical identity.
+            // Never turn validation failure into an unblocked lookup.
+            _logger.LogDebug("Phone identity normalization rejected | TenantId: {TenantId}", tenantId);
+            throw new ArgumentException("Enter a valid phone number for the configured country.", nameof(phoneNumber), ex);
         }
     }
 
@@ -139,14 +140,24 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
             return null;
         }
 
-        var phoneNumber = order.CustomerPhone ?? order.OnlineCustomerPhone ?? order.GuestPhone;
+        var phoneNumber = OrderPhoneIdentity.Resolve(order.GuestPhone, order.CustomerPhone, order.OnlineCustomerPhone);
         var result = new AdminOrderCustomerTrustDto { OrderId = orderId };
         if (string.IsNullOrWhiteSpace(phoneNumber))
         {
             return result;
         }
 
-        var normalizedPhone = await NormalizePhoneAsync(tenantId, phoneNumber, cancellationToken);
+        string normalizedPhone;
+        try
+        {
+            normalizedPhone = await NormalizePhoneAsync(tenantId, phoneNumber, cancellationToken);
+        }
+        catch (ArgumentException)
+        {
+            // Legacy invalid data is unavailable evidence, never a safe identity
+            // and never permission to mutate an alternative account phone.
+            return result;
+        }
         var phoneRisk = await GetStatusAsync(tenantId, phoneNumber, cancellationToken);
         var globalSpamReports = await GetGlobalSpamReportsAsync(tenantId, phoneNumber, cancellationToken);
         phoneRisk ??= new AdminPhoneRiskStatusDto
@@ -155,31 +166,55 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
             GlobalSpamReports = globalSpamReports,
         };
 
-        var previousOrders = await _dbContext.Orders
+        // This regex is only a candidate prefilter, not identity authority. It
+        // admits ASCII formatting variants and all non-ASCII candidates; the
+        // shared country-aware normalizer makes the final equivalence decision.
+        var suffix = normalizedPhone[^Math.Min(4, normalizedPhone.Length)..];
+        var candidatePattern = string.Join("[^0-9]*", suffix.Select(c => Regex.Escape(c.ToString()))) + "[^0-9]*$";
+        var historyCandidates = await _dbContext.Orders
             .AsNoTracking()
             .Where(x =>
                 x.TenantId == tenantId &&
                 x.Id != orderId &&
                 x.Source == OrderSource.Ecommerce &&
                 !x.IsDeleted)
-            .Where(x =>
-                x.GuestPhone == phoneNumber ||
-                (x.Customer != null && x.Customer.Phone == phoneNumber) ||
-                (x.OnlineCustomer != null && x.OnlineCustomer.Phone == phoneNumber))
-            .GroupBy(_ => 1)
+            .Select(x => new
+            {
+                Phone = !string.IsNullOrWhiteSpace(x.GuestPhone) ? x.GuestPhone :
+                    x.Customer != null && !string.IsNullOrWhiteSpace(x.Customer.Phone) ? x.Customer.Phone :
+                    x.OnlineCustomer != null ? x.OnlineCustomer.Phone : null,
+                x.Status,
+            })
+            .Where(x => x.Phone != null && (Regex.IsMatch(x.Phone, candidatePattern) || Regex.IsMatch(x.Phone, @"[^\x01-\x7F]")))
+            .GroupBy(x => x.Phone)
             .Select(group => new
             {
+                Phone = group.Key!,
                 Total = group.Count(),
                 Cancelled = group.Count(x => x.Status == OrderStatus.Cancelled),
             })
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        var previousOrdersCount = 0;
+        var cancelledOrdersCount = 0;
+        foreach (var candidate in historyCandidates)
+        {
+            try
+            {
+                if (await NormalizePhoneAsync(tenantId, candidate.Phone, cancellationToken) != normalizedPhone) continue;
+                previousOrdersCount += candidate.Total;
+                cancelledOrdersCount += candidate.Cancelled;
+            }
+            catch (ArgumentException)
+            {
+                // A malformed legacy phone is not evidence about this identity.
+            }
+        }
 
         var velocity = await _orderVelocityService.GetCurrentAssessmentAsync(
             order.IpAddress,
             normalizedPhone,
             cancellationToken) ?? new OrderVelocityAssessment();
-        var previousOrdersCount = previousOrders?.Total ?? 0;
-        var cancelledOrdersCount = previousOrders?.Cancelled ?? 0;
         var (riskLevel, riskSignals) = AssessRisk(
             phoneRisk.SpamReports,
             globalSpamReports,
@@ -385,7 +420,7 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
             })
             .FirstOrDefaultAsync(cancellationToken);
 
-        var phoneNumber = orderPhone?.CustomerPhone ?? orderPhone?.OnlineCustomerPhone ?? orderPhone?.GuestPhone;
+        var phoneNumber = OrderPhoneIdentity.Resolve(orderPhone?.GuestPhone, orderPhone?.CustomerPhone, orderPhone?.OnlineCustomerPhone);
 
         if (string.IsNullOrWhiteSpace(phoneNumber))
         {
@@ -584,17 +619,6 @@ public class PhoneRiskProfileService : IPhoneRiskProfileService
         }
 
         return digits;
-    }
-
-    private static string FallbackNormalize(string cleanedPhone)
-    {
-        var normalized = CleanPhone(cleanedPhone);
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            throw new ArgumentException("Phone number is required.", nameof(cleanedPhone));
-        }
-
-        return normalized;
     }
 
     private static string MaskPhone(string phone)

@@ -63,6 +63,7 @@ class AnalyticsQueue {
      */
     private initialize(): void {
         if (this.initialized) return;
+        if (typeof window === 'undefined' || typeof document === 'undefined') return;
         this.initialized = true;
 
         // Restore persisted queue
@@ -83,6 +84,7 @@ class AnalyticsQueue {
      * Enqueue an event for delivery
      */
     enqueue(event: AnalyticsEvent): void {
+        this.initialize();
         this.ensureTenantStorageLoaded();
 
         // Check queue size limit
@@ -131,11 +133,16 @@ class AnalyticsQueue {
                 // Get batch of events
                 const batch = this.queue.slice(0, MAX_BATCH_SIZE);
                 const events = batch.map(q => q.event);
+                const storageKey = this.activeStorageKey;
 
                 try {
                     const response = await sendAnalyticsBatch(events);
+                    this.ensureTenantStorageLoaded();
+                    if (this.activeStorageKey !== storageKey) break;
                     this.handleBatchResponse(batch, response);
                 } catch (error) {
+                    this.ensureTenantStorageLoaded();
+                    if (this.activeStorageKey !== storageKey) break;
                     // Network or server error - handle retries
                     this.handleBatchFailure(batch);
 
@@ -349,6 +356,7 @@ class AnalyticsQueue {
      * Used for page unload when we can't use async
      */
     private flushSync(): void {
+        this.ensureTenantStorageLoaded();
         if (this.queue.length === 0) return;
 
         try {

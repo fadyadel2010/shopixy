@@ -47,7 +47,7 @@ public class AIResponseValidator : IAIResponseValidator
         parsed = null;
         error = null;
 
-        if (string.IsNullOrWhiteSpace(rawResponse))
+        if (string.IsNullOrWhiteSpace(rawResponse) || rawResponse.Length > 32768)
         {
             error = "Empty response from AI";
             return false;
@@ -79,12 +79,12 @@ public class AIResponseValidator : IAIResponseValidator
             // Validate type field
             if (!ChatResponseTypes.ValidTypes.Contains(parsed.Type))
             {
-                error = $"Invalid response type: {parsed.Type}";
+                error = "Invalid response type";
                 return false;
             }
 
             // Validate message is not empty
-            if (string.IsNullOrWhiteSpace(parsed.Message))
+            if (string.IsNullOrWhiteSpace(parsed.Message) || parsed.Message.Length > 8000)
             {
                 error = "Response message cannot be empty";
                 return false;
@@ -93,9 +93,11 @@ public class AIResponseValidator : IAIResponseValidator
             // Validate orderDraft if present
             if (parsed.OrderDraft != null)
             {
+                if (parsed.OrderDraft.Items == null || parsed.OrderDraft.Items.Count > 20)
+                { error = "Invalid draft item count"; return false; }
                 if (!OrderDraftIntents.ValidIntents.Contains(parsed.OrderDraft.Intent))
                 {
-                    error = $"Invalid order draft intent: {parsed.OrderDraft.Intent}";
+                    error = "Invalid order draft intent";
                     return false;
                 }
 
@@ -124,6 +126,9 @@ public class AIResponseValidator : IAIResponseValidator
                 // Validate quantities
                 foreach (var item in parsed.OrderDraft.Items)
                 {
+                    var product = context.Products.Single(p => p.Id == item.ProductId);
+                    if (item.Quantity > 99 || (item.VariantId.HasValue && !product.Variants.Any(v => v.Id == item.VariantId)))
+                    { error = "Invalid draft quantity or variant"; return false; }
                     if (item.Quantity < 1)
                     {
                         item.Quantity = 1; // Default to 1
@@ -158,8 +163,8 @@ public class AIResponseValidator : IAIResponseValidator
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Failed to parse AI response JSON: {RawResponse}", rawResponse);
-            error = $"JSON parse error: {ex.Message}";
+            _logger.LogWarning("Failed to parse AI response JSON");
+            error = "JSON parse error";
             return false;
         }
         catch (Exception ex)

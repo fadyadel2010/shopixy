@@ -291,9 +291,12 @@ export default function TreasuryTransfers() {
                         <p className="text-gray-600">
                             {t('treasury.transfersSubtitle', 'Move funds between cashbox and bank accounts with full audit trail')}
                         </p>
-                        <p className="text-sm text-gray-500 mt-1">
-                            {t('treasury.transferableOnly', 'Only mapped Cashbox and Bank accounts can send or receive Treasury transfers.')}
-                        </p>
+                         <p className="text-sm text-gray-500 mt-1">
+                             {t('treasury.transferableOnly', 'Only mapped Cashbox and Bank accounts can send or receive Treasury transfers.')}
+                         </p>
+                         <p className="text-sm text-gray-500 mt-1" role="note">
+                             {t('treasury.clearingSettlementUnavailable', 'COD and gateway clearing settlement is currently unavailable because authenticated carrier remittance or provider payout evidence is not integrated. Clearing balances cannot be moved through Treasury Transfers.')}
+                         </p>
                     </div>
                 </div>
             </div>

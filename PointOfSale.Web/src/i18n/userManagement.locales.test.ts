@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest'
 import en from './locales/en.json'
 import ar from './locales/ar.json'
 
-const collectLeaves = (value, prefix, out) => {
+const collectLeaves = (value: unknown, prefix: string, out: Map<string, string>): Map<string, string> => {
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
         for (const [key, child] of Object.entries(value)) {
             collectLeaves(child, prefix ? `${prefix}.${key}` : key, out)
         }
         return out
     }
+    if (typeof value !== 'string') throw new Error(`Translation leaf is not a string: ${prefix}`)
     out.set(prefix, value)
     return out
 }
 
-const placeholders = (value) => {
+const placeholders = (value: unknown) => {
     if (typeof value !== 'string') return []
     return [...value.matchAll(/\{\{(\w+)\}\}/g)].map((match) => match[1]).sort()
 }
@@ -36,6 +37,7 @@ describe('userManagement locales', () => {
             expect(typeof enValue, key).toBe('string')
             expect(enValue.trim().length, `en:${key}`).toBeGreaterThan(0)
             expect(typeof arValue, `ar:${key}`).toBe('string')
+            if (typeof arValue !== 'string') throw new Error(`Missing Arabic translation: ${key}`)
             expect(arValue.trim().length, `ar:${key}`).toBeGreaterThan(0)
             // No raw-key leakage: a rendered value must never equal its key.
             expect(arValue, `ar:${key}`).not.toBe(key)
@@ -58,7 +60,7 @@ describe('userManagement locales', () => {
             'pos_user_invitation_accepted', 'pos_user_profile_changed', 'pos_user_role_changed',
             'pos_user_disabled', 'pos_user_enabled', 'pos_user_password_reset_issued',
             'pos_user_password_reset_completed', 'pos_user_session_revoked', 'pos_user_ownership_transferred',
-        ]
+        ] as const
         for (const action of actions) {
             expect(en.auditLog.actions[action], `en:${action}`).toBeTruthy()
             expect(ar.auditLog.actions[action], `ar:${action}`).toBeTruthy()

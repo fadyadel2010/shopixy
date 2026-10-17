@@ -79,6 +79,8 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         "ResolvedUnresolvedCommerceHubPayment",
         "GatewaySettlement",
         "CodSettlement",
+        "ManualCodSettlement",
+        "CarrierCashRemittance",
         "CommerceHubLedgerPosting"
     };
 
@@ -776,6 +778,8 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             "ResolvedUnresolvedCommerceHubPayment" => await ProcessResolvedUnresolvedCommerceHubPaymentAsync(commerceAccounting, payload, message.TenantId, ct),
             "GatewaySettlement"         => await ProcessGatewaySettlementAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "CodSettlement"             => await ProcessCodSettlementAsync(db, commerceAccounting, payload, message.TenantId, ct),
+            "ManualCodSettlement"       => await ManualCodSettlementAuthority.RecoverReceiptAsync(db, message, ct),
+            "CarrierCashRemittance"     => await CarrierRemittanceAuthority.RecoverReceiptAsync(db, message, ct),
             // CommerceHub: posts each operational ledger entry to the GL so the ReadinessGate
             // can verify accounting coverage before authorising outward money movement.
             "CommerceHubLedgerPosting"  => await ProcessCommerceHubLedgerPostingAsync(db, commerceAccounting, payload, message.TenantId, ct),
@@ -2569,6 +2573,21 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
                     return PostingResult.Succeeded(Guid.Empty, "SKIPPED");
                 }
                 
+                if (order.FulfillmentMode == FulfillmentMode.Carrier || !string.IsNullOrWhiteSpace(order.FulfillmentCarrierCode))
+                {
+                    var (evidence, code) = await PointOfSale.Infrastructure.Shipping.CarrierCollectionMoneyAuthority.RevalidateAsync(db, order, null, null, ct);
+                    if (code != null)
+                    {
+                        if (evidence != null)
+                        {
+                            using var evidenceAuthority = PointOfSale.Infrastructure.Shipping.CarrierMoneyPersistenceAuthority.Begin();
+                            await PointOfSale.Infrastructure.Shipping.CarrierCollectionMoneyAuthority.StageReviewAsync(db, evidence, code, ct);
+                            await db.SaveChangesAsync(ct);
+                            await transaction.CommitAsync(ct);
+                        }
+                        return PostingResult.Failed(code);
+                    }
+                }
                 var result = await accounting.PostCodDeliveredAsync(order, ct);
                 if (!result.Success)
                 {

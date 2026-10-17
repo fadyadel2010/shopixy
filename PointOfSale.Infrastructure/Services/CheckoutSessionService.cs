@@ -435,6 +435,7 @@ public class CheckoutSessionService : ICheckoutSessionService
     /// <inheritdoc />
     public async Task MarkAsAbandonedAsync(Guid sessionId, CancellationToken ct = default)
     {
+        await using var transaction = await BeginConsistencyTransactionAsync(ct);
         var session = await _db.CheckoutSessions
             .IgnoreQueryFilters()
             .SingleOrDefaultAsync(
@@ -446,10 +447,18 @@ public class CheckoutSessionService : ICheckoutSessionService
             return;
         }
 
+        await AcquireCartScopedLockAsync(session.TenantId, session.CartId, ct);
+        // Selection may predate a concurrent autosave, recovery or conversion.
+        // Reload under the lock shared by those writers and recheck policy.
+        await _db.Entry(session).ReloadAsync(ct);
+        if (session.Status != CheckoutSessionStatus.Active || session.InvalidatedAtUtc != null ||
+            session.LastActivityAtUtc >= DateTime.UtcNow.AddMinutes(-30))
+        {
+            return;
+        }
+
         session.Status = CheckoutSessionStatus.Abandoned;
         session.AbandonedAtUtc = DateTime.UtcNow;
-
-        await _db.SaveChangesAsync(ct);
 
         await _eventPublisher.PublishAsync(new CheckoutSessionAbandonedEvent
         {
@@ -469,6 +478,9 @@ public class CheckoutSessionService : ICheckoutSessionService
             AbandonedAtUtc = session.AbandonedAtUtc!.Value,
             LastActivityAtUtc = session.LastActivityAtUtc,
         }, ct);
+
+        await _db.SaveChangesAsync(ct);
+        await CommitTransactionIfNeededAsync(transaction, ct);
 
         _logger.LogInformation(
             "Marked checkout session {SessionId} as abandoned (tenant {TenantId}, cart {CartId})",

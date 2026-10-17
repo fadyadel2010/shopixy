@@ -6,18 +6,13 @@
  * CRITICAL: Rollback requires explicit confirmation with checkbox.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
-    History,
     RotateCcw,
     Loader2,
-    AlertCircle,
     AlertTriangle,
-    Check,
-    X,
-    ChevronRight,
     Clock,
     User,
     FileText
@@ -47,6 +42,9 @@ export function VersionHistoryPage() {
     const [error, setError] = useState(null)
     /** @type {[import('../types/builder').VersionHistoryEntry[], Function]} */
     const [versions, setVersions] = useState([])
+    const [acceptedRowVersion, setAcceptedRowVersion] = useState('')
+    const rollbackInFlightRef = useRef(false)
+    const mountedRef = useRef(true)
 
     // Rollback modal state
     const [rollbackModal, setRollbackModal] = useState({
@@ -59,15 +57,29 @@ export function VersionHistoryPage() {
 
     // Load versions
     useEffect(() => {
+        mountedRef.current = true
         loadVersions()
+        return () => { mountedRef.current = false }
     }, [])
 
     const loadVersions = async () => {
         setIsLoading(true)
         setError(null)
         try {
+            const currentConfig = deriveCurrentStoreIdentityPresentation(
+                await storeConfigService.getStoreConfig(), currentUser,
+            )
+            const rowVersion = typeof currentConfig?.rowVersion === 'string' ? currentConfig.rowVersion.trim() : ''
+            if (!rowVersion) throw new Error('Rollback requires current backend RowVersion authority.')
+            if (!mountedRef.current) return
             const response = await storeConfigService.getVersionHistory()
-            setVersions(response?.versions || [])
+            if (!Array.isArray(response?.versions) || response.versions.some(entry =>
+                !Number.isInteger(entry?.version) || entry.version < 1 || !Number.isFinite(Date.parse(entry.publishedAt)))
+                || new Set(response.versions.map(entry => entry.version)).size !== response.versions.length) {
+                throw new Error('Version history response is malformed.')
+            }
+            setAcceptedRowVersion(rowVersion)
+            setVersions(response.versions)
         } catch (err) {
             console.error('Failed to load versions:', err)
             setError(isRTL ? 'فشل تحميل سجل الإصدارات' : 'Failed to load version history')
@@ -97,7 +109,7 @@ export function VersionHistoryPage() {
     }
 
     const handleRollback = async () => {
-        if (!rollbackModal.confirmed) return
+        if (rollbackInFlightRef.current || !rollbackModal.confirmed) return
 
         const selectedVersion = versions.find((entry) => entry.version === rollbackModal.version?.version)
         if (!selectedVersion) {
@@ -105,13 +117,12 @@ export function VersionHistoryPage() {
             return
         }
 
+        rollbackInFlightRef.current = true
         setRollbackModal(prev => ({ ...prev, isRollingBack: true }))
         try {
-            const currentConfig = deriveCurrentStoreIdentityPresentation(
-                await storeConfigService.getStoreConfig(),
-                currentUser,
-            )
-            const rowVersion = typeof currentConfig?.rowVersion === 'string' ? currentConfig.rowVersion.trim() : ''
+            // Use the revision the administrator reviewed, not a fresh revision that
+            // would silently authorize overwriting changes made during confirmation.
+            const rowVersion = acceptedRowVersion
             if (!rowVersion) {
                 throw new Error('Rollback requires current backend RowVersion authority.')
             }
@@ -131,6 +142,7 @@ export function VersionHistoryPage() {
             if (!acceptedResponse) {
                 throw new Error('Rollback response authority was not admitted.')
             }
+            if (!mountedRef.current) return
             showSuccess(
                 isRTL
                     ? `تم الاستعادة للإصدار ${selectedVersion.version}`
@@ -139,9 +151,12 @@ export function VersionHistoryPage() {
             closeRollbackModal()
             await loadVersions()
         } catch (err) {
+            if (!mountedRef.current) return
             console.error('Rollback failed:', err)
             showError(isRTL ? 'فشل الاستعادة' : 'Rollback failed')
             setRollbackModal(prev => ({ ...prev, isRollingBack: false }))
+        } finally {
+            rollbackInFlightRef.current = false
         }
     }
 
@@ -213,7 +228,7 @@ export function VersionHistoryPage() {
             ) : (
                 /* Version List */
                 <div className="space-y-4">
-                    {versions.map((version, index) => (
+                    {versions.map((version) => (
                         <div
                             key={version.version}
                             className={`bg-white rounded-xl border p-5 transition-all ${version.isCurrent
@@ -294,12 +309,12 @@ export function VersionHistoryPage() {
                                     <AlertTriangle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
                                     <div>
                                         <p className="font-medium text-red-800">
-                                            {isRTL ? 'تحذير: إجراء لا يمكن التراجع عنه' : 'Warning: Irreversible Action'}
+                            {isRTL ? 'تحذير: استعادة المحتوى المنشور' : 'Warning: Restore published configuration'}
                                         </p>
                                         <p className="text-sm text-red-700 mt-1">
                                             {isRTL
-                                                ? 'سيتم استبدال جميع التغييرات الحالية بالإصدار المحدد. سيؤثر هذا على متجرك المباشر فوراً.'
-                                                : 'All current changes will be replaced with the selected version. This will immediately affect your live store.'
+                                    ? 'سيتم استبدال المحتوى المنشور في StoreConfig. ستبقى المسودات الحالية وصفحات CMS ومحتوى التذييل المنفصل دون تغيير. سيؤثر هذا على متجرك المباشر فوراً.'
+                                    : 'Published StoreConfig content will be replaced. Current drafts, CMS Pages, and separate Footer Content are preserved. This immediately affects your live store.'
                                             }
                                         </p>
                                     </div>
@@ -308,10 +323,11 @@ export function VersionHistoryPage() {
 
                             {/* Reason Input */}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                <label htmlFor="storeconfig-rollback-reason" className="block text-sm font-medium text-gray-700 mb-2">
                                     {isRTL ? 'سبب الاستعادة (اختياري)' : 'Reason for rollback (optional)'}
                                 </label>
                                 <textarea
+                                    id="storeconfig-rollback-reason"
                                     value={rollbackModal.reason}
                                     onChange={(e) => setRollbackModal(prev => ({ ...prev, reason: e.target.value }))}
                                     placeholder={isRTL ? 'مثال: استعادة التصميم السابق' : 'e.g., Reverting to previous design'}

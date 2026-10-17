@@ -200,8 +200,9 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
             };
         }
 
-        var normalizedPhone = await TryNormalizePhoneAsync(tenantId, sessionPhone, ct)
-            ?? NormalizePhoneFallback(sessionPhone);
+        // Only the tenant-aware normalizer may establish a verified identity.
+        // Never invent a country prefix after it has rejected the input.
+        var normalizedPhone = await TryNormalizePhoneAsync(tenantId, sessionPhone, ct);
 
         if (!string.IsNullOrWhiteSpace(normalizedPhone))
         {
@@ -240,10 +241,11 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
             var customer = await _dbContext.OnlineCustomers
                 .FirstOrDefaultAsync(c => c.Id == customerId.Value && c.TenantId == tenantId, ct);
 
-            if (customer?.PhoneVerified == true &&
+            if (!string.IsNullOrWhiteSpace(normalizedPhone) &&
+                customer?.PhoneVerified == true &&
                 !string.IsNullOrWhiteSpace(customer.Phone) &&
                 string.Equals(
-                    await TryNormalizePhoneAsync(tenantId, customer.Phone, ct) ?? NormalizePhoneFallback(customer.Phone),
+                    await TryNormalizePhoneAsync(tenantId, customer.Phone, ct),
                     normalizedPhone,
                     StringComparison.Ordinal))
             {
@@ -1011,22 +1013,6 @@ public class StorefrontPhoneVerificationService : IStorefrontPhoneVerificationSe
             OtpHashIterations,
             HashAlgorithmName.SHA256,
             32));
-    }
-
-    private static string NormalizePhoneFallback(string phone)
-    {
-        if (string.IsNullOrWhiteSpace(phone))
-        {
-            return string.Empty;
-        }
-
-        var normalized = new string(phone.Where(c => char.IsDigit(c) || c == '+').ToArray());
-        if (!normalized.StartsWith("+", StringComparison.Ordinal) && normalized.Length >= 10)
-        {
-            normalized = "+2" + normalized;
-        }
-
-        return normalized;
     }
 
     private static string MaskPhone(string phone)

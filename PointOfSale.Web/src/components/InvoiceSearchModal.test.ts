@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canRewriteInvoice } from './InvoiceSearchModal'
+import { canRewriteInvoice } from './invoiceAuthoring'
 
 describe('InvoiceSearchModal sale rewrite policy', () => {
     it('allows draft sales invoices only', () => {

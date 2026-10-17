@@ -26,7 +26,9 @@ using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Interfaces.Payments;
 using PointOfSale.Core.Payments;
+using PointOfSale.Core.Policies;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data.Repositories;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Observability;
@@ -44,7 +46,7 @@ namespace PointOfSale.Infrastructure.Payments;
 /// 3. Domain events are staged into the outbox before database commit
 /// 4. Replayed payment outcomes are idempotent
 /// </summary>
-public class PaymentLifecycleService : IPaymentLifecycleService
+public partial class PaymentLifecycleService : IPaymentLifecycleService
 {
     private readonly ApplicationDbContext _db;
     private readonly IAccountingOutboxService _accountingOutbox;
@@ -322,6 +324,82 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             Actor = confirmedBy,
             IgnoreQueryFilters = true
         }, ct);
+    }
+
+    public Task<PaymentTransitionResult> RecordCarrierCodCollectionAsync(
+        Guid tenantId,
+        Guid orderId,
+        Guid shipmentId,
+        CancellationToken ct = default)
+        => Task.FromResult(PaymentTransitionResult.Failed("Immutable observed-money evidence locator is required.", "COD_CARRIER_EVIDENCE_REQUIRED"));
+
+    public Task<PaymentTransitionResult> RecordCarrierCodCollectionAsync(
+        Guid tenantId, Guid orderId, Guid shipmentId, Guid evidenceId, CancellationToken ct = default)
+    {
+        if (shipmentId == Guid.Empty || evidenceId == Guid.Empty || tenantId == Guid.Empty)
+            return Task.FromResult(PaymentTransitionResult.Failed(
+                "Carrier COD collection requires a shipment authority locator.", "COD_CARRIER_EVIDENCE_REQUIRED"));
+
+        return HandlePaymentResultAsync(new HandlePaymentResultRequest
+        {
+            TenantId = tenantId,
+            OrderId = orderId,
+            CarrierCollectionShipmentId = shipmentId,
+            CarrierCollectionEvidenceId = evidenceId,
+            Outcome = PaymentLifecycleOutcome.Succeeded,
+            Source = PaymentLifecycleSource.OfflineCollection,
+            IgnoreQueryFilters = true
+        }, ct);
+    }
+
+    private async Task<PaymentTransitionResult?> ValidateCodCollectionAdmissionAsync(
+        Order order, HandlePaymentResultRequest request, CancellationToken ct)
+    {
+        if (request.CarrierCollectionEvidenceId.HasValue && !request.CarrierCollectionShipmentId.HasValue)
+            return PaymentTransitionResult.Failed("Carrier evidence requires its exact shipment locator.", "COD_CARRIER_EVIDENCE_REQUIRED");
+        if (!request.CarrierCollectionShipmentId.HasValue && (order.IsDeleted || !IsCodOrder(order)))
+            return PaymentTransitionResult.Failed("Order is not a COD order", "COD_ORDER_REQUIRED");
+
+        if (!request.CarrierCollectionShipmentId.HasValue)
+        {
+            if (order.FulfillmentMode != FulfillmentMode.Manual ||
+                !string.IsNullOrWhiteSpace(order.FulfillmentCarrierCode))
+                return PaymentTransitionResult.Failed(
+                    "Operator COD collection requires Manual Fulfillment.", "COD_MANUAL_FULFILLMENT_REQUIRED");
+        }
+        else
+        {
+            if (!request.CarrierCollectionEvidenceId.HasValue || request.CarrierCollectionEvidenceId == Guid.Empty)
+                return PaymentTransitionResult.Failed(
+                    "Immutable observed-money evidence is required.", "COD_CARRIER_EVIDENCE_REQUIRED");
+            var (evidence, code) = await PointOfSale.Infrastructure.Shipping.CarrierCollectionMoneyAuthority.RevalidateAsync(
+                _db, order, request.CarrierCollectionEvidenceId, request.CarrierCollectionShipmentId, ct);
+            if (code != null)
+            {
+                if (evidence == null) return PaymentTransitionResult.Failed("Carrier money evidence was not found.", code);
+                using var moneyAuthority = PointOfSale.Infrastructure.Shipping.CarrierMoneyPersistenceAuthority.Begin();
+                await PointOfSale.Infrastructure.Shipping.CarrierCollectionMoneyAuthority.StageReviewAsync(_db, evidence, code, ct);
+                await _db.SaveChangesAsync(ct);
+                return PaymentTransitionResult.ManualReviewRequired(order.PaymentStatus, "Carrier collection evidence requires reconciliation.", code);
+            }
+            request.PaymentReference = evidence!.TrackingNumber;
+            request.Actor = evidence.CarrierCode;
+            request.ProcessedAtUtc = evidence.ProviderEventAtUtc;
+            request.Amount = evidence.ObservedAmount;
+            request.Currency = evidence.Currency;
+        }
+
+        if (!IsOrderSuccessfulTerminal(order) && order.FulfillmentStatus != FulfillmentStatus.Delivered)
+            return PaymentTransitionResult.Failed(
+                $"Cannot collect COD: order not delivered (current fulfillment status: {order.FulfillmentStatus})",
+                "COD_DELIVERY_REQUIRED");
+
+        // Neither manual request fields nor carrier event fields may choose a financial amount.
+        request.Amount = order.Total;
+        request.Currency = order.Currency;
+        request.ProviderAmount = null;
+        request.ProviderCurrency = null;
+        return null;
     }
 
     public async Task<PaymentTransitionResult> RecordOfflineSettlementAsync(
@@ -1490,6 +1568,8 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             CurrentStatus = order.PaymentStatus,
             PaymentMethodCode = order.PaymentMethodCode,
             CanMarkOfflineCollectionDelivered = isCod &&
+                order.FulfillmentMode == FulfillmentMode.Manual &&
+                string.IsNullOrWhiteSpace(order.FulfillmentCarrierCode) &&
                 order.PaymentStatus == PaymentStatus.Pending &&
                 order.FulfillmentStatus == FulfillmentStatus.Delivered,
             CanApproveReviewedPayment = isWallet && awaitingWalletVerification,
@@ -2254,6 +2334,9 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             var now = request.ProcessedAtUtc ?? DateTime.UtcNow;
             var correlationId = _correlationIdAccessor.GetCorrelationId();
 
+            if (request.CarrierCollectionShipmentId.HasValue)
+                await _db.Entry(order).ReloadAsync(ct); // locked SQL truth, including when a scoped context already tracked this order
+
             // T-09: authenticated Fawry transport evidence is not clearing or
             // settlement authority. Reject before any money mutation.
             if (IsFawryOrder(order) ||
@@ -2266,6 +2349,17 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 return PaymentTransitionResult.Failed(
                     FawryFinancialAuthorityPolicy.Message,
                     FawryFinancialAuthorityPolicy.Code);
+            }
+
+            if (request.Source == PaymentLifecycleSource.OfflineCollection)
+            {
+                var collectionAdmissionFailure = await ValidateCodCollectionAdmissionAsync(order, request, ct);
+                if (collectionAdmissionFailure != null)
+                {
+                    if (collectionAdmissionFailure.RequiresManualReview) await transaction.CommitAsync(ct);
+                    return collectionAdmissionFailure;
+                }
+                now = request.ProcessedAtUtc ?? now;
             }
 
             var supersededAttemptSuccessResult = await TryRejectSupersededTerminalAttemptAsync(
@@ -2610,6 +2704,8 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     ct);
 
                 await _db.SaveChangesAsync(ct);
+                if (request.CarrierCollectionEvidenceId.HasValue)
+                    await PostCarrierCollectionAtomicallyAsync(order, request, accountingStage!.Message, amount, now, ct);
             }
             finally
             {
@@ -2747,6 +2843,20 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 PaymentLifecycleOutcome.Expired => PaymentStatus.Expired,
                 _ => PaymentStatus.Failed
             };
+
+            if (request.Source == PaymentLifecycleSource.ReservationCleanup)
+                await _db.Entry(order).ReloadAsync(ct);
+
+            // Recheck under the lifecycle's order lock. A cleanup candidate may
+            // race a confirmation or a payment-method change; TTL cannot expire
+            // a live COD order or release its purchased inventory/coupon.
+            if (request.Source == PaymentLifecycleSource.ReservationCleanup &&
+                PointOfSale.Core.Policies.CodReservationExpiryPolicy.ProtectsLiveOrder(
+                    order.PaymentMethodCode, order.PaymentStatus, order.Status))
+            {
+                return PaymentTransitionResult.Succeeded(order.PaymentStatus,
+                    wasIdempotent: true, stateChanged: false);
+            }
 
             var supersededAttemptResult = await TryRejectSupersededTerminalAttemptAsync(
                 order,
@@ -4129,12 +4239,22 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             .Where(reservation => reservation.RemainingReservedQuantity > 0m)
             .ToList();
 
-        var expectedQuantity = order.Items
-            .Where(item => !item.IsDeleted && item.Quantity > 0)
+        IReadOnlyList<OrderItem> physicalItems;
+        try { physicalItems = OrderInventoryReservationSnapshot.PhysicalItems(order); }
+        catch (InvalidOperationException)
+        {
+            return ReservationPaymentValidationResult.Invalid("INVENTORY_RESERVATION_SNAPSHOT_INVALID",
+                "Original physical inventory requirements need reconciliation.");
+        }
+        var expectedQuantity = physicalItems
             .Sum(item => (decimal)item.Quantity);
 
         if (expectedQuantity <= 0m)
         {
+            // Only a complete original snapshot can grant this exemption; legacy
+            // orders still take the previous strict all-line requirement.
+            if (order.Items.Any(item => !item.IsDeleted && item.Quantity > 0) && openReservations.Count == 0)
+                return ReservationPaymentValidationResult.Valid();
             return ReservationPaymentValidationResult.Invalid(
                 "NO_STOCK_BACKED_ITEMS",
                 "Order has no stock-backed items to validate before accepting payment.");
@@ -4154,6 +4274,16 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 "RESERVATION_QUANTITY_SHORT",
                 $"Open reserved quantity {openQuantity} is less than order quantity {expectedQuantity}.");
         }
+
+        if (physicalItems.Any(item => openReservations.Where(r => r.OrderItemId == item.Id &&
+                    r.ProductId == item.ProductId && r.VariantId == item.VariantId &&
+                    (!item.WarehouseId.HasValue || r.WarehouseId == item.WarehouseId.Value))
+                .Sum(r => r.RemainingReservedQuantity) != item.Quantity) ||
+            openReservations.Any(r => !physicalItems.Any(item => item.Id == r.OrderItemId &&
+                item.ProductId == r.ProductId && item.VariantId == r.VariantId &&
+                (!item.WarehouseId.HasValue || item.WarehouseId == r.WarehouseId))))
+            return ReservationPaymentValidationResult.Invalid("RESERVATION_LINEAGE_MISMATCH",
+                "Open reservations do not exactly cover the original physical order lines.");
 
         var expiredReservation = openReservations.FirstOrDefault(reservation =>
             reservation.ExpiresAtUtc.HasValue &&
@@ -4951,6 +5081,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         try
         {
             context.EnsureValidForPostSettlementRefund();
+            await SettlementRefundLineage.ResolveDestinationAccountAsync(_db, order.TenantId, order.Id, context, ct);
         }
         catch (InvalidOperationException ex)
         {

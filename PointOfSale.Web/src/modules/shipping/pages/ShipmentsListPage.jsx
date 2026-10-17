@@ -30,7 +30,9 @@ const CARRIERS = [
     { code: 'bosta', label: 'Bosta' },
     { code: 'aramex', label: 'Aramex' },
     { code: 'mylerz', label: 'Mylerz' },
-    { code: 'dhl', label: 'DHL Express' }
+    { code: 'dhl', label: 'DHL Express' },
+    { code: 'fedex', label: 'FedEx' },
+    { code: 'manual', label: 'Manual' }
 ]
 
 export default function ShipmentsListPage() {
@@ -72,13 +74,13 @@ export default function ShipmentsListPage() {
 
     // Status options
     const statusOptions = useMemo(() => [
-        { value: '', label: 'All Statuses' },
+        { value: '', label: t('shipping.closure.allStatuses') },
         ...Object.keys(SHIPMENT_STATUS_CONFIG).map(status => ({
             value: status,
-            label: status,
+            label: t(`shipping.closure.statuses.${status}`),
             config: SHIPMENT_STATUS_CONFIG[status]
         }))
-    ], [])
+    ], [t])
 
     // Clear all filters
     const clearFilters = () => {
@@ -99,7 +101,7 @@ export default function ShipmentsListPage() {
         filters.dateFrom || filters.dateTo
 
     return (
-        <div className="max-w-7xl mx-auto">
+        <div className="max-w-7xl mx-auto min-w-0" dir={i18n.dir()}>
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -146,6 +148,7 @@ export default function ShipmentsListPage() {
 
                     {/* Quick Filters */}
                     <select
+                        aria-label={t('shipping.closure.status')}
                         value={filters.status}
                         onChange={(e) => setFilters(f => ({ ...f, status: e.target.value }))}
                         className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
@@ -158,12 +161,13 @@ export default function ShipmentsListPage() {
                     </select>
 
                     <select
+                        aria-label={t('shipping.closure.carrier')}
                         value={filters.carrierCode}
                         onChange={(e) => setFilters(f => ({ ...f, carrierCode: e.target.value }))}
                         className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
                     >
                         {CARRIERS.map(c => (
-                            <option key={c.code} value={c.code}>{c.label}</option>
+                            <option key={c.code} value={c.code}>{c.code ? c.label : t('shipping.closure.allCarriers')}</option>
                         ))}
                     </select>
 
@@ -178,7 +182,7 @@ export default function ShipmentsListPage() {
                         `}
                     >
                         <Filter size={16} />
-                        More Filters
+                        {t('shipping.closure.moreFilters')}
                         <ChevronDown
                             size={16}
                             className={`transition-transform ${showFilters ? 'rotate-180' : ''}`}
@@ -192,7 +196,7 @@ export default function ShipmentsListPage() {
                             className="flex items-center gap-1 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg"
                         >
                             <X size={14} />
-                            Clear All
+                            {t('shipping.closure.clear')}
                         </button>
                     )}
                 </div>
@@ -203,9 +207,10 @@ export default function ShipmentsListPage() {
                         {/* Payment Type */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Payment Type
+                                {t('shipping.closure.payment')}
                             </label>
                             <select
+                                aria-label={t('shipping.closure.payment')}
                                 value={filters.isCod === undefined ? '' : filters.isCod.toString()}
                                 onChange={(e) => {
                                     const val = e.target.value
@@ -216,16 +221,16 @@ export default function ShipmentsListPage() {
                                 }}
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
                             >
-                                <option value="">All</option>
-                                <option value="true">COD Only</option>
-                                <option value="false">Prepaid Only</option>
+                                <option value="">{t('shipping.closure.all')}</option>
+                                <option value="true">{t('shipping.closure.codOnly')}</option>
+                                <option value="false">{t('shipping.closure.prepaidOnly')}</option>
                             </select>
                         </div>
 
                         {/* Date From */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                From Date
+                                {t('shipping.closure.fromDate')}
                             </label>
                             <div className="relative">
                                 <Calendar
@@ -234,6 +239,7 @@ export default function ShipmentsListPage() {
                                 />
                                 <input
                                     type="date"
+                                    aria-label={t('shipping.closure.fromDate')}
                                     value={filters.dateFrom}
                                     onChange={(e) => setFilters(f => ({ ...f, dateFrom: e.target.value }))}
                                     className={`w-full py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'}`}
@@ -244,7 +250,7 @@ export default function ShipmentsListPage() {
                         {/* Date To */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                To Date
+                                {t('shipping.closure.toDate')}
                             </label>
                             <div className="relative">
                                 <Calendar
@@ -253,6 +259,7 @@ export default function ShipmentsListPage() {
                                 />
                                 <input
                                     type="date"
+                                    aria-label={t('shipping.closure.toDate')}
                                     value={filters.dateTo}
                                     onChange={(e) => setFilters(f => ({ ...f, dateTo: e.target.value }))}
                                     className={`w-full py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'}`}
@@ -271,23 +278,23 @@ export default function ShipmentsListPage() {
                         onClick={refetch}
                         className="mt-2 text-sm text-red-700 hover:underline"
                     >
-                        Try again
+                        {t('common.retry')}
                     </button>
                 </div>
             )}
 
             {/* Shipments Table */}
-            <ShipmentTable
+            {!error && <ShipmentTable
                 shipments={shipments}
                 pagination={pagination}
                 loading={loading}
                 onPageChange={goToPage}
-            />
+            />}
 
             {/* Summary */}
             {!loading && pagination.totalCount > 0 && (
                 <div className="mt-4 text-sm text-gray-500 text-center">
-                    Total: {pagination.totalCount} shipment{pagination.totalCount !== 1 ? 's' : ''}
+                    {t('shipping.closure.total', { count: pagination.totalCount })}
                 </div>
             )}
         </div>

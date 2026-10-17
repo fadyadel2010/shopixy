@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Microsoft.Extensions.DependencyInjection;
 using System.Globalization;
 using PointOfSale.API.Services.ReadModels;
@@ -160,7 +161,7 @@ public class PromotionsController : ControllerBase
 
         // Check for duplicate name
         var existingName = await _dbContext.Promotions
-            .AnyAsync(p => p.TenantId == tenantId && !p.IsDeleted && p.Name.ToLower() == dto.Name.ToLower());
+            .AnyAsync(p => p.TenantId == tenantId && !p.IsDeleted && p.Name.ToLower() == dto.Name.Trim().ToLower());
 
         if (existingName)
         {
@@ -212,7 +213,11 @@ public class PromotionsController : ControllerBase
         // The outbox stores events in the same transaction as entity changes
         await PublishPromotionCreatedEventAsync(promotion);
         
-        await _dbContext.SaveChangesAsync();
+        try { await _dbContext.SaveChangesAsync(); }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return Conflict(new { message = "A promotion with this name already exists. Refresh before retrying." });
+        }
 
         _logger.LogInformation(
             "[Promotions] Created promotion | Id: {Id} | Name: {Name} | Scope: {Scope} | TenantId: {TenantId}",
@@ -265,7 +270,7 @@ public class PromotionsController : ControllerBase
 
         // Check for duplicate name (excluding current)
         var existingName = await _dbContext.Promotions
-            .AnyAsync(p => p.TenantId == tenantId && !p.IsDeleted && p.Id != id && p.Name.ToLower() == dto.Name.ToLower(), cancellationToken);
+            .AnyAsync(p => p.TenantId == tenantId && !p.IsDeleted && p.Id != id && p.Name.ToLower() == dto.Name.Trim().ToLower(), cancellationToken);
 
         if (existingName)
         {
@@ -659,6 +664,16 @@ public class PromotionsController : ControllerBase
         CreatePromotionDto dto,
         CancellationToken cancellationToken)
     {
+        if (!Enum.IsDefined(dto.Scope))
+        {
+            return "Promotion scope is not supported.";
+        }
+
+        if (dto.Priority < 0)
+        {
+            return "Priority cannot be negative.";
+        }
+
         if (dto.AppliesToId == Guid.Empty)
         {
             return "Promotion rule target is invalid.";

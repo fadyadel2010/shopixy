@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import i18n from '../i18n/config'
 import { useAuthStore } from '../store/authStore'
@@ -91,26 +91,19 @@ export function SettingsProvider({ children }) {
     const [loading, setLoading] = useState(true)
     const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
     const hasHydrated = useAuthStore((state) => state.hasHydrated)
+    const tenantId = useAuthStore((state) => state.user?.tenantId)
+    const scope = isAuthenticated ? tenantId || 'authenticated' : null
+    const scopeRef = useRef(scope)
+    scopeRef.current = scope
+    const requestRef = useRef(0)
 
-    useEffect(() => {
-        if (!hasHydrated) {
-            return
-        }
-
-        if (isAuthenticated) {
-            fetchSettings()
-            return
-        }
-
-        setSettings(createDefaultSettings())
-        setLoading(false)
-    }, [hasHydrated, isAuthenticated])
-
-    const fetchSettings = async () => {
+    const fetchSettings = useCallback(async () => {
+        const requestId = ++requestRef.current
+        const requestedScope = scope
         try {
-            if (!isAuthenticated) {
+            if (!isAuthenticated || requestedScope !== scopeRef.current) {
                 setLoading(false)
-                return
+                return false
             }
 
             const response = await api.get('/settings', {
@@ -119,21 +112,38 @@ export function SettingsProvider({ children }) {
                     Pragma: 'no-cache',
                 },
             })
+            if (requestId !== requestRef.current || requestedScope !== scopeRef.current) return false
             if (response.data) {
                 setSettings((prev) => normalizeSettingsPayload(response.data, prev))
+                return true
             }
+            return false
         } catch (error) {
             // Permission-gated reads fail closed with 403; keep safe defaults
             // silently instead of spamming the console for restricted roles.
-            if (error?.response?.status !== 403) {
-                console.error('Error loading settings:', error)
+            if (requestId === requestRef.current && requestedScope === scopeRef.current && error?.response?.status !== 403) {
+                console.error('Error loading settings:', { status: error?.response?.status })
             }
+            return false
         } finally {
+            if (requestId === requestRef.current && requestedScope === scopeRef.current) setLoading(false)
+        }
+    }, [isAuthenticated, scope])
+
+    useEffect(() => {
+        if (!hasHydrated) return
+        setSettings(createDefaultSettings())
+        if (isAuthenticated) {
+            setLoading(true)
+            void fetchSettings()
+        } else {
             setLoading(false)
         }
-    }
+        return () => { requestRef.current += 1 }
+    }, [hasHydrated, isAuthenticated, fetchSettings])
 
     const updateSettings = async (newSettings) => {
+        const requestedScope = scope
         const previousSettings = settings
         const previousPrintFormat = typeof localStorage !== 'undefined'
             ? localStorage.getItem('printFormat')
@@ -156,9 +166,10 @@ export function SettingsProvider({ children }) {
                     Pragma: 'no-cache',
                 },
             })
-            await fetchSettings()
-            return true
+            if (requestedScope !== scopeRef.current) return false
+            return await fetchSettings()
         } catch (error) {
+            if (requestedScope !== scopeRef.current) return false
             setSettings(previousSettings)
 
             if (typeof localStorage !== 'undefined') {
@@ -169,7 +180,7 @@ export function SettingsProvider({ children }) {
                 }
             }
 
-            console.error('Error updating settings:', error)
+            console.error('Error updating settings:', { status: error?.response?.status })
             return false
         }
     }

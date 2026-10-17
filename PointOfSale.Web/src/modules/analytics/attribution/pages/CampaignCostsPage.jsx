@@ -15,7 +15,7 @@
  * - No calculations in frontend
  */
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import {
@@ -27,6 +27,7 @@ import { useConfirmDialog } from '../../../../common/confirm/ConfirmDialogProvid
 import {
     useCampaignCosts,
     useCreateCampaignCost,
+    useUpdateCampaignCost,
     useDeleteCampaignCost
 } from '../hooks/useCampaignCost'
 
@@ -45,9 +46,14 @@ export default function CampaignCostsPage() {
     const [period, setPeriod] = useState('last_30_days')
     const [showModal, setShowModal] = useState(false)
     const [editingCost, setEditingCost] = useState(null)
+    const [mutationMessage, setMutationMessage] = useState(null)
+    const busy = useRef(false)
+    const lifetime = useRef(0)
+    useEffect(() => () => { lifetime.current++ }, [])
 
     const { data, loading, error, refetch } = useCampaignCosts(period)
     const { createCost, loading: creating } = useCreateCampaignCost()
+    const { updateCost, loading: updating } = useUpdateCampaignCost()
     const { deleteCost, loading: deleting } = useDeleteCampaignCost()
 
     const handleCreate = () => {
@@ -61,6 +67,10 @@ export default function CampaignCostsPage() {
     }
 
     const handleDelete = async (id) => {
+        if (busy.current) return
+        busy.current = true
+        const scope = lifetime.current
+        try {
         const confirmed = await confirm({
             confirmLabel: t('common.delete', 'Delete'),
             description: t('campaignCost.deleteConfirm', 'Are you sure you want to delete this campaign cost?'),
@@ -68,25 +78,36 @@ export default function CampaignCostsPage() {
             variant: 'danger',
         })
 
-        if (!confirmed) {
+        if (!confirmed || scope !== lifetime.current) {
             return
         }
 
-        try {
             await deleteCost(id)
-            refetch()
+            if (scope !== lifetime.current) return
+            const readBack = await refetch()
+            if (scope === lifetime.current) setMutationMessage(readBack ? t('common.deletedSuccessfully', 'Deleted and verified') : t('campaignCost.savedReadFailed', 'Saved, but the list could not be reloaded. Refresh to verify.'))
         } catch (err) {
-            console.error('Delete failed:', err)
+            if (scope === lifetime.current) setMutationMessage(err.message)
+        } finally {
+            busy.current = false
         }
     }
 
     const handleModalSubmit = async (formData) => {
+        if (busy.current) return
+        busy.current = true
+        const scope = lifetime.current
         try {
-            await createCost(formData)
+            if (editingCost) await updateCost(editingCost.campaignCostId, formData, editingCost.updatedAtUtc)
+            else await createCost(formData)
+            if (scope !== lifetime.current) return
             setShowModal(false)
-            refetch()
+            const readBack = await refetch()
+            if (scope === lifetime.current) setMutationMessage(readBack ? t('campaignCost.savedVerified', 'Campaign cost saved and verified') : t('campaignCost.savedReadFailed', 'Saved, but the list could not be reloaded. Refresh to verify.'))
         } catch (err) {
-            console.error('Save failed:', err)
+            if (scope === lifetime.current) setMutationMessage(err.message)
+        } finally {
+            busy.current = false
         }
     }
 
@@ -106,7 +127,7 @@ export default function CampaignCostsPage() {
                     <ArrowLeft size={16} />
                     {t('campaignCost.backToAttribution', 'Back to Attribution')}
                 </Link>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap gap-4 items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">
                             {t('campaignCost.title', 'Campaign Costs')}
@@ -160,7 +181,7 @@ export default function CampaignCostsPage() {
                         </span>
                     </div>
                     <div className="text-3xl font-bold">
-                        {formatCurrency(data.totalCost)}
+                        {data.totalCost == null ? t('campaignCost.incompatibleCurrency', 'Unavailable: incompatible currency') : formatCurrency(data.totalCost)}
                     </div>
                     <div className="mt-1 text-indigo-100 text-sm">
                         {data.totalCount} {t('campaignCost.entries', 'entries')}
@@ -169,6 +190,7 @@ export default function CampaignCostsPage() {
             )}
 
             {/* Error State */}
+            {mutationMessage && <div role="status" className="mb-4 rounded border p-4">{mutationMessage}</div>}
             {error && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
                     <div className="flex items-center gap-2 text-red-700">
@@ -197,7 +219,7 @@ export default function CampaignCostsPage() {
                                         {t('campaignCost.campaign', 'Campaign')}
                                     </th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                                        {t('campaignCost.sourceMediam', 'Source / Medium')}
+                                        {t('campaignCost.sourceMedium', 'Source / Medium')}
                                     </th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                         {t('campaignCost.period', 'Period')}
@@ -247,7 +269,7 @@ export default function CampaignCostsPage() {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                                                {formatCurrency(cost.costAmount)}
+                                    {Number(cost.costAmount).toFixed(2)} {cost.currency}
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">
                                                 {cost.notes || '-'}
@@ -286,7 +308,7 @@ export default function CampaignCostsPage() {
                     cost={editingCost}
                     onClose={() => setShowModal(false)}
                     onSubmit={handleModalSubmit}
-                    loading={creating}
+                    loading={creating || updating}
                 />
             )}
         </div>
@@ -300,8 +322,8 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
         medium: cost?.medium || '',
         campaign: cost?.campaign || '',
         periodStartUtc: cost?.periodStartUtc?.split('T')[0] || new Date().toISOString().split('T')[0],
-        periodEndUtc: cost?.periodEndUtc?.split('T')[0] || new Date().toISOString().split('T')[0],
-        costAmount: cost?.costAmount || '',
+        periodEndUtc: cost?.periodEndUtc?.split('T')[0] || new Date(Date.now() + 86400000).toISOString().split('T')[0],
+        costAmount: cost?.costAmount ?? '',
         notes: cost?.notes || ''
     })
     const [errors, setErrors] = useState({})
@@ -311,8 +333,8 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
         if (!formData.source.trim()) newErrors.source = t('campaignCost.errors.sourceRequired', 'Source is required')
         if (!formData.medium.trim()) newErrors.medium = t('campaignCost.errors.mediumRequired', 'Medium is required')
         if (!formData.campaign.trim()) newErrors.campaign = t('campaignCost.errors.campaignRequired', 'Campaign is required')
-        if (!formData.costAmount || formData.costAmount < 0) newErrors.costAmount = t('campaignCost.errors.costRequired', 'Valid cost amount is required')
-        if (new Date(formData.periodEndUtc) <= new Date(formData.periodStartUtc)) {
+        if (formData.costAmount === '' || !Number.isFinite(Number(formData.costAmount)) || Number(formData.costAmount) < 0) newErrors.costAmount = t('campaignCost.errors.costRequired', 'Valid cost amount is required')
+        if (!formData.periodStartUtc || !formData.periodEndUtc || new Date(formData.periodEndUtc) <= new Date(formData.periodStartUtc)) {
             newErrors.periodEndUtc = t('campaignCost.errors.invalidDates', 'End date must be after start date')
         }
         setErrors(newErrors)
@@ -321,18 +343,18 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
 
     const handleSubmit = (e) => {
         e.preventDefault()
-        if (!validate()) return
+        if (loading || !validate()) return
         onSubmit({
             ...formData,
-            periodStartUtc: new Date(formData.periodStartUtc).toISOString(),
-            periodEndUtc: new Date(formData.periodEndUtc).toISOString(),
+            periodStartUtc: cost?.periodStartUtc?.startsWith(formData.periodStartUtc) ? cost.periodStartUtc : new Date(formData.periodStartUtc).toISOString(),
+            periodEndUtc: cost?.periodEndUtc?.startsWith(formData.periodEndUtc) ? cost.periodEndUtc : new Date(formData.periodEndUtc).toISOString(),
             costAmount: parseFloat(formData.costAmount)
         })
     }
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4">
+            <div role="dialog" aria-modal="true" aria-label={t('campaignCost.title', 'Campaign Costs')} className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between p-4 border-b">
                     <h2 className="text-lg font-semibold text-gray-900">
                         {cost
@@ -340,12 +362,13 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                             : t('campaignCost.addCost', 'Add Campaign Cost')
                         }
                     </h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                    <button disabled={loading} aria-label={t('common.close', 'Close')} onClick={onClose} className="text-gray-400 hover:text-gray-600">
                         <X size={20} />
                     </button>
                 </div>
 
                 <form onSubmit={handleSubmit} className="p-4 space-y-4">
+                  <fieldset disabled={loading} className="space-y-4 min-w-0">
                     {/* UTM Fields */}
                     <div className="grid grid-cols-3 gap-3">
                         <div>
@@ -353,6 +376,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                                 {t('campaignCost.source', 'Source')} *
                             </label>
                             <input
+                                aria-label={t('campaignCost.source', 'Source')} maxLength={100}
                                 type="text"
                                 value={formData.source}
                                 onChange={(e) => setFormData({ ...formData, source: e.target.value })}
@@ -366,6 +390,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                                 {t('campaignCost.medium', 'Medium')} *
                             </label>
                             <input
+                                aria-label={t('campaignCost.medium', 'Medium')} maxLength={100}
                                 type="text"
                                 value={formData.medium}
                                 onChange={(e) => setFormData({ ...formData, medium: e.target.value })}
@@ -379,6 +404,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                                 {t('campaignCost.campaign', 'Campaign')} *
                             </label>
                             <input
+                                aria-label={t('campaignCost.campaign', 'Campaign')} maxLength={200}
                                 type="text"
                                 value={formData.campaign}
                                 onChange={(e) => setFormData({ ...formData, campaign: e.target.value })}
@@ -396,6 +422,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                                 {t('campaignCost.periodStart', 'Period Start')} *
                             </label>
                             <input
+                                aria-label={t('campaignCost.periodStart', 'Period Start')}
                                 type="date"
                                 value={formData.periodStartUtc}
                                 onChange={(e) => setFormData({ ...formData, periodStartUtc: e.target.value })}
@@ -407,6 +434,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                                 {t('campaignCost.periodEnd', 'Period End')} *
                             </label>
                             <input
+                                aria-label={t('campaignCost.periodEnd', 'Period End')}
                                 type="date"
                                 value={formData.periodEndUtc}
                                 onChange={(e) => setFormData({ ...formData, periodEndUtc: e.target.value })}
@@ -422,8 +450,8 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                             {t('campaignCost.costAmount', 'Cost Amount')} *
                         </label>
                         <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
                             <input
+                                aria-label={t('campaignCost.costAmount', 'Cost Amount')}
                                 type="number"
                                 step="0.01"
                                 min="0"
@@ -442,6 +470,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                             {t('campaignCost.notes', 'Notes')}
                         </label>
                         <textarea
+                            aria-label={t('campaignCost.notes', 'Notes')} maxLength={500}
                             value={formData.notes}
                             onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                             placeholder={t('campaignCost.notesPlaceholder', 'Optional notes about this campaign cost...')}
@@ -467,6 +496,7 @@ function CampaignCostModal({ cost, onClose, onSubmit, loading }) {
                             {loading ? t('common.saving', 'Saving...') : t('common.save', 'Save')}
                         </button>
                     </div>
+                  </fieldset>
                 </form>
             </div>
         </div>

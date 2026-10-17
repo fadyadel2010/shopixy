@@ -1,18 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from '../../../../services/api'
-
-export const HOMEPAGE_MEDIA_PREFIX = '/api/storefront/homepage-media/'
-export function isValidImageUrl(value) {
-    if (!value) return true
-    if (/\s|\\/.test(value) || value.startsWith('//')) return false
-    if (value.startsWith('/')) return true
-    if (!value.includes(':')) return true // Preserve canonical schema's existing relative image paths.
-    try {
-        const url = new URL(value)
-        return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
-    } catch { return false }
-}
+import { HOMEPAGE_MEDIA_PREFIX, isValidImageUrl } from './homepageImageUrl'
 
 export function HomepageImageField({ label, value = '', onChange }) {
     const { t } = useTranslation()

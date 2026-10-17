@@ -22,7 +22,7 @@ export default function AffiliateVerifyEmail() {
                 setStatus('success')
                 setMessage(t('identity.verify.success'))
             })
-            .catch((error) => {
+            .catch(() => {
                 setStatus('error')
                 setMessage(t('identity.verify.failed'))
             })

@@ -96,6 +96,32 @@ public sealed class PosPermissionAuthorizationTests
     }
 
     [Fact]
+    public async Task TreasuryAndLedger_EnforceCanonicalRoleMatrixOnServer()
+    {
+        foreach (var role in new[] { UserRole.Owner, UserRole.Admin, UserRole.Manager, UserRole.Cashier, UserRole.Warehouse })
+        {
+            var canUseTreasury = role is UserRole.Owner or UserRole.Admin or UserRole.Manager;
+            var canReadLedger = role is UserRole.Owner or UserRole.Admin;
+            var principal = PosPrincipal(role);
+            foreach (var action in new[] { "GetTreasuryAccounts", "GetLedgerBalance", "GetLedgerMovements" })
+            {
+                Assert.True(PosEndpointPermissionCatalog.TryResolve("Treasury", action, ["GET"], out var permission));
+                Assert.Equal(PosPermissions.FinanceView, permission);
+                Assert.Equal(canUseTreasury, await AuthorizeAsync(principal, permission));
+            }
+            Assert.True(PosEndpointPermissionCatalog.TryResolve("Treasury", "LedgerTransfer", ["POST"], out var transfer));
+            Assert.Equal(PosPermissions.FinanceOperate, transfer);
+            Assert.Equal(canUseTreasury, await AuthorizeAsync(principal, transfer));
+            Assert.True(PosEndpointPermissionCatalog.TryResolve("FinancialReports", "GetGeneralLedger", ["GET"], out var ledger));
+            Assert.Equal(PosPermissions.ReportsFinancialView, ledger);
+            Assert.Equal(canReadLedger, await AuthorizeAsync(principal, ledger));
+            Assert.True(PosEndpointPermissionCatalog.TryResolve("PaymentLifecycle", "RecordCodSettlement", ["POST"], out var settlement));
+            Assert.Equal(PosPermissions.StorefrontPaymentsManage, settlement);
+            Assert.Equal(canReadLedger, await AuthorizeAsync(principal, settlement));
+        }
+    }
+
+    [Fact]
     public async Task Handler_IgnoresForgedPermissionClaims()
     {
         var principal = PosPrincipal(
@@ -104,6 +130,35 @@ public sealed class PosPermissionAuthorizationTests
             new Claim("permissions", PosPermissions.UsersOwnershipTransfer));
 
         Assert.False(await AuthorizeAsync(principal, PosPermissions.FinanceAdmin));
+    }
+
+    [Theory]
+    [InlineData(UserRole.Owner, true)]
+    [InlineData(UserRole.Admin, true)]
+    [InlineData(UserRole.Manager, false)]
+    [InlineData(UserRole.Cashier, false)]
+    [InlineData(UserRole.Warehouse, false)]
+    public async Task CodOperatorCollection_EnforcesCanonicalServerPermission(UserRole role, bool expected)
+    {
+        Assert.True(PosEndpointPermissionCatalog.TryResolve("PaymentLifecycle", "MarkCodDelivered", ["POST"], out var permission));
+        Assert.Equal(PosPermissions.StorefrontPaymentsManage, permission);
+        Assert.Equal(expected, await AuthorizeAsync(PosPrincipal(role), permission));
+    }
+
+    [Theory]
+    [InlineData(UserRole.Owner, true)]
+    [InlineData(UserRole.Admin, true)]
+    [InlineData(UserRole.Manager, false)]
+    [InlineData(UserRole.Cashier, false)]
+    [InlineData(UserRole.Warehouse, false)]
+    public async Task ManualCodSettlement_EnforcesPaymentMutationPermissionForReadAndWrite(UserRole role, bool expected)
+    {
+        foreach (var (action, verb) in new[] { ("RecordManualCodSettlement", "POST"), ("GetManualSettlementEligibility", "GET"), ("GetManualCodSettlement", "GET") })
+        {
+            Assert.True(PosEndpointPermissionCatalog.TryResolve("PaymentLifecycle", action, [verb], out var permission));
+            Assert.Equal(PosPermissions.StorefrontPaymentsManage, permission);
+            Assert.Equal(expected, await AuthorizeAsync(PosPrincipal(role), permission));
+        }
     }
 
     [Fact]

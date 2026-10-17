@@ -90,6 +90,7 @@ public class StorefrontAuthProviderSettingsConfiguration : IEntityTypeConfigurat
     public void Configure(EntityTypeBuilder<StorefrontAuthProviderSettings> builder)
     {
         builder.ToTable("StorefrontAuthProviderSettings");
+        builder.Property(e => e.UpdatedAtUtc).IsConcurrencyToken();
 
         builder.HasKey(e => e.Id);
 

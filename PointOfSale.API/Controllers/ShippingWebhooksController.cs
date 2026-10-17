@@ -114,7 +114,7 @@ public class ShippingWebhooksController : ControllerBase
     /// Mylerz-specific webhook endpoint.
     /// </summary>
     /// <remarks>
-    /// Mylerz sends webhooks with HMAC-SHA256 signature.
+    /// Reserved route; Mylerz webhook admission is blocked pending an applicable official contract.
     /// </remarks>
     [HttpPost("mylerz")]
     [ServiceFilter(typeof(WebhookContentTypeValidationFilter))]
@@ -128,10 +128,11 @@ public class ShippingWebhooksController : ControllerBase
     }
     
     /// <summary>
-    /// DHL-specific webhook endpoint.
+    /// Legacy DHL compatibility endpoint. Current MyDHL integration advertises no
+    /// certified webhook contract, so carrier trust authority rejects mutation.
     /// </summary>
     /// <remarks>
-    /// DHL sends webhooks with signature in header.
+    /// No DHL webhook payload is admitted without a separately certified contract.
     /// </remarks>
     [HttpPost("dhl")]
     [ServiceFilter(typeof(WebhookContentTypeValidationFilter))]

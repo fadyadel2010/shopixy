@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
     fetchCarrierAccounts,
     fetchShippingAdministrationAudit,
@@ -13,8 +13,10 @@ export function useShippingAdministrationApi() {
     const [audit, setAudit] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
+    const requestIdRef = useRef(0)
 
     const refresh = useCallback(async () => {
+        const requestId = ++requestIdRef.current
         setLoading(true)
         setError('')
 
@@ -26,19 +28,28 @@ export function useShippingAdministrationApi() {
                 fetchShippingAdministrationAudit(),
             ])
 
+            if (requestId !== requestIdRef.current) return
             setSupportedCarriers(supportedCarrierData)
             setCarrierAccounts(carrierAccountData)
             setWarehouses(warehouseData)
             setAudit(auditData)
         } catch (err) {
+            if (requestId !== requestIdRef.current) return
+            // A failed refresh must not leave a stale positive readiness snapshot
+            // available to the management forms.
+            setSupportedCarriers([])
+            setCarrierAccounts([])
+            setWarehouses([])
+            setAudit([])
             setError(err.message || 'Failed to load shipping administration.')
         } finally {
-            setLoading(false)
+            if (requestId === requestIdRef.current) setLoading(false)
         }
     }, [])
 
     useEffect(() => {
         refresh()
+        return () => { requestIdRef.current += 1 }
     }, [refresh])
 
     return {

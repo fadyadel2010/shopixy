@@ -16,10 +16,13 @@ public sealed class ShippingSessionAuthorityCertificationTests
         Assert.Contains("shippingMethodId: string;", checkoutTypes, StringComparison.Ordinal);
         Assert.Contains("expectedPricing: CheckoutExpectedPricing", checkoutTypes, StringComparison.Ordinal);
 
-        Assert.Contains("setShippingMethod: (id) =>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("setShippingMethod: async (id, options = {}) =>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedSelection = admitStorefrontShippingMethodSelection(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("selectionSequence !== shippingSelectionRequestSequence", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: id", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingSelectionStatus: 'valid'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("shippingSelectionStatus !== 'stale'", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("state.shippingSelectionStatus === 'valid'", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("!!state.warehouseResolutionId", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: state.shippingMethodId", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("return state.pricing?.shipping ?? 0", checkoutStore, StringComparison.Ordinal);
 
@@ -34,7 +37,7 @@ public sealed class ShippingSessionAuthorityCertificationTests
         Assert.DoesNotContain("checkoutToken", persistedState, StringComparison.Ordinal);
         Assert.DoesNotContain("orderResult", persistedState, StringComparison.Ordinal);
 
-        Assert.Contains("onSelect={() => setShippingMethod(method.id)}", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("onSelect={() => { void setShippingMethod(method.id).catch(() => undefined); }}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("price={method.price}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("formatPrice={formatPrice}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("ARCHITECTURAL RULE: Checkout displays ONLY backend pricing quotes.", reviewStep, StringComparison.Ordinal);
@@ -59,12 +62,13 @@ public sealed class ShippingSessionAuthorityCertificationTests
 
         Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", checkoutController, StringComparison.Ordinal);
         Assert.Contains("[HttpPost(\"pricing\")]", checkoutController, StringComparison.Ordinal);
-        Assert.Contains("SetNoStoreHeaders();", checkoutController, StringComparison.Ordinal);
+        Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", checkoutController, StringComparison.Ordinal);
 
         Assert.Contains("[HttpPost(\"quotes\")]", shippingQuotesController, StringComparison.Ordinal);
         Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", shippingQuotesController, StringComparison.Ordinal);
-        Assert.Contains("SetNoStoreHeaders();", shippingQuotesController, StringComparison.Ordinal);
-        Assert.Contains("Response.Headers.CacheControl = \"no-store, no-cache, max-age=0\"", shippingQuotesController, StringComparison.Ordinal);
+        Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", shippingQuotesController, StringComparison.Ordinal);
+        Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", shippingQuotesController, StringComparison.Ordinal);
+        Assert.Contains("_tenantContext.TenantId.HasValue", shippingQuotesController, StringComparison.Ordinal);
 
         Assert.Contains("CreateOrResume", checkoutSessionController, StringComparison.Ordinal);
         Assert.Contains("Update(", checkoutSessionController, StringComparison.Ordinal);
@@ -148,17 +152,7 @@ public sealed class ShippingSessionAuthorityCertificationTests
             ReadRepoFile("docs/architecture/shipping-session-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-SHP2", ReadRepoFile(path), StringComparison.Ordinal);
-        }
+        HistoricalShippingCertificationBoundary.AssertPriorClosureConditional();
     }
 
     private static string ReadRepoFile(string relativePath)

@@ -1,3 +1,5 @@
+import { containsAsciiControl } from '../../../security/textCharacterPolicy'
+
 const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const CMS_PAGE_STATUSES = new Set(['Draft', 'Published', 'UnpublishedChanges'])
@@ -49,7 +51,7 @@ function normalizeOptionalSeoString(value, maxLength) {
         return null
     }
 
-    if (trimmed.length > maxLength || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+    if (trimmed.length > maxLength || containsAsciiControl(trimmed)) {
         return undefined
     }
 
@@ -70,7 +72,7 @@ function normalizeOptionalSeoUrl(value) {
         return null
     }
 
-    if (trimmed.length > 1000 || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+    if (trimmed.length > 1000 || containsAsciiControl(trimmed)) {
         return undefined
     }
 

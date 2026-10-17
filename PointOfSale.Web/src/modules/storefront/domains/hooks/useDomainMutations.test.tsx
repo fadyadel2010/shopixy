@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 
 const mockCreateDomain = vi.hoisted(() => vi.fn())
 const mockUpdateDomain = vi.hoisted(() => vi.fn())
@@ -40,7 +40,7 @@ vi.mock('../services/domainManagementService.js', () => ({
 }))
 
 vi.mock('../../../../services/api', () => ({
-    getSafeApiErrorMessage: (err) => err?.response?.data?.message || err?.message || 'Request failed',
+    getSafeApiErrorMessage: (err: { response?: { data?: { message?: string } }; message?: string }) => err?.response?.data?.message || err?.message || 'Request failed',
 }))
 
 import { useDomainMutations } from './useDomainMutations.js'
@@ -48,6 +48,19 @@ import { useDomainMutations } from './useDomainMutations.js'
 describe('useDomainMutations (DOMAIN-3.1-C)', () => {
     afterEach(() => {
         vi.clearAllMocks()
+    })
+
+    it('rejects overlapping commands synchronously without making a duplicate request', async () => {
+        let accept!: (value: unknown) => void
+        mockCreateDomain.mockImplementation(() => new Promise(resolve => { accept = resolve }))
+        const { result } = renderHook(() => useDomainMutations())
+        let first!: Promise<unknown>
+        await act(async () => {
+            first = result.current.createDomain({ hostName: 'example.test' })
+            await expect(result.current.createDomain({ hostName: 'example.test' })).rejects.toThrow(/in progress/)
+        })
+        expect(mockCreateDomain).toHaveBeenCalledTimes(1)
+        await act(async () => { accept({ domainId: 'owned' }); await first })
     })
 
     describe('createDomain', () => {

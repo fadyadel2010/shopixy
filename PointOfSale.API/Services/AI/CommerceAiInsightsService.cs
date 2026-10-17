@@ -56,7 +56,7 @@ public class CommerceAiInsightsService : ICommerceAiInsightsService
         try
         {
             var db = _redisFactory.GetDatabase();
-            if (db == null) return insights;
+            if (db == null) throw new InvalidOperationException("Activity counters unavailable");
 
             var chatKey = GetKey(tenantId, CommerceAiEventType.ChatOpened);
             var draftKey = GetKey(tenantId, CommerceAiEventType.OrderDraftCreated);
@@ -80,6 +80,7 @@ public class CommerceAiInsightsService : ICommerceAiInsightsService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve Commerce AI insights | TenantId: {TenantId}", tenantId);
+            throw;
         }
 
         return insights;

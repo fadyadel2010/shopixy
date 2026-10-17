@@ -34,6 +34,8 @@ public sealed class DhlGeographicCompatibilityTests
         Assert.Contains("RecipientCountry = geographicResolution.CountryIso2", source, StringComparison.Ordinal);
         Assert.Contains("ResolvedProviderGeography = geographicResolution.ProviderItems", source, StringComparison.Ordinal);
         Assert.Contains("ApplyLegacyProviderGeographyFields(createRequest, geographicResolution.ProviderItems)", source, StringComparison.Ordinal);
+        var dhlBuilders = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/CarrierShipmentService.ParcelEvidence.cs");
+        Assert.Equal(2, dhlBuilders.Split("OriginZipCode = origin.PostalCode", StringSplitOptions.None).Length - 1);
     }
 
     [Fact]

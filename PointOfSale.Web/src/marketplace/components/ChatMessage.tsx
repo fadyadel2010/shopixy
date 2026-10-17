@@ -1,10 +1,9 @@
-import React from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ChatMessage as ChatMessageType } from '../types';
-import { useFormatting } from '../../hooks/useFormatting';
+import type { PresentationFormatting } from '../presentationFormatting';
 import { buildAttachmentDownloadPath } from '../attachmentAuthority';
 
-interface ChatMessageProps {
+interface ChatMessageProps extends Pick<PresentationFormatting, 'dir' | 'formatTime'> {
   message: ChatMessageType;
   isOwnMessage: boolean;
 }
@@ -17,9 +16,8 @@ interface ChatMessageProps {
  * - Timestamps
  * - System messages
  */
-export function ChatMessage({ message, isOwnMessage }: ChatMessageProps) {
+export function ChatMessage({ message, isOwnMessage, dir, formatTime }: ChatMessageProps) {
   const { t } = useTranslation();
-  const { dir, formatTime } = useFormatting();
   const isSystem = message.messageType === 'System';
   const attachmentHref = message.attachmentId
     ? buildAttachmentDownloadPath(message.attachmentId)

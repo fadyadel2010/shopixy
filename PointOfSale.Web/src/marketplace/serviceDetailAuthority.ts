@@ -97,7 +97,7 @@ const parseStringArray = (rawValue: unknown, maxItems: number) => {
 }
 
 const parseServiceImages = (rawImages: unknown) => parseStringArray(rawImages, 20)
-  .map((image) => image.replaceAll('\\', '/'))
+  .map((image) => image.replace(/\\/g, '/'))
   .filter((storageKey) =>
     storageKey.startsWith(serviceMediaPrefix)
     && !storageKey.includes('..')

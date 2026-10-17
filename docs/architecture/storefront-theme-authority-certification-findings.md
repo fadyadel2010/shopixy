@@ -1,5 +1,9 @@
 # PASS P2-GC Storefront Theme Authority
 
+> Historical source-level conclusion (2026-06-09), not renewed production approval.
+> The evidence-qualified current disposition below supersedes the unrestricted wording
+> of the historical status and explicit answers; it does not certify an unobserved deployment.
+
 Date: 2026-06-09
 
 Status: production-certifiable for the inspected runtime after hardening and deployment of
@@ -103,3 +107,29 @@ catalog, checkout, customer, payment, order, and shipping truth, but may not cre
 - Were runtime code changes required? Yes.
 - Is Storefront Theme Authority production-certifiable? Yes, for the inspected compiled-theme
   runtime after applying the migration.
+
+## 2026-10-15 evidence-qualified closeout
+
+Disposition: LIMITED P2-GC — historical source certification, not current production certification.
+
+The retained document records the original `PASS P2-GC` source/architecture decision.
+It is not a retained deployment log proving every historical runtime prerequisite.
+Requiring every rolling `.ai-context` summary to contain the literal historical PASS
+would not prove those prerequisites and would manufacture a new certification registration.
+
+Current supporting evidence is bounded and traceable:
+
+- `.ai/reports/SHOPIXY_POS_ADMIN_COMPREHENSIVE_QUALITY_REVIEW_20261015.md`,
+  sections 3, 5 and 7: 22 rendered editor tests; real draft save/restoration; unchanged-content
+  publication replay; four synthetic PostgreSQL rollback theme cases. These do not prove
+  changed-content distributed publication, competing distributed locks or every migration.
+- `.ai/evidence/pos-admin-quality-20261015/browser-theme-live.json`:
+  hosted draft/live separation, stale-revision guards and exact content restoration.
+- `.ai/evidence/pos-admin-quality-20261015/browser-publish-replay.json`:
+  unchanged-content publication only; not changed-content projection convergence.
+- `.ai/reports/SHOPIXY_STOREFRONT_COMPREHENSIVE_QUALITY_REVIEW_20261015.md`,
+  sections 5–8: tested presentation scope and explicit deployment/integration limits.
+
+Unverified: changed-content publication/projection convergence, competing Redis publication
+locks, exhaustive tenant/browser combinations and unrestricted production readiness.
+These remain unverified until demonstrated; passing source tests do not remove this boundary.

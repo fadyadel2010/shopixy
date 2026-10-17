@@ -201,7 +201,7 @@ export const calculateReturnTotals = (items, originalInvoice) => {
     }
 }
 
-const formatVariantDisplayName = (item, t) => {
+const formatVariantDisplayName = (item) => {
     const productName = item.productName
     const variantAttributes = item.variantAttributes
 

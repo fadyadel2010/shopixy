@@ -12,7 +12,7 @@ const StatementOfAccount = () => {
     const { t } = useTranslation()
     const { isRTL, dir, locale } = useRTL()
     const { formatCurrency } = useSettings()
-    const { showSuccess, showError, showWarning } = useToast()
+    const { showError, showWarning } = useToast()
     const tableTextAlignClass = isRTL ? 'text-right' : 'text-left'
     const [partyType, setPartyType] = useState('Customer')
     const [parties, setParties] = useState([])
@@ -36,7 +36,7 @@ const StatementOfAccount = () => {
             setParties(response.data.items || response.data)
             setSelectedParty(null)
             setStatement(null)
-        } catch (error) {
+        } catch {
             showError(t('accounts.failedToLoadParties'))
         }
     }

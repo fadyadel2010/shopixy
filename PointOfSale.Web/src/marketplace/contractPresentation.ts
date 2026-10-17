@@ -35,14 +35,14 @@ const nonEmpty = (value: unknown) => {
     return trimmed.length > 0 ? trimmed : null
 }
 
-const validMoney = (value: unknown) => (
+const validMoney = (value: unknown): value is number => (
     typeof value === 'number'
     && Number.isFinite(value)
     && value >= 0
     && value <= 1_000_000_000
 )
 
-const validWholeNumber = (value: unknown) => (
+const validWholeNumber = (value: unknown): value is number => (
     typeof value === 'number'
     && Number.isInteger(value)
     && value >= 0

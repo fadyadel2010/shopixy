@@ -803,12 +803,26 @@ public class OutboxPublisherJob : BackgroundService
 
     private static Type? ResolveEventType(string typeName)
     {
-        // Try to find the type in loaded assemblies
+        // Canonical SQL writers retain AssemblyQualifiedName. Assembly.GetType
+        // only accepts the namespace-qualified part. Resolve the retained
+        // assembly identity against already-loaded code; never load code named
+        // by a database row, silently fall back to another assembly, or rewrite
+        // the retained payload/type to make a poison message publishable.
+        var separator = typeName.IndexOf(',');
+        var fullTypeName = separator < 0 ? typeName : typeName[..separator].Trim();
+        string? expectedAssembly = null;
+        if (separator >= 0)
+        {
+            try { expectedAssembly = new System.Reflection.AssemblyName(typeName[(separator + 1)..].Trim()).FullName; }
+            catch (ArgumentException) { return null; }
+            catch (System.IO.FileLoadException) { return null; }
+        }
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
             try
             {
-                var type = assembly.GetType(typeName);
+                if (expectedAssembly != null && !string.Equals(assembly.FullName, expectedAssembly, StringComparison.OrdinalIgnoreCase)) continue;
+                var type = assembly.GetType(fullTypeName);
                 if (type != null) return type;
             }
             catch

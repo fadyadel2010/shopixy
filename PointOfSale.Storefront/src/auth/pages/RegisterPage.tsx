@@ -12,7 +12,7 @@ import { useAuthGuard } from '../hooks/useAuthGuard';
 import { RegisterForm } from '../components/RegisterForm';
 import { VerifyEmailBanner } from '../components/VerifyEmailBanner';
 import { useStoreConfigStore, selectStoreName } from '@/store';
-import type { OnlineCustomer } from '../types';
+import type { AuthResponse } from '../types';
 import { resolveStorefrontReturnPath } from '../returnPath';
 
 /**
@@ -26,7 +26,8 @@ export const RegisterPage: React.FC = () => {
     const returnTo = resolveStorefrontReturnPath(new URLSearchParams(location.search).get('return'));
 
     const [registrationComplete, setRegistrationComplete] = useState(false);
-    const [registeredCustomer, setRegisteredCustomer] = useState<OnlineCustomer | null>(null);
+    const [registrationResult, setRegistrationResult] = useState<AuthResponse | null>(null);
+    const registeredCustomer = registrationResult?.customer;
 
     // Guard: redirect if already authenticated
     const { isLoading, showContent } = useAuthGuard({
@@ -35,15 +36,15 @@ export const RegisterPage: React.FC = () => {
     });
 
     // Handle successful registration
-    const handleSuccess = useCallback((customer?: OnlineCustomer) => {
+    const handleSuccess = useCallback((result?: AuthResponse) => {
         // Show verification banner instead of immediate redirect
-        setRegisteredCustomer(customer ?? null);
+        if (!result || result.customer.emailVerified) {
+            navigate(returnTo, { replace: true });
+            return;
+        }
+        setRegistrationResult(result);
         setRegistrationComplete(true);
 
-        // After a delay, redirect to home or return URL
-        setTimeout(() => {
-            navigate(returnTo, { replace: true });
-        }, 3000);
     }, [navigate, returnTo]);
 
     // Navigate to login
@@ -114,12 +115,10 @@ export const RegisterPage: React.FC = () => {
                                 </p>
                             </div>
 
-                            <VerifyEmailBanner email={registeredCustomer.email} />
+                            <VerifyEmailBanner email={registeredCustomer.email} emailSent={registrationResult?.verificationEmailSent ?? undefined} canResend={false} />
 
                             <p className="text-center text-sm text-gray-500 mt-6">
-                                {t('auth.register.redirecting', {
-                                    defaultValue: 'Redirecting you to the store...'
-                                })}
+                                <Link to={returnTo} className="text-primary underline">{t('auth.verifyEmail.continueShopping')}</Link>
                             </p>
                         </div>
                     ) : (

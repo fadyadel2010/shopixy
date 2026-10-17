@@ -84,7 +84,7 @@ describe('storefront UX consistency and state stability', () => {
             id: 'customer-1',
             email: 'customer@example.com',
             displayName: 'Reliable Customer',
-            provider: 'Local',
+            provider: 'Local' as const,
             emailVerified: true,
             createdAtUtc: '2026-04-21T00:00:00.000Z',
         }
@@ -209,7 +209,7 @@ describe('storefront UX consistency and state stability', () => {
             cart: {
                 cartId: '11111111-1111-4111-8111-111111111111',
                 tenantId: '22222222-2222-4222-8222-222222222222',
-                ownerType: 'session',
+                ownerType: 'session' as const,
                 ownerId: 'session-1',
                 items: [],
                 itemCount: 0,
@@ -321,7 +321,7 @@ describe('storefront UX consistency and state stability', () => {
     })
 
     it('keeps cart items and totals stable while an authoritative mutation is pending and rejects mismatches', async () => {
-        const pendingUpdate = createDeferred<any>()
+        const pendingUpdate = createDeferred<typeof currentCart>()
         const updateCartItemByVariant = vi.fn(() => pendingUpdate.promise)
         const emitCartStateMismatchDetected = vi.fn()
 
@@ -347,13 +347,14 @@ describe('storefront UX consistency and state stability', () => {
         const currentCart = {
             cartId: 'cart-1',
             tenantId: 'tenant-1',
-            ownerType: 'session',
+            ownerType: 'session' as const,
             ownerId: 'session-1',
             items: [
                 {
                     productId: 'product-1',
                     variantId: 'variant-1',
                     productName: 'Premium Beans',
+                    sku: 'SYN-PREMIUM-BEANS',
                     quantity: 2,
                     unitPrice: 50,
                     lineTotal: 100,

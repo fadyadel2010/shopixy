@@ -1,0 +1,1 @@
+const s="font-['Instrument Sans',sans-serif]",e=`${s} text-[13px] font-medium uppercase tracking-[0.12em]`;function a(n){const t=`${e} transition-opacity duration-200`;return n?`${t} text-[#D05D61]`:`${t} text-white/90 hover:opacity-70`}export{s as C,a as c};

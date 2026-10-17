@@ -99,7 +99,19 @@ public sealed record CountryProfileRequest(
     bool IsActive,
     string? Reason);
 
-public sealed record ReleaseActionRequest(string Reason);
+public sealed record ReleaseActionRequest(string Reason, string? ExpectedContentChecksumSha256 = null);
+
+public sealed record MappingValidationRequest(string ExpectedContentChecksumSha256, string Reason);
+public sealed record MappingValidationPreviewDto(Guid MappingReleaseId, bool Succeeded, string? FailureCode, string? ContentChecksumSha256);
+
+public sealed record CatalogHierarchyEdgeRequest(Guid CatalogReleaseId, Guid ParentPlaceId,
+    Guid ChildPlaceId, Guid CountryPlaceId, string Reason);
+
+public sealed record CatalogValidationRequest(string ExpectedContentChecksumSha256, string SourceEvidenceUri,
+    string SourceEvidenceSha256, bool ConfirmOfficialSourceReviewed, string Reason);
+
+public sealed record CatalogValidationPreviewDto(Guid CatalogReleaseId, bool Succeeded,
+    string? FailureCode, string? ContentChecksumSha256, string ValidationRuleVersion);
 
 public sealed record PlaceMergeRequest(
     Guid CatalogReleaseId,

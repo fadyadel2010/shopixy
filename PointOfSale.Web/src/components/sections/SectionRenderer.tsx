@@ -21,9 +21,10 @@ function CuratedShelfPreview({ ids, maxItems }: { ids: string[]; maxItems: numbe
   const key = ids.join(',')
   useEffect(() => {
     const controller = new AbortController()
-    if (!ids.length) { setProducts([]); return () => controller.abort() }
-    api.get('/products/lookup/selected', { params: { ids }, paramsSerializer: { indexes: null }, signal: controller.signal })
-      .then(({ data }) => setProducts(Array.isArray(data) ? data : []))
+    const requestedIds = key ? key.split(',') : []
+    if (!requestedIds.length) { setProducts([]); return () => controller.abort() }
+    api.get('/products/lookup/selected', { params: { ids: requestedIds }, paramsSerializer: { indexes: null }, signal: controller.signal })
+      .then(({ data }) => { if (!controller.signal.aborted) setProducts(Array.isArray(data) ? data : []) })
       .catch(() => { if (!controller.signal.aborted) setProducts([]) })
     return () => controller.abort()
   }, [key])

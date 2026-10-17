@@ -41,8 +41,10 @@ export async function getAuthProvider(provider) {
  * @param {string} [settings.additionalScopes] - Additional OAuth scopes
  * @returns {Promise<Object>} Update result with updated settings
  */
-export async function updateAuthProvider(provider, settings) {
-    const response = await api.put(`${BASE_URL}/${provider}`, settings)
+const revisionHeaders = revision => ({ headers: { 'If-Match': `"${revision}"` } })
+
+export async function updateAuthProvider(provider, settings, revision) {
+    const response = await api.put(`${BASE_URL}/${provider}`, settings, revisionHeaders(revision))
     return response.data
 }
 
@@ -52,8 +54,8 @@ export async function updateAuthProvider(provider, settings) {
  * @param {string} provider - Provider name (Google or Facebook)
  * @returns {Promise<Object>} Enable result
  */
-export async function enableAuthProvider(provider) {
-    const response = await api.post(`${BASE_URL}/${provider}/enable`)
+export async function enableAuthProvider(provider, revision) {
+    const response = await api.post(`${BASE_URL}/${provider}/enable`, {}, revisionHeaders(revision))
     return response.data
 }
 
@@ -64,8 +66,8 @@ export async function enableAuthProvider(provider) {
  * @param {string} [reason] - Optional reason for audit
  * @returns {Promise<Object>} Disable result
  */
-export async function disableAuthProvider(provider, reason = null) {
-    const response = await api.post(`${BASE_URL}/${provider}/disable`, { reason })
+export async function disableAuthProvider(provider, reason = null, revision) {
+    const response = await api.post(`${BASE_URL}/${provider}/disable`, { reason }, revisionHeaders(revision))
     return response.data
 }
 
@@ -76,8 +78,8 @@ export async function disableAuthProvider(provider, reason = null) {
  * @param {string} clientSecret - New client secret
  * @returns {Promise<Object>} Rotation result
  */
-export async function rotateSecret(provider, clientSecret) {
-    const response = await api.post(`${BASE_URL}/${provider}/rotate-secret`, { clientSecret })
+export async function rotateSecret(provider, clientSecret, revision) {
+    const response = await api.post(`${BASE_URL}/${provider}/rotate-secret`, { clientSecret }, revisionHeaders(revision))
     return response.data
 }
 

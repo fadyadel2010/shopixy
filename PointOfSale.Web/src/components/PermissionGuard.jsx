@@ -9,32 +9,8 @@
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert, Lock } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
-import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { hasPosPermission } from '../auth/posPermissions'
-
-/**
- * Check if the current POS session has a server-derived permission.
- */
-export function useHasPermission(permission) {
-    const user = useAuthStore((s) => s.user)
-    return hasPosPermission(user, permission)
-}
-
-/**
- * Check if user can access storefront admin
- */
-export function useCanAccessStorefront() {
-    const user = useAuthStore((s) => s.user)
-    return canManageStorefrontSettings(user)
-}
-
-/**
- * Check if user's email is verified
- */
-export function useIsEmailVerified() {
-    const user = useAuthStore((s) => s.user)
-    return user?.emailVerified ?? false
-}
+import { useHasPermission } from '../hooks/usePosSessionPermission'
 
 /**
  * Permission Guard Wrapper

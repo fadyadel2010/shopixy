@@ -19,7 +19,7 @@ public class RedisConnectionFactory : IDisposable
 {
     private readonly RedisSettings _settings;
     private readonly ILogger<RedisConnectionFactory> _logger;
-    private readonly Lazy<IConnectionMultiplexer?> _connection;
+    private readonly RecoverableRedisConnection _connection;
     private bool _disposed;
 
     // STARTUP-3: This attribute forces Microsoft.Extensions.DependencyInjection to always select
@@ -35,7 +35,8 @@ public class RedisConnectionFactory : IDisposable
         _logger = logger;
         
         // Lazy initialization - connection is created on first use
-        _connection = new Lazy<IConnectionMultiplexer?>(() => CreateConnection());
+        _connection = new RecoverableRedisConnection(CreateConnection,
+            TimeSpan.FromMilliseconds(Math.Max(_settings.ConnectTimeoutMs + 2000, 10000)), TimeSpan.FromSeconds(30));
     }
 
     public RedisConnectionFactory(
@@ -45,7 +46,7 @@ public class RedisConnectionFactory : IDisposable
     {
         _settings = settings.Value;
         _logger = logger;
-        _connection = new Lazy<IConnectionMultiplexer?>(() => connectionOverride);
+        _connection = new RecoverableRedisConnection(() => connectionOverride, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30));
     }
 
     /// <summary>
@@ -109,6 +110,21 @@ public class RedisConnectionFactory : IDisposable
     /// </summary>
     public bool IsEnabled => _settings.Enabled;
 
+    /// <summary>
+    /// Measures one read-only command on the existing shared connection. The
+    /// configured asynchronous command budget and caller cancellation both bound
+    /// the wait; no retries, cache writes or connection replacement are performed.
+    /// </summary>
+    public async Task<TimeSpan?> ProbeLatencyAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var connection = await _connection.GetAsync(cancellationToken).ConfigureAwait(false);
+        var database = connection?.GetDatabase();
+        if (database == null) return null;
+        return await database.PingAsync().WaitAsync(
+            TimeSpan.FromMilliseconds(_settings.AsyncTimeoutMs), cancellationToken).ConfigureAwait(false);
+    }
+
     private IConnectionMultiplexer? CreateConnection()
     {
         if (!_settings.Enabled)
@@ -137,20 +153,9 @@ public class RedisConnectionFactory : IDisposable
                 MaskConnectionString(_settings.ConnectionString),
                 _settings.ConnectTimeoutMs);
 
-            // Connect on a dedicated thread with a hard, thread-pool-independent timeout so a
-            // broken/unresponsive Redis server (port open but no protocol response) can never
-            // hang application startup. The timeout uses a System.Threading.Timer (dedicated timer
-            // thread) + a kernel WaitHandle.WaitAny, which are NOT subject to thread-pool starvation.
-            var connectBudgetMs = Math.Max(_settings.ConnectTimeoutMs + 2000, 10000);
-            var connection = ConnectWithTimeout(options, connectBudgetMs);
-            if (connection == null)
-            {
-                _logger.LogWarning(
-                    "Redis connect timed out after {Budget}ms (server unreachable or unresponsive). Caching will be disabled. ConnectionString: {ConnectionString}",
-                    connectBudgetMs,
-                    MaskConnectionString(_settings.ConnectionString));
-                return null;
-            }
+            // The recoverable holder owns the dedicated thread, bounded wait and
+            // late-result lifetime. AbortOnConnectFail=false preserves SDK reconnect.
+            var connection = ConnectionMultiplexer.Connect(options);
 
             connection.ConnectionFailed += (sender, args) =>
             {
@@ -187,75 +192,6 @@ public class RedisConnectionFactory : IDisposable
         }
     }
 
-    private static IConnectionMultiplexer? ConnectWithTimeout(
-        ConfigurationOptions options,
-        int budgetMs)
-    {
-        // IMPORTANT: StackExchange.Redis Connect/ConnectAsync performs a partially synchronous
-        // preamble (socket connect / DNS / protocol handshake) that blocks indefinitely against a
-        // broken/unresponsive Redis server (port open but no protocol response). A naive timeout
-        // built on Task.Wait/Task.Delay/Timer relies on thread-pool timer callbacks, which are
-        // starved when those blocked connects consume the thread pool -- causing a deadlock that
-        // hangs application startup forever.
-        //
-        // To make the timeout bulletproof we:
-        //   1. Run the connect on a dedicated (non-pool) background Thread, so it never consumes a
-        //      thread-pool thread.
-        //   2. Enforce the budget with a DEDICATED watchdog Thread that calls Thread.Sleep(budget)
-        //      and then sets a "timed out" wait handle. A dedicated thread (not the pool) guarantees
-        //      the timeout fires even when the pool is saturated by other blocked Redis connects.
-        //   3. Block on a kernel WaitHandle.WaitAny (no thread-pool continuation required) on either
-        //      "connect finished" or "timed out".
-        // If the budget elapses, we abandon the connect thread (it leaks, but boot proceeds) and
-        // return null so caching is gracefully disabled.
-        var doneEvent = new ManualResetEvent(false);
-        var timeoutEvent = new ManualResetEvent(false);
-        IConnectionMultiplexer? result = null;
-
-        var connectThread = new Thread(() =>
-        {
-            try
-            {
-                result = ConnectionMultiplexer.Connect(options);
-            }
-            catch
-            {
-                result = null;
-            }
-            finally
-            {
-                doneEvent.Set();
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "RedisConnectTimeoutGuard"
-        };
-
-        var watchdog = new Thread(() =>
-        {
-            try
-            {
-                Thread.Sleep(budgetMs);
-            }
-            finally
-            {
-                timeoutEvent.Set();
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "RedisConnectTimeoutWatchdog"
-        };
-
-        connectThread.Start();
-        watchdog.Start();
-
-        WaitHandle.WaitAny(new WaitHandle[] { doneEvent, timeoutEvent });
-
-        return result;
-    }
-
     private static string MaskConnectionString(string connectionString)
     {
         // Mask password if present
@@ -278,10 +214,7 @@ public class RedisConnectionFactory : IDisposable
     {
         if (_disposed) return;
         
-        if (_connection.IsValueCreated && _connection.Value != null)
-        {
-            _connection.Value.Dispose();
-        }
+        _connection.Dispose();
         
         _disposed = true;
     }

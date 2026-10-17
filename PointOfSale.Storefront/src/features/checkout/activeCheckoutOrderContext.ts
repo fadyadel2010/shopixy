@@ -76,6 +76,13 @@ export function removeTrackingTokenFromCurrentUrl(): TrackingTokenUrlMitigationR
         return { removed: false, orderId: null, tokenSource: null };
     }
 
+    // Authentication links own their one-time tokens. The checkout startup
+    // scrubber must not erase them before (or during) verification/reset routing.
+    // AnalyticsContextResolver independently strips every query and fragment.
+    if (/^\/(verify-email|reset-password)\/?$/i.test(url.pathname)) {
+        return { removed: false, orderId: null, tokenSource: null };
+    }
+
     const tokenFromQuery = url.searchParams.get('token') || url.searchParams.get('guestToken');
     const fragmentParams = parseFragmentParams(url.hash);
     const tokenFromFragment = fragmentParams.get('tracking_token') ||

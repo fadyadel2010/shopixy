@@ -1,19 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Star } from 'lucide-react'
 import { useServiceDetails } from '../hooks/useServiceDetails'
 import { useRequestService } from '../hooks/useRequestService'
-import { marketplaceApi } from '../api/marketplaceApi'
+import { useServiceReviews } from '../hooks/useServiceReviews'
 import { useFormatting } from '../../hooks/useFormatting'
 import {
   getMarketplaceAuthorityScope,
   isMarketplaceAuthorityError,
-  marketplaceAuthorityQueryOptions,
   useMarketplaceAuthorityScope,
 } from '../authority'
-import { marketplaceKeys } from '../queryKeys'
 import {
   deriveServiceDetailPresentation,
 } from '../serviceDetailAuthority'
@@ -57,12 +54,7 @@ export function ServiceDetailsPage() {
     isError: reviewsAuthorityFailed,
     isFetching: reviewsAuthorityRefreshing,
     isRefetchError: reviewsAuthorityRefreshFailed,
-  } = useQuery({
-    queryKey: [...marketplaceKeys.service(serviceId!, authorityScope), 'reviews'],
-    queryFn: () => marketplaceApi.getServiceReviews(serviceId!),
-    enabled: !!serviceId,
-    ...marketplaceAuthorityQueryOptions,
-  })
+  } = useServiceReviews(serviceId!)
   const [requestMessage, setRequestMessage] = useState('')
   const [showRequestForm, setShowRequestForm] = useState(false)
   const submissionRef = useRef(false)

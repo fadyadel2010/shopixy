@@ -477,7 +477,7 @@ function ProductHeroRuntimeContainer({ component: Component, sectionProps }: Run
                 ? t('product.addToCart')
                 : t('product.outOfStock'),
         labels: {
-            invalidVariantCombination: t('product.invalidVariantCombination') || 'This option combination is unavailable',
+            invalidVariantCombination: t('product.variant.combination'),
             products: t('common.products'),
         },
         callbacks: {

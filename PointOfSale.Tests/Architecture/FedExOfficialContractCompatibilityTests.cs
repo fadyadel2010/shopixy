@@ -263,15 +263,15 @@ public sealed class FedExOfficialContractCompatibilityTests
         Assert.True(definition.SupportsPrepaid);
         Assert.True(definition.SupportsTracking);
         Assert.True(definition.SupportsLabels);
-        Assert.True(definition.SupportsCancellation);
-        Assert.True(definition.SupportsPickupScheduling);
-        Assert.True(definition.SupportsWebhooks);
+        Assert.False(definition.SupportsCancellation);
+        Assert.False(definition.SupportsPickupScheduling);
+        Assert.False(definition.SupportsWebhooks);
         Assert.False(definition.SupportsQuotes);
         Assert.Empty(definition.SupportedCountries);
     }
 
     [Fact]
-    public async Task FedExAdapter_AllRuntimeOperationsFailClosedWithoutHttpExecution()
+    public async Task FedExAdapter_WithoutBusinessTransport_FailsClosedButAllowsOAuthProjectValidation()
     {
         var adapter = new FedExAdapter(
             CreateOAuthClient(new RecordingHandler("""{"access_token":"token","token_type":"bearer","expires_in":3600}""")),
@@ -293,12 +293,14 @@ public sealed class FedExOfficialContractCompatibilityTests
         AssertFailClosed(create.Success, create.ErrorCode);
         AssertFailClosed(tracking.Success, tracking.ErrorCode);
         AssertFailClosed(cancel.Success, cancel.ErrorCode);
-        AssertFailClosed(credentialValidation.Success, credentialValidation.ErrorCode);
+        Assert.True(credentialValidation.Success);
+        Assert.Null(credentialValidation.ErrorCode);
+        Assert.Contains("route/service qualification separate", credentialValidation.AccountName);
         AssertFailClosed(label.Success, label.ErrorCode);
         AssertFailClosed(pickup.Success, pickup.ErrorCode);
         AssertFailClosed(availability.Success, availability.ErrorCode);
         AssertFailClosed(address.Success, address.ErrorCode);
-        Assert.Empty(adapter.GetSupportedServiceLevels());
+        Assert.Equal("fedex_ground", Assert.Single(adapter.GetSupportedServiceLevels()).Code);
         Assert.Null(adapter.ParseWebhook("""{"trackingNumber":"track-1"}""", null, null));
     }
 
@@ -410,7 +412,7 @@ public sealed class FedExOfficialContractCompatibilityTests
     [Fact]
     public void FedExPickupAddressAndServiceAvailabilityDtos_MustValidateOfficialRequiredShapes()
     {
-        var address = Address("New York", "10001", "US");
+        var address = Address("New York", "10001", "US", "NY");
         var pickup = FedExRequestBuilders.CreatePickup(
             "510087000",
             "FDXE",
@@ -424,13 +426,12 @@ public sealed class FedExOfficialContractCompatibilityTests
             "FDXG",
             new FedExServiceAvailabilityShipment(
                 new FedExAddressOnlyParty(Address("Memphis", "38116", "US", "TN")),
-                new FedExAddressOnlyParty(address),
+                 [new FedExAddressOnlyParty(address)],
                 "DROPOFF_AT_FEDEX_LOCATION",
                 RequestedPackageLineItems:
                 [
                     new FedExPackageLineItem(
                         new FedExWeight("KG", 2),
-                        SequenceNumber: 1,
                         Dimensions: new FedExDimensions(30, 20, 10, "CM"))
                 ]));
 
@@ -691,6 +692,120 @@ public sealed class FedExOfficialContractCompatibilityTests
     }
 
     private static FedExOptions CreateFedExOptions() => new();
+
+    [Fact]
+    public async Task OAuth_ConcurrentAcquisitionAndRejectedTokenRefreshAreCoalesced()
+    {
+        var handler = new AsyncTokenHandler();
+        var client = CreateOAuthClient(handler);
+        var request = OAuthRequest();
+        var initial = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => client.GetAccessTokenAsync(request, true)));
+        Assert.All(initial, result => Assert.Equal("token-1", result.AccessToken));
+        Assert.Equal(1, handler.CallCount);
+        var refreshed = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => client.RefreshAuthorizationHeaderAfterUnauthorizedAsync(request, true, "token-1")));
+        Assert.All(refreshed, result => Assert.Equal("token-2", result.AuthorizationHeader?.Parameter));
+        Assert.Equal(2, handler.CallCount);
+        var late401 = await client.RefreshAuthorizationHeaderAfterUnauthorizedAsync(request, true, "token-1");
+        Assert.Equal("token-2", late401.AuthorizationHeader?.Parameter);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task OAuth_CacheCannotMaskSecretRotationOrReuseDifferentChildGrant()
+    {
+        var handler = new AsyncTokenHandler();
+        var client = CreateOAuthClient(handler);
+        var request = OAuthRequest();
+        var first = await client.GetAccessTokenAsync(request, true);
+        var rotated = await client.GetAccessTokenAsync(request with { ClientSecret = "rotated-test-secret" }, true);
+        var child = await client.GetAccessTokenAsync(request with { GrantType = "csp_credentials", ChildKey = "child-key", ChildSecret = "child-secret" }, true);
+        var rotatedChild = await client.GetAccessTokenAsync(request with { GrantType = "csp_credentials", ChildKey = "child-key", ChildSecret = "changed-child-secret" }, true);
+        Assert.Equal("token-1", first.AccessToken);
+        Assert.Equal("token-2", rotated.AccessToken);
+        Assert.Equal("token-3", child.AccessToken);
+        Assert.Equal("token-4", rotatedChild.AccessToken);
+        Assert.Equal(4, handler.CallCount);
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(429)]
+    public async Task OAuth_RejectsCredentialsOrThrottlingWithoutCachingSuccess(int status)
+    {
+        var handler = new RecordingHandler("{}", (HttpStatusCode)status);
+        var result = await CreateOAuthClient(handler).GetAuthorizationHeaderAsync(OAuthRequest(), true);
+        Assert.False(result.Success);
+        Assert.Null(result.AuthorizationHeader);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Theory]
+    [InlineData("{\"access_token\":\"bad token\",\"token_type\":\"bearer\",\"expires_in\":3600}")]
+    [InlineData("{\"access_token\":\"bad\\r\\ntoken\",\"token_type\":\"bearer\",\"expires_in\":3600}")]
+    public async Task OAuth_InvalidBearerNeverBecomesAnAuthorizationHeader(string json)
+    {
+        var result = await CreateOAuthClient(new RecordingHandler(json)).GetAuthorizationHeaderAsync(OAuthRequest(), true);
+        Assert.False(result.Success);
+        Assert.Null(result.AuthorizationHeader);
+    }
+
+    [Fact]
+    public async Task OAuth_RejectsOversizedBodyAndCallerCancellation()
+    {
+        var handler = new RecordingHandler(new string('x', 65537));
+        var client = CreateOAuthClient(handler);
+        Assert.False((await client.GetAccessTokenAsync(OAuthRequest(), true)).Success);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetAccessTokenAsync(OAuthRequest(), true, cts.Token));
+    }
+
+    [Fact]
+    public async Task CapabilityAndReadiness_DoNotCertifyAnAccountOrAdvertiseStubs()
+    {
+        var adapter = new FedExAdapter(CreateOAuthClient(new RecordingHandler(TokenResponse("unused"))), new FedExOptions());
+        var registry = new ShippingCarrierRegistry([adapter], NullLogger<ShippingCarrierRegistry>.Instance);
+        var capability = new CarrierCapabilityRegistry(registry).GetCapability(CarrierCodes.FedEx)!;
+        Assert.Equal(CarrierProductionCapability.NotCertified, capability.ProductionCapability);
+        Assert.True(capability.ConnectionTestSupported);
+        Assert.Equal(CarrierConnectionTestMode.Remote, capability.ConnectionTestMode);
+        Assert.False(capability.SupportsWebhooks);
+        Assert.Equal("fedex_ground", Assert.Single(capability.SupportedServiceLevels));
+        Assert.Equal(new[] { "ApiKey", "ApiSecret", "AccountId" }, capability.CredentialFields.Where(f => f.Required).Select(f => f.Target));
+        Assert.True((await adapter.ValidateCredentialsAsync(Credentials())).Success);
+        var authority = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/CarrierIntegrationAuthority.cs");
+        Assert.Contains("blockers.Add(\"CARRIER_NOT_CERTIFIED\")", authority);
+    }
+
+    [Fact]
+    public void FedExTransport_HasNoRedirectOrSharedRetryBypassAndRecoveryRemainsReconciliationOnly()
+    {
+        var program = CertificationSource.ReadRepoFile("PointOfSale.API/Program.cs");
+        Assert.Contains("AddHttpClient(\"FedEx\"), TimeSpan.FromSeconds(15), enableRetry: false)", program);
+        Assert.Contains("AddHttpClient(\"FedExOAuth\"), TimeSpan.FromSeconds(15), enableRetry: false)", program);
+        Assert.Contains("AllowAutoRedirect = false", program);
+        var service = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/CarrierShipmentService.cs");
+        var start = service.IndexOf("private async Task<CarrierShipmentResult> ReconcilePendingCarrierRequestAsync", StringComparison.Ordinal);
+        var end = service.IndexOf("private static void ApplySuccessfulCarrierRegistration", start, StringComparison.Ordinal);
+        var recovery = service[start..end];
+        Assert.Contains("GetShipmentByCarrierRequestIdAsync", recovery);
+        Assert.Contains("EXTERNAL_REGISTRATION_RECONCILIATION_REQUIRED", recovery);
+        Assert.DoesNotContain("adapter.CreateShipmentAsync", recovery);
+    }
+
+    private sealed class AsyncTokenHandler : HttpMessageHandler
+    {
+        private int _calls;
+        public int CallCount => _calls;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var number = Interlocked.Increment(ref _calls);
+            await Task.Delay(20, ct);
+            return new(HttpStatusCode.OK) { Content = new StringContent(TokenResponse($"token-{number}")) };
+        }
+    }
 
     private static FedExRequestedShipment RequestedShipment() =>
         new(

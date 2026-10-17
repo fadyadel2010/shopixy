@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useFormatting } from '../../hooks/useFormatting'
+import type { MarketplaceProfileInput } from '../types'
 
 interface ProfileFormModalProps {
-    initialData?: any
-    onSubmit: (data: any) => Promise<void>
+    isRTL: boolean
+    initialData?: Omit<Partial<MarketplaceProfileInput>, 'skills' | 'portfolioLinks'> & { hasMarketplaceProfile?: boolean; skills?: unknown; portfolioLinks?: unknown }
+    onSubmit: (data: MarketplaceProfileInput) => Promise<void>
     onClose: () => void
 }
 
@@ -28,9 +29,8 @@ const safeParseStringArray = (value: unknown): string[] => {
     }
 }
 
-export function ProfileFormModal({ initialData, onSubmit, onClose }: ProfileFormModalProps) {
+export function ProfileFormModal({ initialData, onSubmit, onClose, isRTL }: ProfileFormModalProps) {
     const { t } = useTranslation()
-    const { isRTL } = useFormatting()
     const [formData, setFormData] = useState({
         displayName: initialData?.displayName || '',
         bio: initialData?.bio || '',

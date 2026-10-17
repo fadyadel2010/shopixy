@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Globalization;
+using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
@@ -19,6 +20,7 @@ public sealed class AdminCmsService : IAdminCmsService
     private readonly NavigationAdmissionService _navigationAdmission;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<AdminCmsService> _logger;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -33,7 +35,8 @@ public sealed class AdminCmsService : IAdminCmsService
         ICmsPagePreviewTokenService cmsPagePreviewTokenService,
         NavigationAdmissionService navigationAdmission,
         IEventPublisher eventPublisher,
-        ILogger<AdminCmsService> logger)
+        ILogger<AdminCmsService> logger,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _dbContext = dbContext;
         _cmsPageService = cmsPageService;
@@ -42,6 +45,7 @@ public sealed class AdminCmsService : IAdminCmsService
         _navigationAdmission = navigationAdmission;
         _eventPublisher = eventPublisher;
         _logger = logger;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public Task<AdminCmsPageResponse?> GetCmsPageAsync(
@@ -847,7 +851,7 @@ public sealed class AdminCmsService : IAdminCmsService
             traceId);
     }
 
-    private static void AppendVersionSnapshot(Core.Entities.StoreConfig config, string changeType)
+    private void AppendVersionSnapshot(Core.Entities.StoreConfig config, string changeType)
     {
         var versions = JsonSerializer.Deserialize<List<VersionSnapshot>>(config.VersionsJson ?? "[]")
                        ?? new List<VersionSnapshot>();
@@ -863,11 +867,15 @@ public sealed class AdminCmsService : IAdminCmsService
         }
 
         var newVersionNumber = (versions.Max(snapshot => (int?)snapshot.Version) ?? 0) + 1;
+        var principal = _httpContextAccessor?.HttpContext?.User;
+        var actorId = principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var actorName = principal?.FindFirstValue(ClaimTypes.Name) ?? principal?.FindFirstValue(ClaimTypes.Email) ?? actorId;
         versions.Add(new VersionSnapshot
         {
             Version = newVersionNumber,
             PublishedAt = DateTime.UtcNow,
-            PublishedBy = "POS Admin",
+            PublishedBy = string.IsNullOrWhiteSpace(actorName) ? "Unknown admin" : actorName,
+            PublishedByUserId = actorId,
             ChangeType = changeType,
             ThemePresetKey = config.ThemeLivePresetKey,
             ThemeLiveOverridesJson = config.ThemeLiveOverridesJson,

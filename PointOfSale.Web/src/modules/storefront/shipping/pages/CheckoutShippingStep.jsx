@@ -30,10 +30,9 @@ export default function CheckoutShippingStep({
     onSelectShipping,
     selectedOption = null
 }) {
-    const { t, i18n } = useTranslation()
-    const isRTL = i18n.language === 'ar'
+    const { t } = useTranslation()
 
-    const { quotes, loading, error, fetchQuotes, clearError } = useShippingQuotes()
+    const { quotes, loading, error, fetchQuotes } = useShippingQuotes()
     const [selectedQuote, setSelectedQuote] = useState(selectedOption)
     const resolvedDestinationCountry = resolveCountryCode(destinationCountry, defaultCountryCode)
 

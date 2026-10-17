@@ -56,6 +56,7 @@ describe('Domains module — navigation placement', () => {
         const domainsNode = STOREFRONT_NAVIGATION.children.find(
             (n) => n.fallbackLabel === 'Domains',
         )
+        if (!domainsNode?.children) throw new Error('Domains navigation and its children must exist')
         expect(domainsNode.icon).toBe('Globe')
         expect(domainsNode.children).toBeDefined()
         expect(domainsNode.children).toHaveLength(2)
@@ -109,6 +110,7 @@ describe('Domains module — route resolution', () => {
 describe('Domains module — breadcrumb hierarchy', () => {
     it('D01 Overview breadcrumbs: Storefront > Home > Domains', () => {
         const screen = resolveStorefrontScreen('/storefront/domains')
+        if (!screen) throw new Error('Domains overview route must resolve')
         expect(screen.breadcrumbs).toHaveLength(3)
         expect(screen.breadcrumbs[0].fallbackLabel).toBe('Storefront')
         expect(screen.breadcrumbs[1].fallbackLabel).toBe('Home')
@@ -117,6 +119,7 @@ describe('Domains module — breadcrumb hierarchy', () => {
 
     it('D02 Detail breadcrumbs: Storefront > Home > Domains > Domain', () => {
         const screen = resolveStorefrontScreen('/storefront/domains/shop.example.com')
+        if (!screen) throw new Error('Domain detail route must resolve')
         expect(screen.breadcrumbs).toHaveLength(4)
         expect(screen.breadcrumbs[0].fallbackLabel).toBe('Storefront')
         expect(screen.breadcrumbs[1].fallbackLabel).toBe('Home')
@@ -126,12 +129,14 @@ describe('Domains module — breadcrumb hierarchy', () => {
 
     it('D09 Activity breadcrumbs: Storefront > Home > Domains > Activity', () => {
         const screen = resolveStorefrontScreen('/storefront/domains/activity')
+        if (!screen) throw new Error('Domains activity route must resolve')
         expect(screen.breadcrumbs).toHaveLength(4)
         expect(screen.breadcrumbs[3].fallbackLabel).toBe('Activity')
     })
 
     it('D04 List breadcrumbs: Storefront > Home > Domains > Domain List', () => {
         const screen = resolveStorefrontScreen('/storefront/domains/list')
+        if (!screen) throw new Error('Domain list route must resolve')
         expect(screen.breadcrumbs).toHaveLength(4)
         expect(screen.breadcrumbs[3].fallbackLabel).toBe('Domain List')
     })

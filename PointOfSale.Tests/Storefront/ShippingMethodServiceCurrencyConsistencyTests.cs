@@ -18,6 +18,35 @@ namespace PointOfSale.Tests.Storefront;
 
 public sealed class ShippingMethodServiceCurrencyConsistencyTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetShippingMethodsAsync_RejectsForeignProjectionAfterCacheRefreshOrUncachedRead(bool warehouseFiltered)
+    {
+        var tenantId = Guid.NewGuid();
+        var foreignTenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository.Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(foreignTenantId, "EGP", 20m, fulfillmentWarehouseId: warehouseId)
+            });
+
+        await using var dbContext = CreateDbContext();
+        // Even a valid warehouse owned by the requesting tenant cannot launder a
+        // foreign projected shipping method into the response.
+        SeedWarehouse(dbContext, tenantId, warehouseId);
+        var service = CreateService(repository.Object, dbContext);
+
+        await Assert.ThrowsAsync<StorefrontConfigOutOfSyncException>(() =>
+            service.GetShippingMethodsAsync(tenantId, 100m, 1m, "foreign-projection",
+                warehouseFiltered ? warehouseId : null));
+
+        repository.Verify(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()),
+            Times.Exactly(warehouseFiltered ? 1 : 2));
+    }
+
     [Fact]
     public async Task GetShippingMethodsAsync_UsesProjectedTenantCurrencyAcrossAllMethods()
     {

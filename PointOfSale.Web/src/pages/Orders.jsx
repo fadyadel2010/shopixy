@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import CancellationOutcome from '../modules/shipping/components/CancellationOutcome'
+import { containsAsciiControl } from '../security/textCharacterPolicy'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -289,6 +291,14 @@ export function validateManualDeliveryEvidence(evidence, t) {
     return null
 }
 
+export function buildManualDispatchPayload(shipmentId, trackingNumber) {
+    const tracking = trackingNumber?.trim()
+    if (!shipmentId || !tracking || tracking.length > 100 || containsAsciiControl(tracking)) {
+        throw new Error('A shipment and supported tracking reference are required for dispatch.')
+    }
+    return { shipmentId, trackingNumber: tracking }
+}
+
 export function validateReturnReceiptEvidence(evidence, requestedQuantity, t) {
     const resellableQuantity = Number(evidence?.resellableQuantity)
     const damagedQuantity = Number(evidence?.damagedQuantity)
@@ -346,7 +356,7 @@ function SectionCard({ title, children }) {
     )
 }
 
-function OrderDetailsPanel({
+export function OrderDetailsPanel({
     order,
     isLoading,
     isError,
@@ -372,6 +382,7 @@ function OrderDetailsPanel({
     onAdministrativeAction,
     isAdministrativeActionUpdating,
     administrativeActionError,
+    administrativeActionResult,
     onConfirmReturnReceipt,
     isReturnReceiptUpdating,
     returnReceiptError,
@@ -394,6 +405,7 @@ function OrderDetailsPanel({
     const [statusReason, setStatusReason] = useState('')
     const [pendingFulfillmentAction, setPendingFulfillmentAction] = useState(null)
     const [fulfillmentEvidence, setFulfillmentEvidence] = useState({
+        trackingNumber: '',
         deliveryReference: '',
         proofOfDeliveryUrl: '',
         recipientName: '',
@@ -411,6 +423,10 @@ function OrderDetailsPanel({
     })
     const [pendingAdministrativeAction, setPendingAdministrativeAction] = useState(null)
     const [administrativeReason, setAdministrativeReason] = useState('')
+    useEffect(() => {
+        if (administrativeActionResult?.outcome === 'Confirmed' || order?.shipment?.cancellation?.outcome === 'Confirmed')
+            setPendingAdministrativeAction(null)
+    }, [administrativeActionResult, order?.shipment?.cancellation])
     const [pendingReturnReceipt, setPendingReturnReceipt] = useState(null)
     const [returnReceiptEvidence, setReturnReceiptEvidence] = useState({
         resellableQuantity: '0',
@@ -428,9 +444,11 @@ function OrderDetailsPanel({
     const fulfillmentActions = fulfillmentAuthority?.availableActions || []
     const paymentActions = paymentAuthority?.availableActions || []
     const orderActions = (order?.availableOrderActions || []).filter((action) => action?.code === 'cancel-order')
-    const shipmentActions = (order?.availableShipmentActions || []).filter((action) => action?.code === 'cancel-shipment')
+    const shipmentActions = order?.shipment?.cancellation || administrativeActionResult?.outcome ? [] : (order?.availableShipmentActions || []).filter((action) => action?.code === 'cancel-shipment')
     const checkoutFieldItems = presentOrderCheckoutFields(order?.checkoutFieldSnapshots)
-    const riskPresentation = customerRiskPresentation(t, customerTrust?.riskLevel)
+    const riskPresentation = customerTrust?.phoneRisk?.isBlocked
+        ? { label: t('orders.phoneBlockedStatus'), tone: 'rose' }
+        : customerRiskPresentation(t, customerTrust?.hasPhone ? customerTrust.riskLevel : 'UNAVAILABLE')
 
     function handleSubmitStatus(event) {
         event.preventDefault()
@@ -448,6 +466,7 @@ function OrderDetailsPanel({
     function resetFulfillmentEvidence() {
         setPendingFulfillmentAction(null)
         setFulfillmentEvidence({
+            trackingNumber: '',
             deliveryReference: '',
             proofOfDeliveryUrl: '',
             recipientName: '',
@@ -477,7 +496,9 @@ function OrderDetailsPanel({
             return
         }
 
-        const payload = pendingFulfillmentAction.code === 'delivered'
+        const payload = pendingFulfillmentAction.code === 'out-for-delivery'
+            ? buildManualDispatchPayload(order.shipment?.shipmentId, fulfillmentEvidence.trackingNumber)
+            : pendingFulfillmentAction.code === 'delivered'
             ? {
                 deliveryReference: fulfillmentEvidence.deliveryReference.trim(),
                 proofOfDeliveryUrl: fulfillmentEvidence.proofOfDeliveryUrl.trim(),
@@ -503,6 +524,8 @@ function OrderDetailsPanel({
         : null
     const canSubmitFulfillmentEvidence = pendingFulfillmentAction?.code === 'delivered'
         ? !deliveryEvidenceError
+        : pendingFulfillmentAction?.code === 'out-for-delivery'
+            ? Boolean(order.shipment?.shipmentId && fulfillmentEvidence.trackingNumber.trim() && fulfillmentEvidence.trackingNumber.trim().length <= 100 && !containsAsciiControl(fulfillmentEvidence.trackingNumber))
         : Boolean(
             fulfillmentEvidence.reason.trim() &&
             fulfillmentEvidence.reason.trim().length <= MAX_LIFECYCLE_REASON_LENGTH,
@@ -542,6 +565,7 @@ function OrderDetailsPanel({
     function handleSubmitAdministrativeAction(event) {
         event.preventDefault()
         if (!pendingAdministrativeAction || !administrativeReason.trim()) return
+        if (pendingAdministrativeAction.code === 'cancel-shipment' && (order?.shipment?.cancellation || administrativeActionResult?.outcome)) return
         onAdministrativeAction({
             actionCode: pendingAdministrativeAction.code,
             reason: administrativeReason.trim(),
@@ -582,6 +606,7 @@ function OrderDetailsPanel({
         setStatusReason('')
         setPendingFulfillmentAction(null)
         setFulfillmentEvidence({
+            trackingNumber: '',
             deliveryReference: '',
             proofOfDeliveryUrl: '',
             recipientName: '',
@@ -785,7 +810,12 @@ function OrderDetailsPanel({
                                                 {t('orders.management.details.submitEvidence')}
                                             </p>
 
-                                            {pendingFulfillmentAction.code === 'delivered' ? (
+                                            {pendingFulfillmentAction.code === 'out-for-delivery' ? (
+                                                <label className="mt-4 flex flex-col gap-2 text-sm text-slate-700">
+                                                    <span className="font-medium">{t('orders.trackingNumber')}</span>
+                                                    <input autoFocus required maxLength={100} value={fulfillmentEvidence.trackingNumber} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, trackingNumber: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                </label>
+                                            ) : pendingFulfillmentAction.code === 'delivered' ? (
                                                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                                                     <label className="flex flex-col gap-2 text-sm text-slate-700">
                                                         <span className="font-medium">{t('orders.management.details.deliveryReference')}</span>
@@ -915,6 +945,7 @@ function OrderDetailsPanel({
                             ) : null}
 
                             <SectionCard title={t('orders.management.details.shipmentEvidence')}>
+                                <CancellationOutcome result={order?.shipment?.cancellation || administrativeActionResult} />
                                 {order.shipment ? (
                                     <div className="grid gap-4 md:grid-cols-2">
                                         <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.shipmentStatus')}</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.status}</p></div>
@@ -991,12 +1022,10 @@ function OrderDetailsPanel({
                                         <div className="flex flex-wrap items-center justify-between gap-3">
                                             <div className="flex items-center gap-2">
                                                 <ShieldCheck className="h-5 w-5 text-slate-500" />
-                                                <StatusBadge value={customerTrust.riskLevel} label={riskPresentation.label} tone={riskPresentation.tone} />
+                                                <StatusBadge value={customerTrust.phoneRisk?.isBlocked ? 'blocked' : customerTrust.riskLevel} label={riskPresentation.label} tone={riskPresentation.tone} />
                                             </div>
-                                            {customerTrust.phoneRisk?.isBlocked ? (
-                                                <StatusBadge value="blocked" label={t('orders.phoneBlockedStatus')} tone="rose" />
-                                            ) : null}
                                         </div>
+                                        <p className="text-sm text-slate-500">{t('orders.customerRisk.description')}</p>
 
                                         {customerTrust.hasPhone ? (
                                             <div className="grid gap-3 sm:grid-cols-2">
@@ -1055,6 +1084,9 @@ function OrderDetailsPanel({
                                                     <Flag className="h-4 w-4" />
                                                     {customerTrust.hasReportedSpam ? t('orders.spamReported') : t('orders.reportSpam')}
                                                 </button>
+                                                <Link to={`/ecommerce/blocked-phones?search=${encodeURIComponent(customerTrust.phoneNumber)}`} className="inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold text-indigo-700 underline">
+                                                    {t('orders.manageBlockedPhones')}
+                                                </Link>
                                             </div>
                                         ) : null}
                                     </div>
@@ -1570,19 +1602,23 @@ export default function Orders() {
         onError: refreshAfterConflict,
     })
 
+    const customerPhoneActionInFlight = useRef(false)
     const customerPhoneActionMutation = useMutation({
-        mutationFn: ({ action, reason }) => runAdminOrderCustomerPhoneAction(selectedOrderId, action, reason),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: [...authorityScope, 'customer-trust', selectedOrderId] }),
+        mutationFn: ({ orderId, action, reason }) => runAdminOrderCustomerPhoneAction(orderId, action, reason),
+        onSuccess: (_, candidate) => queryClient.invalidateQueries({ queryKey: [...candidate.authorityScope, 'customer-trust'] }),
+        onSettled: () => { customerPhoneActionInFlight.current = false },
     })
 
     function handleCustomerPhoneAction(action) {
+        if (customerPhoneActionInFlight.current || !selectedOrderId) return
         if (action.action === 'unblock' && !globalThis.confirm(t('orders.unblockPhoneConfirm'))) {
             return
         }
         if (action.action === 'reportSpam' && !globalThis.confirm(t('orders.reportSpamConfirm'))) {
             return
         }
-        customerPhoneActionMutation.mutate(action)
+        customerPhoneActionInFlight.current = true
+        customerPhoneActionMutation.mutate({ ...action, orderId: selectedOrderId, authorityScope })
     }
 
     useEffect(() => {
@@ -1957,13 +1993,13 @@ export default function Orders() {
                         onStatusChange={(candidate) => statusMutation.mutate(candidate)}
                         isStatusUpdating={statusMutation.isPending}
                         statusUpdateError={statusMutation.error ? getLifecycleMutationErrorMessage(statusMutation.error, t) : null}
-                        fulfillmentAuthority={fulfillmentAuthorityQuery.data}
+                        fulfillmentAuthority={fulfillmentAuthorityQuery.error ? null : fulfillmentAuthorityQuery.data}
                         fulfillmentAuthorityError={fulfillmentAuthorityQuery.error?.message || null}
                         isFulfillmentAuthorityLoading={fulfillmentAuthorityQuery.isLoading}
                         onFulfillmentAction={(actionCode) => fulfillmentActionMutation.mutate(actionCode)}
                         isFulfillmentActionUpdating={fulfillmentActionMutation.isPending}
                         fulfillmentActionError={fulfillmentActionMutation.error ? getLifecycleMutationErrorMessage(fulfillmentActionMutation.error, t) : null}
-                        paymentAuthority={paymentAuthorityQuery.data}
+                        paymentAuthority={paymentAuthorityQuery.error ? null : paymentAuthorityQuery.data}
                         paymentAuthorityError={paymentAuthorityQuery.error?.message || null}
                         isPaymentAuthorityLoading={paymentAuthorityQuery.isLoading}
                         onPaymentAction={(action) => paymentActionMutation.mutate(action)}
@@ -1972,11 +2008,12 @@ export default function Orders() {
                         onAdministrativeAction={(action) => administrativeActionMutation.mutate(action)}
                         isAdministrativeActionUpdating={administrativeActionMutation.isPending}
                         administrativeActionError={administrativeActionMutation.error ? getLifecycleMutationErrorMessage(administrativeActionMutation.error, t) : null}
+                        administrativeActionResult={administrativeActionMutation.data?.outcome && administrativeActionMutation.data.shipmentId === selectedOrder?.shipment?.shipmentId ? administrativeActionMutation.data : null}
                         onConfirmReturnReceipt={(request) => returnReceiptMutation.mutate(request)}
                         isReturnReceiptUpdating={returnReceiptMutation.isPending}
                         returnReceiptError={returnReceiptMutation.error ? getLifecycleMutationErrorMessage(returnReceiptMutation.error, t) : null}
                         customerTrust={customerTrustQuery.data}
-                        isCustomerTrustLoading={customerTrustQuery.isLoading}
+                        isCustomerTrustLoading={customerTrustQuery.isFetching}
                         customerTrustError={customerTrustQuery.error?.message || null}
                         onRetryCustomerTrust={() => customerTrustQuery.refetch()}
                         onCustomerPhoneAction={handleCustomerPhoneAction}

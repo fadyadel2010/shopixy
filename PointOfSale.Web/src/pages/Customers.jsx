@@ -21,6 +21,8 @@ export default function Customers() {
     const [totalPages, setTotalPages] = useState(1)
     const [showModal, setShowModal] = useState(false)
     const [editingCustomer, setEditingCustomer] = useState(null)
+    const [isSaving, setIsSaving] = useState(false)
+    const saveInFlightRef = useRef(false)
     const [formData, setFormData] = useState({
         name: '',
         email: '',
@@ -120,6 +122,7 @@ export default function Customers() {
     }
 
     const handleEdit = (customer) => {
+        if (saveInFlightRef.current) return
         setEditingCustomer(customer)
         setFormData({
             name: customer.name,
@@ -133,6 +136,7 @@ export default function Customers() {
     }
 
     const handleAdd = () => {
+        if (saveInFlightRef.current) return
         setEditingCustomer(null)
         setFormData({
             name: '',
@@ -147,6 +151,9 @@ export default function Customers() {
 
     const handleSubmit = async (e) => {
         e.preventDefault()
+        if (saveInFlightRef.current) return
+        saveInFlightRef.current = true
+        setIsSaving(true)
         try {
             if (editingCustomer) {
                 await api.put(`/customers/${editingCustomer.id}`, formData)
@@ -161,6 +168,9 @@ export default function Customers() {
             console.error('Error saving customer:', error)
             const message = error.response?.data?.message || t('customers.failedToSave')
             showError(message)
+        } finally {
+            saveInFlightRef.current = false
+            setIsSaving(false)
         }
     }
 
@@ -366,11 +376,12 @@ export default function Customers() {
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
+                                    disabled={isSaving}
                                     className="btn-secondary"
                                 >
                                     {t('common.cancel')}
                                 </button>
-                                <button type="submit" className="btn-primary">
+                                <button type="submit" disabled={isSaving} aria-busy={isSaving || undefined} className="btn-primary">
                                     {t('common.save')}
                                 </button>
                             </div>

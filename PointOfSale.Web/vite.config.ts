@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
@@ -19,7 +19,9 @@ const adminCsp = [
 ].join('; ')
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const apiTarget = loadEnv(mode, process.cwd()).VITE_DEV_API_TARGET || 'http://localhost:5010'
+  return {
   plugins: [react()],
   resolve: {
     alias: {
@@ -62,12 +64,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:5010',
+        target: apiTarget,
         changeOrigin: true,
         secure: false
       },
       '/hubs': {
-        target: 'http://localhost:5010',
+        target: apiTarget,
         changeOrigin: true,
         secure: false,
         ws: true
@@ -78,5 +80,6 @@ export default defineConfig({
     headers: {
       'Content-Security-Policy': adminCsp,
     },
+  }
   }
 })

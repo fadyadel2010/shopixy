@@ -265,7 +265,7 @@ export const OrderHistorySection: React.FC = () => {
                 <div className="text-center py-8">
                     <p className="text-red-500 mb-4">{error}</p>
                     <button
-                        onClick={() => setPage(page)}
+                        onClick={() => void loadOrders()}
                         className="text-primary hover:underline"
                     >
                         {t('common.retry')}

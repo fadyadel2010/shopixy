@@ -103,8 +103,10 @@ public class OrderAttribution
         Guid orderId,
         decimal orderValue,
         string currency,
-        AttributionModel model)
+        AttributionModel model,
+        DateTime? convertedAtUtc = null)
     {
+        var convertedAt = convertedAtUtc ?? DateTime.UtcNow;
         return new OrderAttribution
         {
             OrderId = orderId,
@@ -119,8 +121,8 @@ public class OrderAttribution
             OrderValue = orderValue,
             Currency = currency,
             CustomerId = context.CustomerId,
-            AttributedAtUtc = DateTime.UtcNow,
-            TimeToConversion = DateTime.UtcNow - context.CapturedAtUtc
+            AttributedAtUtc = convertedAt,
+            TimeToConversion = convertedAt >= context.CapturedAtUtc ? convertedAt - context.CapturedAtUtc : null
         };
     }
 }

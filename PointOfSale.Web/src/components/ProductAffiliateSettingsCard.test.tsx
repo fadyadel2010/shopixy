@@ -280,10 +280,8 @@ describe('product affiliate settings edit authority', () => {
 
     it('uses persisted policy participation instead of inferred lifecycle eligibility', async () => {
         getSettingsMock.mockResolvedValue({
-            productId: 'product-1',
-            isEnabled: false,
-            isPolicyEnabled: true,
             ...enabledBaseline(),
+            isPolicyEnabled: true,
         })
 
         renderCard()
@@ -433,6 +431,7 @@ describe('product affiliate settings edit authority', () => {
         const staleRead = deferred<{
             productId: string
             isEnabled: boolean
+            isPolicyEnabled?: boolean
             commissionRate: number
             maxCommissionPerItem: number | null
             templateType: string

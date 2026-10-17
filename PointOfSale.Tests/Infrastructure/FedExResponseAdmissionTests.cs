@@ -1,6 +1,7 @@
 using PointOfSale.Core.Enums;
 using PointOfSale.Tests.Architecture;
 using PointOfSale.Infrastructure.Shipping.Adapters;
+using System.Text.Json.Nodes;
 
 namespace PointOfSale.Tests.Infrastructure;
 
@@ -212,10 +213,10 @@ public sealed class FedExResponseAdmissionTests
               "output": {
                 "resolvedAddresses": [
                   {
-                    "streetLines": ["10 MAIN ST"],
+                    "streetLinesToken": ["10 MAIN ST"],
                     "city": "MEMPHIS",
                     "stateOrProvinceCode": "TN",
-                    "postalCode": "38116",
+                    "postalCodeToken": { "value": "38116", "changed": false },
                     "countryCode": "US",
                     "classification": "BUSINESS"
                   }
@@ -240,7 +241,7 @@ public sealed class FedExResponseAdmissionTests
               "output": {
                 "resolvedAddresses": [
                   {
-                    "streetLines": ["10 MAIN ST"],
+                    "streetLinesToken": ["10 MAIN ST"],
                     "countryCode": "US",
                     "classification": "MAGIC"
                   }
@@ -254,7 +255,7 @@ public sealed class FedExResponseAdmissionTests
               "output": {
                 "resolvedAddresses": [
                   {
-                    "streetLines": ["10 MAIN ST"],
+                    "streetLinesToken": ["10 MAIN ST"],
                     "countryCode": "US",
                     "invented": true
                   }
@@ -296,12 +297,12 @@ public sealed class FedExResponseAdmissionTests
             "\"MAGIC_SERVICE\"",
             StringComparison.Ordinal));
         var unknownTransitUnit = FedExResponseAdmission.AdmitServiceAvailability(ValidServiceAvailabilityJson().Replace(
-            "\"DAYS\"",
+            "\"TWO_DAYS\"",
             "\"HOURS\"",
             StringComparison.Ordinal));
         var unexpected = FedExResponseAdmission.AdmitServiceAvailability(ValidServiceAvailabilityJson().Replace(
-            "\"services\":",
-            "\"invented\": true, \"services\":",
+            "\"transitTimes\":",
+            "\"invented\": true, \"transitTimes\":",
             StringComparison.Ordinal));
 
         Assert.False(malformed.Success);
@@ -372,6 +373,118 @@ public sealed class FedExResponseAdmissionTests
         }
         """;
 
+    [Theory]
+    [InlineData("master")]
+    [InlineData("piece-count")]
+    [InlineData("doc-tracking")]
+    [InlineData("non-pdf")]
+    public void CreationAdmission_RejectsInconsistentPieceOrLabelEvidence(string defect)
+    {
+        var json = JsonNode.Parse(ValidShipmentJson())!;
+        var shipment = json["output"]!["transactionShipments"]![0]!;
+        var pieces = shipment["pieceResponses"]!.AsArray();
+        var doc = pieces[0]!["packageDocuments"]![0]!;
+        switch (defect)
+        {
+            case "master": shipment["masterTrackingNumber"] = "999999999999"; break;
+            case "piece-count": pieces.Add(pieces[0]!.DeepClone()); break;
+            case "doc-tracking": doc["trackingNumber"] = "999999999999"; break;
+            case "non-pdf": doc["encodedLabel"] = "bm90LXBkZg=="; break;
+        }
+        Assert.False(FedExResponseAdmission.AdmitShipment(json.ToJsonString()).Success);
+    }
+
+    [Fact]
+    public void CreationAdmission_AcceptsDocumentedResponseFieldsAndRejectsMismatchedService()
+    {
+        var json = JsonNode.Parse(ValidShipmentJson())!;
+        json["customerTransactionId"] = "corr";
+        var shipment = json["output"]!["transactionShipments"]![0]!;
+        shipment["serviceType"] = "FEDEX_GROUND";
+        shipment["shipDatestamp"] = "2026-10-11";
+        shipment["completedShipmentDetail"] = new JsonObject();
+        shipment["pieceResponses"]![0]!["packageSequenceNumber"] = 1;
+        shipment["pieceResponses"]![0]!["packageDocuments"]![0]!["docType"] = "PDF";
+        Assert.True(FedExResponseAdmission.AdmitShipment(json.ToJsonString(), "FEDEX_GROUND").Success);
+        Assert.False(FedExResponseAdmission.AdmitShipment(json.ToJsonString(), "FEDEX_2_DAY").Success);
+    }
+
+    [Theory]
+    [InlineData("2026-07-08")]
+    [InlineData("2026-07-08T09:15:00")]
+    [InlineData("not-time")]
+    public void TrackingAdmission_DoesNotInventMissingTimeOrOffset(string date)
+    {
+        var json = JsonNode.Parse(ValidTrackingJson())!;
+        json["output"]!["completeTrackResults"]![0]!["trackResults"]![0]!["scanEvents"]![0]!["date"] = date;
+        Assert.False(FedExResponseAdmission.AdmitTracking(json.ToJsonString(), "123456789012").Success);
+    }
+
+    [Theory]
+    [InlineData("DE")]
+    [InlineData("SE")]
+    [InlineData("RS")]
+    public void TrackingAdmission_ExceptionAndReturnScansDoNotProveTerminalCompletion(string code)
+    {
+        var json = JsonNode.Parse(ValidTrackingJson())!;
+        json["output"]!["completeTrackResults"]![0]!["trackResults"]![0]!["latestStatusDetail"]!["derivedCode"] = code;
+        Assert.False(FedExResponseAdmission.AdmitTracking(json.ToJsonString()).Success);
+    }
+
+    [Fact]
+    public void TrackingAdmission_UsesDocumentedDerivedScanCodeAndPreservesUtcOrdering()
+    {
+        var json = JsonNode.Parse(ValidTrackingJson())!;
+        var track = json["output"]!["completeTrackResults"]![0]!["trackResults"]![0]!;
+        track["trackingNumberInfo"]!["carrierCode"] = "FDXE";
+        track["serviceDetail"] = new JsonObject();
+        track["latestStatusDetail"]!["scanLocation"] = new JsonObject();
+        var scans = track["scanEvents"]!.AsArray();
+        scans[0]!["eventType"] = "AR";
+        scans[0]!["derivedStatusCode"] = "IT";
+        scans.Add(scans[0]!.DeepClone());
+        var result = FedExResponseAdmission.AdmitTracking(json.ToJsonString(), "123456789012");
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Dto!.Events.Count);
+        Assert.Equal(new DateTime(2026, 7, 8, 14, 15, 0, DateTimeKind.Utc), result.Dto.Events[0].Timestamp);
+        Assert.Equal(ShipmentStatus.InTransit, result.Dto.Events[0].Status);
+        track["error"] = new JsonObject { ["code"] = "TRACKING.DATA.NOTFOUND" };
+        Assert.False(FedExResponseAdmission.AdmitTracking(json.ToJsonString()).Success);
+    }
+
+    [Fact]
+    public void TrackingAdmission_ConflictingTerminalStatusAndMultipleResultsAreNotFinalTruth()
+    {
+        var json = JsonNode.Parse(ValidTrackingJson())!;
+        var tracks = json["output"]!["completeTrackResults"]![0]!["trackResults"]!.AsArray();
+        tracks[0]!["latestStatusDetail"]!["derivedCode"] = "DL";
+        Assert.False(FedExResponseAdmission.AdmitTracking(json.ToJsonString()).Success);
+        var scans = tracks[0]!["scanEvents"]!.AsArray();
+        scans[0]!["eventType"] = "DL";
+        Assert.True(FedExResponseAdmission.AdmitTracking(json.ToJsonString()).Success);
+        scans[1]!["date"] = scans[0]!["date"]!.GetValue<string>();
+        Assert.False(FedExResponseAdmission.AdmitTracking(json.ToJsonString()).Success);
+        tracks.Add(tracks[0]!.DeepClone());
+        Assert.False(FedExResponseAdmission.AdmitTracking(json.ToJsonString()).Success);
+    }
+
+    [Fact]
+    public void AvailabilityAdmission_UnknownDaysAndLocalDatesDoNotFabricateEstimates()
+    {
+        var json = JsonNode.Parse(ValidServiceAvailabilityJson())!;
+        var commit = json["output"]!["transitTimes"]![0]!["transitTimeDetails"]![0]!["commit"]!;
+        commit["transitDays"]!["minimumTransitTime"] = "UNKNOWN";
+        commit["transitDays"]!["maximumTransitTime"] = "UNKNOWN";
+        commit["dateDetail"] = new JsonObject { ["day"] = "Oct-15-2026", ["time"] = "17:00:00" };
+        var result = FedExResponseAdmission.AdmitServiceAvailability(json.ToJsonString());
+        Assert.True(result.Success);
+        Assert.Null(result.Dto!.Services[0].MinimumTransitDays);
+        Assert.Null(result.Dto.Services[0].MaximumTransitDays);
+        Assert.Null(result.Dto.Services[0].EstimatedDeliveryDateUtc);
+        json["output"]!["transitTimes"] = new JsonArray();
+        Assert.False(FedExResponseAdmission.AdmitServiceAvailability(json.ToJsonString()).Success);
+    }
+
     private static string ValidTrackingJson() =>
         """
         {
@@ -426,23 +539,21 @@ public sealed class FedExResponseAdmissionTests
         {
           "transactionId": "transaction-1",
           "output": {
-            "services": [
+            "transitTimes": [{ "transitTimeDetails": [
               {
                 "serviceType": "FEDEX_2_DAY",
                 "serviceName": "FedEx 2Day",
-                "transitTime": {
-                  "minimumTransitTime": 2,
-                  "maximumTransitTime": 2,
-                  "unit": "DAYS"
-                },
-                "deliveryDate": "2026-07-10T17:00:00-05:00"
+                "commit": { "transitDays": {
+                  "minimumTransitTime": "TWO_DAYS",
+                  "maximumTransitTime": "TWO_DAYS"
+                } }
               },
               {
                 "serviceType": "FEDEX_EXPRESS_SAVER",
                 "serviceName": "FedEx Express Saver",
-                "transitDays": 3
+                "commit": { "transitDays": { "minimumTransitTime": "THREE_DAYS", "maximumTransitTime": "THREE_DAYS" } }
               }
-            ],
+            ] }],
             "alerts": [
               {
                 "code": "NOTE",

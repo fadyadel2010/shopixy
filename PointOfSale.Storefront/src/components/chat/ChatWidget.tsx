@@ -28,6 +28,8 @@ import OrderDraftPreview from './OrderDraftPreview';
 import type { ChatMessage as ChatMessageType, ChatRequest, ChatResponse, OrderDraft } from '../../types/chat';
 import { httpClient } from '@/services/api/httpClient';
 import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
+import { getSessionId as getCartSessionId } from '@/bootstrap/sessionManager';
+import { useAuthStore } from '@/auth/store/authStore';
 import './ChatWidget.css';
 
 // Generate unique session ID
@@ -87,6 +89,9 @@ const ChatWidget: React.FC = () => {
     const widgetPosition = useStoreConfigStore(selectCommerceAiWidgetPosition);
     const autoGreetingEnabled = useStoreConfigStore(selectCommerceAiAutoGreetingEnabled);
     const autoGreetingMessage = useStoreConfigStore(selectCommerceAiAutoGreetingMessage);
+    const configuration = useStoreConfigStore(state => state.config);
+    const customerId = useAuthStore(state => state.customer?.id);
+    const workspace = `${tryGetTenantScopedStorageKey('chat')}:${customerId ?? 'guest'}`;
 
     // Debug logging
     useEffect(() => {
@@ -101,6 +106,28 @@ const ChatWidget: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [orderDraft, setOrderDraft] = useState<OrderDraft | null>(null);
     const [sessionId] = useState(() => getSessionId());
+    const pending = useRef<AbortController | null>(null);
+    const requestId = useRef(0);
+    const currentScope = useRef({ workspace, configuration });
+    currentScope.current = { workspace, configuration };
+    const cancelPending = useCallback(() => {
+        requestId.current += 1;
+        pending.current?.abort();
+        pending.current = null;
+        setIsLoading(false);
+    }, []);
+    useEffect(() => {
+        cancelPending();
+        setMessages([]);
+        setOrderDraft(null);
+        setError(null);
+        setIsOpen(false);
+    }, [workspace, cancelPending]);
+    useEffect(() => {
+        cancelPending();
+        setOrderDraft(null);
+        return cancelPending;
+    }, [configuration, cancelPending]);
 
     // Auto-greeting tracking
     const GREETING_KEY = `commerce_ai_greeting_shown_${sessionId}`;
@@ -158,7 +185,11 @@ const ChatWidget: React.FC = () => {
      * Send message to AI backend
      */
     const sendMessage = useCallback(async (content: string) => {
-        if (!content.trim() || isLoading) return;
+        if (!content.trim() || pending.current || !commerceAiEnabled) return;
+        const current = ++requestId.current;
+        const submittedScope = currentScope.current;
+        const controller = new AbortController();
+        pending.current = controller;
 
         // Add user message immediately
         const userMessage: ChatMessageType = {
@@ -183,7 +214,7 @@ const ChatWidget: React.FC = () => {
 
             const request: ChatRequest = {
                 message: content.trim(),
-                sessionId,
+                sessionId: getCartSessionId(),
                 // Cast to any because the type definition might expect string[] but we are sending (string | null)[] filtered to string[]
                 // actually .filter(Boolean) returns string[] but TS might need help
                 productIdsInView: productIdsInView as string[],
@@ -191,8 +222,11 @@ const ChatWidget: React.FC = () => {
                 language: i18n.language,
             };
 
-            const response = await httpClient.post<ChatResponse>('/api/storefront/chat', request);
+            const response = await httpClient.post<ChatResponse>('/api/storefront/chat', request, { signal: controller.signal });
+            if (current !== requestId.current || submittedScope.workspace !== currentScope.current.workspace || submittedScope.configuration !== currentScope.current.configuration) return;
             const data = response.data;
+            if (!['message', 'question', 'order_draft'].includes(data?.type) || typeof data.message !== 'string' || !data.message.trim() || data.message.length > 8000)
+                throw new Error('Invalid assistant response');
 
             // Add assistant message
             const assistantMessage: ChatMessageType = {
@@ -202,16 +236,19 @@ const ChatWidget: React.FC = () => {
                 timestamp: new Date(),
                 orderDraft: data.orderDraft,
                 missingInfo: data.missingInfo,
+                isFallback: data.isFallback,
             };
             setMessages(prev => [...prev, assistantMessage]);
 
             // Handle order draft
-            if (data.orderDraft && data.orderDraft.intent !== 'none') {
+            setOrderDraft(null);
+            if (!data.isFallback && data.orderDraft && data.orderDraft.intent !== 'none') {
                 setOrderDraft(data.orderDraft);
                 trackEvent('OrderDraftCreated');
             }
-        } catch (err) {
-            console.error('[ChatWidget] Error sending message:', err);
+        } catch {
+            if (current !== requestId.current || controller.signal.aborted) return;
+            setOrderDraft(null);
             setError(t('chat.error.send', 'Failed to send message. Please try again.'));
 
             // Add fallback message
@@ -224,9 +261,12 @@ const ChatWidget: React.FC = () => {
             };
             setMessages(prev => [...prev, fallbackMessage]);
         } finally {
-            setIsLoading(false);
+            if (current === requestId.current) {
+                pending.current = null;
+                setIsLoading(false);
+            }
         }
-    }, [isLoading, sessionId, i18n.language, t, trackEvent]);
+    }, [commerceAiEnabled, i18n.language, t, trackEvent]);
 
     /**
      * Handle suggestion click
@@ -274,6 +314,7 @@ const ChatWidget: React.FC = () => {
      * Minimize widget
      */
     const minimizeWidget = () => {
+        cancelPending();
         setIsMinimized(true);
         setIsOpen(false);
     };
@@ -282,6 +323,7 @@ const ChatWidget: React.FC = () => {
      * Close widget completely
      */
     const closeWidget = () => {
+        cancelPending();
         setIsOpen(false);
         setIsMinimized(false);
     };
@@ -310,7 +352,7 @@ const ChatWidget: React.FC = () => {
                                     {t('chat.title', 'AI Assistant')}
                                 </span>
                                 <span className="chat-widget__status">
-                                    {t('chat.status.online', 'Online')}
+                                    {t('chat.title', 'AI Assistant')}
                                 </span>
                             </div>
                         </div>

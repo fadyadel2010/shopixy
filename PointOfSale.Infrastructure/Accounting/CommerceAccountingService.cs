@@ -1,6 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
@@ -10,6 +11,7 @@ using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Core.Models.Refunds;
+using PointOfSale.Infrastructure.Data;
 using PaymentMethodEnum = PointOfSale.Core.Enums.PaymentMethod;
 
 namespace PointOfSale.Infrastructure.Accounting;
@@ -27,6 +29,7 @@ public class CommerceAccountingService : ICommerceAccountingService
     private readonly IAccountResolver _accountResolver;
     private readonly ICashboxLedgerAccountService _cashboxLedgerAccountService;
     private readonly ILogger<CommerceAccountingService> _logger;
+    private readonly ApplicationDbContext? _db;
     
     private static readonly Regex OperationKeyPattern = new(@"^[A-Za-z0-9._-]+$", RegexOptions.Compiled);
     
@@ -34,12 +37,14 @@ public class CommerceAccountingService : ICommerceAccountingService
         IFinancialPostingService postingService,
         IAccountResolver accountResolver,
         ICashboxLedgerAccountService cashboxLedgerAccountService,
-        ILogger<CommerceAccountingService> logger)
+        ILogger<CommerceAccountingService> logger,
+        ApplicationDbContext? db = null)
     {
         _postingService = postingService;
         _accountResolver = accountResolver;
         _cashboxLedgerAccountService = cashboxLedgerAccountService;
         _logger = logger;
+        _db = db;
     }
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1394,6 +1399,18 @@ public class CommerceAccountingService : ICommerceAccountingService
         try
         {
             _logger.LogInformation("Posting COD delivery for order {OrderNumber}", order.OrderNumber);
+            var collectedAmount = order.Total;
+            if (order.FulfillmentMode == FulfillmentMode.Carrier || !string.IsNullOrWhiteSpace(order.FulfillmentCarrierCode))
+            {
+                if (_db == null || _db.Database.CurrentTransaction == null)
+                    return PostingResult.Failed("Carrier COD posting requires transactional immutable evidence authority.");
+                var canonical = await _db.Orders.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(o => o.Id == order.Id && o.TenantId == order.TenantId, ct);
+                if (canonical == null || canonical.Total != order.Total || canonical.Currency != order.Currency || canonical.FulfillmentMode != FulfillmentMode.Carrier)
+                    return PostingResult.Failed("Carrier COD order authority changed.");
+                var (evidence, code) = await PointOfSale.Infrastructure.Shipping.CarrierCollectionMoneyAuthority.RevalidateAsync(_db, canonical, null, null, ct);
+                if (code != null) return PostingResult.Failed(code);
+                collectedAmount = evidence!.ObservedAmount!.Value;
+            }
             
             var accounts = await _accountResolver.GetByCodesAsync(
                 order.TenantId,
@@ -1411,8 +1428,8 @@ public class CommerceAccountingService : ICommerceAccountingService
                 IdempotencyKey = $"COD_DELIVERED:{order.TenantId}:{order.Id}",
                 Lines = new List<PostingLine>
                 {
-                    PostingLine.Debit(accounts[AccountCodes.CodClearing].Id, order.Total, "COD collection"),
-                    PostingLine.Credit(accounts[AccountCodes.EcommerceSales].Id, order.Total, $"E-commerce sale #{order.OrderNumber}")
+                    PostingLine.Debit(accounts[AccountCodes.CodClearing].Id, collectedAmount, "COD collection"),
+                    PostingLine.Credit(accounts[AccountCodes.EcommerceSales].Id, collectedAmount, $"E-commerce sale #{order.OrderNumber}")
                 }
             };
             
@@ -1822,12 +1839,11 @@ public class CommerceAccountingService : ICommerceAccountingService
 
         refundContext.EnsureValidForPostSettlementRefund();
 
-        var bankAccount = await _accountResolver.GetByCodeAsync(
-            order.TenantId,
-            AccountCodes.BankAccount,
-            ct);
+        if (_db == null)
+            throw new InvalidOperationException("Post-settlement refunds require SQL destination lineage authority.");
 
-        return bankAccount.Id;
+        return await SettlementRefundLineage.ResolveDestinationAccountAsync(
+            _db, order.TenantId, order.Id, refundContext, ct);
     }
 
     private async Task<Guid> ResolveEcommercePaymentAccountIdAsync(
@@ -2014,6 +2030,22 @@ public class CommerceAccountingService : ICommerceAccountingService
             adjustmentId);
         return PostingResult.Failed(
             "Inventory adjustment accounting requires an authoritative SQL adjustment workflow.");
+    }
+
+    public async Task<PostingResult> PostManualCodSettlementAsync(Guid tenantId, Guid settlementBatchId, CancellationToken ct = default)
+    {
+        if (_db == null) throw new InvalidOperationException("Manual COD settlement requires SQL authority.");
+        var request = await ManualCodSettlementAuthority.BuildPostingAsync(_db, tenantId, settlementBatchId, ct);
+        var journal = await _postingService.PostJournalAsync(request, ct);
+        return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+    }
+
+    public async Task<PostingResult> PostCarrierRemittanceAsync(Guid tenantId, Guid remittanceId, CancellationToken ct = default)
+    {
+        if (_db == null) throw new InvalidOperationException("Carrier remittance requires SQL authority.");
+        var request = await CarrierRemittanceAuthority.BuildPostingAsync(_db, tenantId, remittanceId, ct);
+        var journal = await _postingService.PostJournalAsync(request, ct);
+        return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
     }
 
     private static List<PostingLine> BuildPurchaseReturnLines(

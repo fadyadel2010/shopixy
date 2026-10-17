@@ -1,4 +1,6 @@
 using System.Net;
+using System.Reflection;
+using System.Text.Json.Nodes;
 using PointOfSale.Core.DTOs.Shipping;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Shipping;
@@ -20,10 +22,12 @@ public sealed class FedExEndpointRuntimeIntegrationTests
         Assert.Equal("123456789012", result.ExternalReferenceId);
         Assert.Equal("123456789012", result.TrackingNumber);
         Assert.Equal("123456789012", result.AwbNumber);
-        Assert.Equal(ShipmentStatus.Pending, result.InitialStatus);
+        Assert.Equal(ShipmentStatus.ReadyForPickup, result.InitialStatus);
         Assert.Equal("JVBERi0x", result.LabelData);
-        Assert.Equal("application/pdf", result.LabelFormat);
+        Assert.Equal("pdf", result.LabelFormat);
         Assert.Null(result.RawResponse);
+        var sharedAdmission = typeof(CarrierShipmentService).GetMethod("ValidateCarrierCreateResultForPersistence", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.Null(sharedAdmission.Invoke(null, [result]));
 
         Assert.Equal(1, transport.Calls.Count);
         Assert.Equal(FedExOptions.CreateShipmentPath, transport.Calls[0].EndpointPath);
@@ -82,6 +86,7 @@ public sealed class FedExEndpointRuntimeIntegrationTests
         Assert.Equal(HttpMethod.Post, transport.Calls[0].Method);
         var body = Assert.IsType<FedExAddressValidationRequest>(transport.Calls[0].Body);
         var address = body.AddressesToValidate.Single().Address;
+        Assert.True(body.ValidateAddressControlParameters!.IncludeResolutionTokens);
         Assert.Equal(["20 Broadway", "Floor 2"], address.StreetLines);
         Assert.Equal("New York", address.City);
         Assert.Equal("NY", address.StateOrProvinceCode);
@@ -113,10 +118,10 @@ public sealed class FedExEndpointRuntimeIntegrationTests
         Assert.Equal(FedExOptions.TransitTimesPath, transport.Calls[0].EndpointPath);
         Assert.Equal(HttpMethod.Post, transport.Calls[0].Method);
         var body = Assert.IsType<FedExServiceAvailabilityRequest>(transport.Calls[0].Body);
-        Assert.Equal("FDXE", body.CarrierCode);
+        Assert.Equal("FDXE", body.CarrierCodes.Single());
         Assert.Equal("DROPOFF_AT_FEDEX_LOCATION", body.RequestedShipment.PickupType);
         Assert.Equal("Memphis", body.RequestedShipment.Shipper.Address.City);
-        Assert.Equal("New York", body.RequestedShipment.Recipient.Address.City);
+        Assert.Equal("New York", body.RequestedShipment.Recipients.Single().Address.City);
         Assert.Equal("KG", body.RequestedShipment.RequestedPackageLineItems!.Single().Weight.Units);
         Assert.Equal(2, body.RequestedShipment.RequestedPackageLineItems.Single().Weight.Value);
         Assert.Equal("CM", body.RequestedShipment.RequestedPackageLineItems.Single().Dimensions!.Units);
@@ -150,7 +155,7 @@ public sealed class FedExEndpointRuntimeIntegrationTests
         Assert.False(admissionResult.Success);
         Assert.Equal(FedExAdapter.AdmissionRejectedErrorCode, admissionResult.ErrorCode);
         Assert.Contains("resolvedAddresses", addressAdmissionFailure.Message, StringComparison.Ordinal);
-        Assert.Contains("services", availabilityAdmissionFailure.Message, StringComparison.Ordinal);
+        Assert.Contains("transitTimes", availabilityAdmissionFailure.Message, StringComparison.Ordinal);
         Assert.Equal(1, transportFailure.Calls.Count);
         Assert.Equal(3, admissionFailure.Calls.Count);
     }
@@ -214,6 +219,159 @@ public sealed class FedExEndpointRuntimeIntegrationTests
             Destination: Snapshot("New York", "10001", "20 Broadway", "Floor 2", "NY"),
             CorrelationId: "address-correlation-1");
 
+    [Theory]
+    [InlineData("packages")]
+    [InlineData("cod")]
+    [InlineData("international")]
+    [InlineData("dimension-missing")]
+    [InlineData("dimension-negative")]
+    [InlineData("dimension-fraction")]
+    [InlineData("dimension-overflow")]
+    [InlineData("weight")]
+    [InlineData("weight-precision")]
+    [InlineData("insurance")]
+    [InlineData("non-ascii")]
+    [InlineData("country-regulatory")]
+    [InlineData("account")]
+    [InlineData("identity")]
+    [InlineData("invoice-length")]
+    [InlineData("pickup")]
+    [InlineData("service")]
+    public async Task Creation_RejectsUnsupportedOrUnmappedInputsBeforeTransport(string defect)
+    {
+        var transport = new RecordingFedExTransport(ValidShipmentJson());
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), transport);
+        var request = ShipmentRequest();
+        var credentials = Credentials();
+        switch (defect)
+        {
+            case "packages": request.PackageCount = 2; break;
+            case "cod": request.IsCashOnDelivery = true; break;
+            case "international": request.RecipientCountry = "DE"; break;
+            case "dimension-missing": request.HeightCm = null; break;
+            case "dimension-negative": request.WidthCm = -2; break;
+            case "dimension-fraction": request.WidthCm = 2.54m; break;
+            case "dimension-overflow": request.LengthCm = decimal.MaxValue; break;
+            case "weight": request.WeightKg = 0; break;
+            case "weight-precision": request.WeightKg = 1.234m; break;
+            case "insurance": request.InsuranceAmount = 100; break;
+            case "non-ascii": request.RecipientName = "\u0641\u0627\u062f\u064a"; break;
+            case "country-regulatory": request.OriginCountry = request.RecipientCountry = "GB"; break;
+            case "account": credentials.AccountId = "account-1"; break;
+            case "identity": request.CarrierRequestId = null; break;
+            case "invoice-length": request.OrderNumber = new string('a', 31); break;
+            case "pickup": credentials.ExtraConfig = null; break;
+            case "service": request.ServiceLevel = "standard"; break;
+        }
+        var result = await adapter.CreateShipmentAsync(request, credentials);
+        Assert.False(result.Success);
+        Assert.Equal(FedExAdapter.RequestMappingUnavailableErrorCode, result.ErrorCode);
+        Assert.Empty(transport.Calls);
+    }
+
+    [Fact]
+    public async Task Creation_UsesBoundedStableReferenceWithoutClaimingProviderIdempotency()
+    {
+        var transport = new RecordingFedExTransport(ValidShipmentJson());
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), transport);
+        var request = ShipmentRequest();
+        request.CarrierRequestId = $"ship-{Guid.NewGuid():N}-{Guid.NewGuid():N}";
+        Assert.True((await adapter.CreateShipmentAsync(request, Credentials())).Success);
+        var body = Assert.IsType<FedExShipmentRequest>(Assert.Single(transport.Calls).Body);
+        Assert.Equal(30, body.RequestedShipment.RequestedPackageLineItems.Single().CustomerReferences![0].Value.Length);
+        Assert.Null(await adapter.GetShipmentByCarrierRequestIdAsync(request.CarrierRequestId, Credentials()));
+    }
+
+    [Fact]
+    public async Task Creation_MapsDeclaredValueAndNeutralServiceCaseAndRequiresEncodedLabel()
+    {
+        var request = ShipmentRequest();
+        request.DeclaredValue = 123.45m;
+        request.ServiceLevel = "fedex_ground";
+        var transport = new RecordingFedExTransport(ValidShipmentJson());
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), transport);
+        Assert.True((await adapter.CreateShipmentAsync(request, Credentials())).Success);
+        var body = Assert.IsType<FedExShipmentRequest>(Assert.Single(transport.Calls).Body);
+        Assert.Equal("FEDEX_GROUND", body.RequestedShipment.ServiceType);
+        Assert.Equal(new FedExMoney(123.45m, "USD"), body.RequestedShipment.RequestedPackageLineItems.Single().DeclaredValue);
+        var json = JsonNode.Parse(ValidShipmentJson())!;
+        var document = json["output"]!["transactionShipments"]![0]!["pieceResponses"]![0]!["packageDocuments"]![0]!.AsObject();
+        document.Remove("encodedLabel");
+        document["url"] = "https://example.test/label.pdf";
+        adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), new RecordingFedExTransport(json.ToJsonString()));
+        Assert.False((await adapter.CreateShipmentAsync(request, Credentials())).Success);
+    }
+
+    [Fact]
+    public async Task Tracking_RejectsInternallyConsistentButUnrelatedResponse()
+    {
+        var transport = new RecordingFedExTransport(ValidTrackingJson());
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), transport);
+        var result = await adapter.GetTrackingAsync("999999999999", Credentials());
+        Assert.False(result.Success);
+        Assert.Equal(FedExAdapter.AdmissionRejectedErrorCode, result.ErrorCode);
+        Assert.Empty(result.Events);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("123/456")]
+    [InlineData("123\r\n456")]
+    public async Task Tracking_RejectsInvalidIdentifiersBeforeTransport(string number)
+    {
+        var transport = new RecordingFedExTransport(ValidTrackingJson());
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), transport);
+        Assert.False((await adapter.GetTrackingAsync(number, Credentials())).Success);
+        Assert.Empty(transport.Calls);
+    }
+
+    [Theory]
+    [InlineData("NORMALIZED", false, AddressValidationResultKind.Unknown)]
+    [InlineData("STANDARDIZED", false, AddressValidationResultKind.Unknown)]
+    [InlineData("STANDARDIZED", true, AddressValidationResultKind.Corrected)]
+    public async Task AddressNormalization_DoesNotProveValidity(string addressType, bool dpv, AddressValidationResultKind expected)
+    {
+        var json = JsonNode.Parse(ValidAddressValidationJson())!;
+        var attributes = json["output"]!["resolvedAddresses"]![0]!["attributes"]!;
+        attributes["AddressType"] = addressType;
+        attributes["DPV"] = dpv;
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), new RecordingFedExTransport(json.ToJsonString()));
+        if (expected == AddressValidationResultKind.Unknown)
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => adapter.ValidateAddressAsync(AddressValidationRequest(), Credentials()));
+            Assert.Contains("unresolved", error.Message);
+        }
+        else Assert.Equal(expected, (await adapter.ValidateAddressAsync(AddressValidationRequest(), Credentials())).Result);
+    }
+
+    [Fact]
+    public async Task Availability_SerializesOfficialRecipientsCarrierCodesPackagingAndDeclaredValue()
+    {
+        var transport = new RecordingFedExTransport(ValidServiceAvailabilityJson());
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), transport);
+        await adapter.GetServiceAvailabilityAsync(ServiceAvailabilityRequest(), Credentials());
+        var body = Assert.IsType<FedExServiceAvailabilityRequest>(Assert.Single(transport.Calls).Body);
+        var json = JsonNode.Parse(FedExContractSerializer.SerializeJson(body))!;
+        Assert.Equal("FDXE", json["carrierCodes"]![0]!.GetValue<string>());
+        Assert.Single(json["requestedShipment"]!["recipients"]!.AsArray());
+        Assert.Null(json["requestedShipment"]!["shipper"]!["address"]!["streetLines"]);
+        Assert.Equal("YOUR_PACKAGING", json["requestedShipment"]!["packagingType"]!.GetValue<string>());
+        Assert.Null(json["requestedShipment"]!["requestedPackageLineItems"]![0]!["sequenceNumber"]);
+        Assert.Equal(100, json["requestedShipment"]!["requestedPackageLineItems"]![0]!["declaredValue"]!["amount"]!.GetValue<decimal>());
+        Assert.Equal("USD", json["requestedShipment"]!["requestedPackageLineItems"]![0]!["declaredValue"]!["currency"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Availability_UnreturnedRequestedServiceHasRestrictionNotFabricatedSupport()
+    {
+        var adapter = new FedExAdapter(new UnusedOAuthClient(), new FedExOptions(), new RecordingFedExTransport(ValidServiceAvailabilityJson()));
+        var request = ServiceAvailabilityRequest() with { RequiredServices = [CarrierNeutralServiceIdentifier.SameDay] };
+        var result = await adapter.GetServiceAvailabilityAsync(request, Credentials());
+        Assert.Empty(result.SupportedServices);
+        Assert.Empty(result.TransitEstimates);
+        Assert.Single(result.ServiceRestrictions);
+    }
+
     private static CarrierNeutralServiceAvailabilityRequest ServiceAvailabilityRequest() =>
         new(
             Origin: Snapshot("Memphis", "38116", "10 Main St", null, "TN"),
@@ -254,7 +412,7 @@ public sealed class FedExEndpointRuntimeIntegrationTests
             SnapshottedAtUtc: DateTime.UtcNow,
             SnapshotVersion: 1);
 
-    private static CreateShipmentRequest ShipmentRequest() =>
+    internal static CreateShipmentRequest ShipmentRequest() =>
         new()
         {
             InternalShipmentId = "shipment-1",
@@ -283,16 +441,17 @@ public sealed class FedExEndpointRuntimeIntegrationTests
             HeightCm = 10
         };
 
-    private static CarrierCredentials Credentials() =>
+    internal static CarrierCredentials Credentials() =>
         new()
         {
             ApiKey = "client-id",
             ApiSecret = "client-secret",
             AccountId = "510087000",
+            ExtraConfig = new() { ["pickupType"] = "DROPOFF_AT_FEDEX_LOCATION" },
             UseSandbox = true
         };
 
-    private static string ValidShipmentJson() =>
+    internal static string ValidShipmentJson() =>
         """
         {
           "transactionId": "transaction-1",
@@ -300,6 +459,7 @@ public sealed class FedExEndpointRuntimeIntegrationTests
             "transactionShipments": [
               {
                 "masterTrackingNumber": "123456789012",
+                "serviceType": "FEDEX_GROUND",
                 "pieceResponses": [
                   {
                     "trackingNumber": "123456789012",
@@ -376,10 +536,11 @@ public sealed class FedExEndpointRuntimeIntegrationTests
           "output": {
             "resolvedAddresses": [
               {
-                "streetLines": ["20 BROADWAY"],
+                "streetLinesToken": ["20 BROADWAY"],
                 "city": "NEW YORK",
                 "stateOrProvinceCode": "NY",
-                "postalCode": "10001",
+                "postalCodeToken": { "value": "10001", "changed": false },
+                "attributes": { "AddressType": "STANDARDIZED", "CountrySupported": true, "Resolved": true, "Matched": true, "ValidlyFormed": true, "DPV": true },
                 "countryCode": "US",
                 "classification": "BUSINESS"
               }
@@ -393,18 +554,16 @@ public sealed class FedExEndpointRuntimeIntegrationTests
         {
           "transactionId": "transaction-1",
           "output": {
-            "services": [
+            "transitTimes": [{ "transitTimeDetails": [
               {
                 "serviceType": "FEDEX_2_DAY",
                 "serviceName": "FedEx 2Day",
-                "transitTime": {
-                  "minimumTransitTime": 2,
-                  "maximumTransitTime": 2,
-                  "unit": "DAYS"
-                },
-                "deliveryDate": "2026-07-10T17:00:00-05:00"
+                "commit": { "transitDays": {
+                  "minimumTransitTime": "TWO_DAYS",
+                  "maximumTransitTime": "TWO_DAYS"
+                } }
               }
-            ],
+            ] }],
             "alerts": [
               {
                 "code": "NOTE",

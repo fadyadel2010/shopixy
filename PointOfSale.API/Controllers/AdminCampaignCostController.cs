@@ -4,6 +4,9 @@ using PointOfSale.Core.Analytics.Attribution;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.API.Services.Analytics;
 using PointOfSale.Infrastructure.CampaignCost;
+using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
+using Npgsql;
 
 namespace PointOfSale.API.Controllers;
 
@@ -67,6 +70,8 @@ public class AdminCampaignCostController : ControllerBase
 
         var costs = await _campaignCostService.GetByPeriodAsync(
             tenantId, startUtc, endUtc, cancellationToken);
+        var currency = await _currencyResolver.ResolveAsync(tenantId, [], cancellationToken);
+        var compatible = !string.IsNullOrWhiteSpace(currency.TenantCurrency) && costs.All(c => string.Equals(c.Currency, currency.TenantCurrency, StringComparison.OrdinalIgnoreCase));
 
         var response = new CampaignCostsResponse
         {
@@ -74,7 +79,7 @@ public class AdminCampaignCostController : ControllerBase
             StartDate = startUtc,
             EndDate = endUtc,
             TotalCount = costs.Count,
-            TotalCost = costs.Sum(c => c.CostAmount),
+            TotalCost = compatible ? costs.Sum(c => c.CostAmount) : null,
             Costs = costs.Select(c => new CampaignCostDto
             {
                 CampaignCostId = c.CampaignCostId,
@@ -126,7 +131,8 @@ public class AdminCampaignCostController : ControllerBase
             !string.Equals(request.Currency.Trim(), currencyResolution.TenantCurrency, StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Campaign cost currency must match tenant currency" });
 
-        var cost = await _campaignCostService.CreateOrUpdateAsync(
+        Core.Analytics.Attribution.CampaignCost cost;
+        try { cost = await _campaignCostService.CreateOrUpdateAsync(
             tenantId,
             new CreateCampaignCostRequest
             {
@@ -139,7 +145,10 @@ public class AdminCampaignCostController : ControllerBase
                 Currency = currencyResolution.TenantCurrency,
                 Notes = request.Notes
             },
-            cancellationToken);
+            cancellationToken); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        { return Conflict(new { message = "Campaign cost changed concurrently. Reload before retrying." }); }
 
         return Ok(new CampaignCostDto
         {
@@ -195,11 +204,15 @@ public class AdminCampaignCostController : ControllerBase
             !string.Equals(request.Currency.Trim(), currencyResolution.TenantCurrency, StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Campaign cost currency must match tenant currency" });
 
-        // Delete old and create new (upsert pattern)
-        await _campaignCostService.DeleteAsync(tenantId, id, cancellationToken);
-        
-        var cost = await _campaignCostService.CreateOrUpdateAsync(
-            tenantId,
+        DateTime? expectedUpdatedAt = null;
+        if (Request.Headers.TryGetValue("If-Match", out var version)) {
+            if (!DateTime.TryParse(version.ToString().Trim('"'), null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) || parsed.Kind != DateTimeKind.Utc)
+                return BadRequest(new { message = "Invalid campaign cost revision" });
+            expectedUpdatedAt = parsed;
+        }
+        Core.Analytics.Attribution.CampaignCost? cost;
+        try { cost = await _campaignCostService.ReplaceAsync(
+            tenantId, id,
             new CreateCampaignCostRequest
             {
                 Source = request.Source,
@@ -211,7 +224,13 @@ public class AdminCampaignCostController : ControllerBase
                 Currency = currencyResolution.TenantCurrency,
                 Notes = request.Notes
             },
-            cancellationToken);
+            expectedUpdatedAt, cancellationToken); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (DbUpdateConcurrencyException) { return Conflict(new { message = "Campaign cost changed. Reload before editing." }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        { return Conflict(new { message = "Another cost already exists for this campaign and period start." }); }
+        if (cost == null) return NotFound(new { message = "Campaign cost not found" });
 
         return Ok(new CampaignCostDto
         {
@@ -262,6 +281,7 @@ public class AdminCampaignCostController : ControllerBase
         [FromQuery] AttributionModel model = AttributionModel.LastTouch,
         CancellationToken cancellationToken = default)
     {
+        if (!Enum.IsDefined(model)) return BadRequest(new { message = "Unsupported attribution model" });
         var tenantId = _tenantContext.RequiredTenantId;
         var (startUtc, endUtc, periodLabel) = ParsePeriod(period, startDate, endDate);
 
@@ -307,6 +327,7 @@ public class AdminCampaignCostController : ControllerBase
         [FromQuery] AttributionModel model = AttributionModel.LastTouch,
         CancellationToken cancellationToken = default)
     {
+        if (!Enum.IsDefined(model)) return BadRequest(new { message = "Unsupported attribution model" });
         var tenantId = _tenantContext.RequiredTenantId;
         var (startUtc, endUtc, periodLabel) = ParsePeriod(period, startDate, endDate);
 
@@ -323,6 +344,10 @@ public class AdminCampaignCostController : ControllerBase
             TotalRevenue = roiResults.Sum(r => r.Revenue),
             TotalOrders = roiResults.Sum(r => r.Orders),
             TotalProfit = roiResults.Sum(r => r.Profit),
+            OverallRoi = roiResults.Sum(r => r.Cost) > 0
+                ? Math.Round(roiResults.Sum(r => r.Profit) / roiResults.Sum(r => r.Cost) * 100, 2) : null,
+            CostPerAcquisition = roiResults.Sum(r => r.Orders) > 0
+                ? roiResults.Sum(r => r.Cost) / roiResults.Sum(r => r.Orders) : null,
             Campaigns = roiResults.Select(r => new CampaignRoiResultDto
             {
                 Source = r.Source,
@@ -367,8 +392,8 @@ public class AdminCampaignCostController : ControllerBase
         {
             "today" => (now.Date, now.Date.AddDays(1), "today"),
             "yesterday" => (now.Date.AddDays(-1), now.Date, "yesterday"),
-            "last_7_days" => (now.Date.AddDays(-7), now.Date.AddDays(1), "last_7_days"),
-            "last_30_days" => (now.Date.AddDays(-30), now.Date.AddDays(1), "last_30_days"),
+            "last_7_days" => (now.Date.AddDays(-6), now.Date.AddDays(1), "last_7_days"),
+            "last_30_days" => (now.Date.AddDays(-29), now.Date.AddDays(1), "last_30_days"),
             "this_month" => (new DateTime(now.Year, now.Month, 1), now.Date.AddDays(1), "this_month"),
             "last_month" => (
                 new DateTime(now.Year, now.Month, 1).AddMonths(-1),
@@ -411,7 +436,7 @@ public class CampaignCostsResponse
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
     public int TotalCount { get; set; }
-    public decimal TotalCost { get; set; }
+    public decimal? TotalCost { get; set; }
     public List<CampaignCostDto> Costs { get; set; } = new();
 }
 
@@ -432,13 +457,17 @@ public class CampaignCostDto
 
 public class CreateCampaignCostDto
 {
+    [Required, StringLength(100)]
     public string Source { get; set; } = string.Empty;
+    [Required, StringLength(100)]
     public string Medium { get; set; } = string.Empty;
+    [Required, StringLength(200)]
     public string Campaign { get; set; } = string.Empty;
     public DateTime PeriodStartUtc { get; set; }
     public DateTime PeriodEndUtc { get; set; }
     public decimal CostAmount { get; set; }
     public string? Currency { get; set; }
+    [StringLength(500)]
     public string? Notes { get; set; }
 }
 
@@ -479,6 +508,8 @@ public class CampaignCostRoiResponse
     public decimal TotalRevenue { get; set; }
     public int TotalOrders { get; set; }
     public decimal TotalProfit { get; set; }
+    public decimal? OverallRoi { get; set; }
+    public decimal? CostPerAcquisition { get; set; }
     public List<CampaignRoiResultDto> Campaigns { get; set; } = new();
 }
 

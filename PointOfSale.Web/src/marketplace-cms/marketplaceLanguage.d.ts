@@ -1,0 +1,17 @@
+export const MARKETPLACE_LANGUAGE_STORAGE_KEY: 'shopixy-marketplace-language';
+export const MARKETPLACE_LANGUAGE_COOKIE: 'shopixy_marketplace_lang';
+export const SUPPORTED_MARKETPLACE_LANGUAGES: ('en' | 'ar')[];
+export function normalizeMarketplaceLanguage(value: unknown): 'en' | 'ar';
+export function resolveMarketplaceLanguageFromPath(pathname: string): 'en' | 'ar' | null;
+export function getSavedMarketplaceLanguage(): 'en' | 'ar' | null;
+export function resolveInitialLanguage(pathname?: string): 'en' | 'ar';
+export const getCurrentLanguage: typeof resolveInitialLanguage;
+export function setLanguage(language: unknown): 'en' | 'ar';
+export function getStoredMarketplaceLanguage(): 'en' | 'ar';
+export const persistMarketplaceLanguage: typeof setLanguage;
+export function buildMarketplacePagePath(language: unknown, slug: string): string;
+export const buildMarketplaceProductPath: typeof buildMarketplacePagePath;
+export function replaceMarketplaceLanguagePrefix(pathname: string, language: unknown): string;
+export function buildMarketplaceLanguageUrl(pathname: string, search: string, language: unknown): string;
+export function prefixMarketplacePath(language: unknown, url?: string): string;
+export function applyMarketplaceDocumentLanguage(language: unknown): void;

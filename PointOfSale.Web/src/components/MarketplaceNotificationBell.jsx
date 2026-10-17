@@ -56,6 +56,7 @@ export default function MarketplaceNotificationBell() {
     const user = useAuthStore((state) => state.user)
     const isMarketplaceActor = isServiceMarketplaceWorkflowActor(user, isAuthenticated)
     const actorScope = `${user?.tenantId || ''}:${user?.id || user?.userId || ''}:${user?.role || ''}`
+    const activeScope = useRef(null)
 
     const fetchIncomingRequests = useCallback(async () => {
         try {
@@ -66,6 +67,7 @@ export default function MarketplaceNotificationBell() {
             }
 
             const response = await api.get('/marketplace/incoming-requests')
+            if (activeScope.current !== actorScope) return
             const data = response.data || []
             const pending = data.filter((request) => request.status === 'Pending')
             const pendingIds = new Set(pending.map((request) => request.requestId))
@@ -79,18 +81,20 @@ export default function MarketplaceNotificationBell() {
             setUnseenCount(unseen.length)
             setUnseenRequests(unseen.slice(0, 5))
         } catch {
+            if (activeScope.current !== actorScope) return
             setUnseenCount(0)
             setUnseenRequests([])
         }
     }, [actorScope, isMarketplaceActor])
 
     useEffect(() => {
+        activeScope.current = actorScope
         setUnseenCount(0)
         setUnseenRequests([])
         setShowDropdown(false)
         fetchIncomingRequests()
         const interval = setInterval(fetchIncomingRequests, 30000)
-        return () => clearInterval(interval)
+        return () => { activeScope.current = null; clearInterval(interval) }
     }, [actorScope, fetchIncomingRequests])
 
     useEffect(() => {

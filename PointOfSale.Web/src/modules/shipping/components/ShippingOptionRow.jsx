@@ -11,8 +11,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-    Truck, Edit2, Trash2, ToggleLeft, ToggleRight,
-    ArrowRight, Package, DollarSign, Clock
+    Edit2, Trash2, ToggleLeft, ToggleRight,
+    ArrowRight, Clock
 } from 'lucide-react'
 import { getCarrierInfo } from '../hooks/useShippingSetupApi'
 

@@ -63,6 +63,7 @@ public class StorefrontCartController : ControllerBase
     private readonly PointOfSale.Infrastructure.Data.ApplicationDbContext _dbContext;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<StorefrontCartController> _logger;
+    private readonly PointOfSale.API.Services.Promotions.ICartDiscountAuthority _discountAuthority;
 
     private const string TenantIdHeader = "X-Tenant-Id";
     private const string SessionIdHeader = "X-Session-Id";
@@ -76,7 +77,8 @@ public class StorefrontCartController : ControllerBase
         ISmartOfferRedeemTokenService smartOfferRedeemTokenService,
         PointOfSale.Infrastructure.Data.ApplicationDbContext dbContext,
         CommerceReliabilityTelemetry reliabilityTelemetry,
-        ILogger<StorefrontCartController> logger)
+        ILogger<StorefrontCartController> logger,
+        PointOfSale.API.Services.Promotions.ICartDiscountAuthority discountAuthority)
     {
         _cartService = cartService;
         _couponService = couponService;
@@ -85,6 +87,7 @@ public class StorefrontCartController : ControllerBase
         _dbContext = dbContext;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
+        _discountAuthority = discountAuthority;
     }
 
     /// <summary>
@@ -988,6 +991,7 @@ public class StorefrontCartController : ControllerBase
                 traceId,
                 cancellationToken);
 
+            await _discountAuthority.ReconcileAsync(cart, validation.CustomerId, traceId, cancellationToken);
             return Ok(cart);
         }
         catch (UnauthorizedAccessException ex) when (IsTenantMismatch(ex))
@@ -1145,6 +1149,7 @@ public class StorefrontCartController : ControllerBase
                 "RemoveCoupon success | TenantId: {TenantId} | RemovedCode: {Code} | TraceId: {TraceId}",
                 validation.TenantId, removedCode, traceId);
 
+            await _discountAuthority.ReconcileAsync(cart, validation.CustomerId, traceId, cancellationToken);
             return Ok(cart);
         }
         catch (UnauthorizedAccessException ex) when (IsTenantMismatch(ex))
@@ -1360,6 +1365,18 @@ public class StorefrontCartController : ControllerBase
     #region Header Validation
 
     private async Task<CartDto> RevalidateCouponForResponseAsync(
+        CartDto cart,
+        Guid tenantId,
+        Guid? customerId,
+        string traceId,
+        CancellationToken cancellationToken)
+    {
+        cart = await RevalidateCouponStateAsync(cart, tenantId, customerId, traceId, cancellationToken);
+        await _discountAuthority.ReconcileAsync(cart, customerId, traceId, cancellationToken);
+        return cart;
+    }
+
+    private async Task<CartDto> RevalidateCouponStateAsync(
         CartDto cart,
         Guid tenantId,
         Guid? customerId,

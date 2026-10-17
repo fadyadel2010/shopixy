@@ -1,6 +1,7 @@
 import { httpClient } from './httpClient';
 import { ENDPOINTS } from './endpoints';
 import { normalizeCartResponse } from './cartResponse';
+import { requireProductDetailAuthority, requireVariantResolutionAuthority } from './productAuthority';
 import type {
     StoreConfig,
     ProductReadDto,
@@ -175,7 +176,7 @@ export const fetchProductByIdentifier = async (identifier: string): Promise<Prod
     const response = await httpClient.get<ProductReadDto>(
         endpoint
     );
-    return response.data;
+    return requireProductDetailAuthority(response.data, identifier);
 };
 
 export const resolveProductVariant = async (
@@ -185,10 +186,10 @@ export const resolveProductVariant = async (
 ): Promise<StorefrontVariantResolutionResponse> => {
     const response = await httpClient.post<StorefrontVariantResolutionResponse>(
         ENDPOINTS.PRODUCT_VARIANT_RESOLUTION(productId),
-        request,
+        { selectedOptions: request.selectedOptions },
         { signal }
     );
-    return response.data;
+    return requireVariantResolutionAuthority(response.data, productId, request);
 };
 
 // ============================================================

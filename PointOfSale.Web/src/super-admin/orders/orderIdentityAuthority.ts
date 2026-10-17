@@ -68,7 +68,7 @@ function assertDetailSplitItems(order: SuperAdminOrderDetails) {
 
     const subOrderIds = new Set(order.subOrders.map((subOrder) => subOrder.subOrderId))
     const seenItemIds = new Set<string>()
-    for (const item of order.orderItems as Array<Record<string, unknown>>) {
+    for (const item of order.orderItems) {
         if (
             !isNonEmptyString(item.itemId) ||
             seenItemIds.has(item.itemId) ||

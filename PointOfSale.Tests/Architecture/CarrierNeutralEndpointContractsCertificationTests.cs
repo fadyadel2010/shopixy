@@ -183,7 +183,7 @@ public sealed class CarrierNeutralEndpointContractsCertificationTests
             DistrictPlaceId: null,
             ZonePlaceId: null,
             CountryIso2: "US",
-            AdministrativeAreaCode: null,
+            AdministrativeAreaCode: city == "Memphis" ? "TN" : "NY",
             AdministrativeAreaDisplayName: "Tennessee",
             City: city,
             District: null,
@@ -201,10 +201,11 @@ public sealed class CarrierNeutralEndpointContractsCertificationTests
           "output": {
             "resolvedAddresses": [
               {
-                "streetLines": ["20 BROADWAY"],
+                "streetLinesToken": ["20 BROADWAY"],
                 "city": "NEW YORK",
                 "stateOrProvinceCode": "NY",
-                "postalCode": "10001",
+                "postalCodeToken": { "value": "10001", "changed": false },
+                "attributes": { "AddressType": "STANDARDIZED", "CountrySupported": true, "Resolved": true, "Matched": true, "ValidlyFormed": true, "DPV": true },
                 "countryCode": "US",
                 "classification": "BUSINESS"
               }
@@ -218,17 +219,16 @@ public sealed class CarrierNeutralEndpointContractsCertificationTests
         {
           "transactionId": "transaction-1",
           "output": {
-            "services": [
+            "transitTimes": [{ "transitTimeDetails": [
               {
                 "serviceType": "FEDEX_2_DAY",
                 "serviceName": "FedEx 2Day",
-                "transitTime": {
-                  "minimumTransitTime": 2,
-                  "maximumTransitTime": 2,
-                  "unit": "DAYS"
-                }
+                "commit": { "transitDays": {
+                  "minimumTransitTime": "TWO_DAYS",
+                  "maximumTransitTime": "TWO_DAYS"
+                } }
               }
-            ]
+            ] }]
           }
         }
         """;

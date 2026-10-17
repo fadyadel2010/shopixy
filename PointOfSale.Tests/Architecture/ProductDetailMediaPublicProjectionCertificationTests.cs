@@ -25,11 +25,14 @@ public sealed class ProductDetailMediaPublicProjectionCertificationTests
         var overlay = ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/Services/ProductSearchSqlAuthorityOverlay.cs");
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", search, StringComparison.Ordinal);
-        Assert.Contains("sqlProjection is { IsActive: true, IsOnlineVisible: true }", search, StringComparison.Ordinal);
+        Assert.Contains("sqlProjection is { IsActive: true, IsOnlineVisible: true, IsSearchable: true }", search, StringComparison.Ordinal);
         Assert.Contains("RecomposeDiscoveryItemsFromSqlAuthorityAsync", discovery, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", discovery, StringComparison.Ordinal);
-        Assert.Contains("product is not { IsActive: true, IsOnlineVisible: true }", discovery, StringComparison.Ordinal);
-        Assert.Contains("TenantLineageAuthority.IsActiveTenantAsync", overlay, StringComparison.Ordinal);
+        Assert.Contains("product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true }", discovery, StringComparison.Ordinal);
+        Assert.Contains("tenant.Id == p.TenantId", overlay, StringComparison.Ordinal);
+        Assert.Contains("tenant.IsActive", overlay, StringComparison.Ordinal);
+        Assert.Contains("tenant.Status == TenantStatus.Active", overlay, StringComparison.Ordinal);
+        Assert.Contains("tenant.DeletedAtUtc == null", overlay, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -40,7 +43,12 @@ public sealed class ProductDetailMediaPublicProjectionCertificationTests
         Assert.Contains("LoadCurrentVisibleProductBySlugAsync", seo, StringComparison.Ordinal);
         Assert.Contains("ApplyCurrentSqlProductAuthorityAsync", seo, StringComparison.Ordinal);
         Assert.Contains("IsCurrentProductSlugAsync", seo, StringComparison.Ordinal);
-        Assert.Contains("Cached product slug resolution rejected by current SQL product authority", seo, StringComparison.Ordinal);
+        Assert.Contains("isCurrent = await IsCurrentProductSlugAsync(", seo, StringComparison.Ordinal);
+        Assert.Contains("tenantId, cachedData.Id, cachedData.CanonicalSlug, cancellationToken", seo, StringComparison.Ordinal);
+        Assert.Contains("if (isCurrent)", seo, StringComparison.Ordinal);
+        Assert.Contains("return cachedData;", seo, StringComparison.Ordinal);
+        Assert.Contains("await TryRemoveSlugCandidateAsync(cacheKey, tenantId, correlationId)", seo, StringComparison.Ordinal);
+        Assert.Contains("return await DiscoverOrShareMissingSlugAsync(tenantId, slug, cacheKey", seo, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", seo, StringComparison.Ordinal);
         Assert.Contains("product is not { IsActive: true, IsOnlineVisible: true }", seo, StringComparison.Ordinal);
         Assert.DoesNotContain("var product = await _productRepository.FindBySlugAsync(tenantId, slug, true, cancellationToken);", seo, StringComparison.Ordinal);

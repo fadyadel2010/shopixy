@@ -241,12 +241,6 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
             _dbContext.OnlineCustomerEmailVerifications.Add(verification);
             await _dbContext.SaveChangesAsync(cancellationToken);
 
-            // Update rate limit counter for resends
-            if (isResend)
-            {
-                await IncrementResendCounterAsync(tenantId, customerId);
-            }
-
             // Publish event for email sending
             await _eventPublisher.PublishAsync(new OnlineCustomerEmailVerificationRequestedEvent
             {
@@ -278,9 +272,9 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex,
-                "[EmailVerification] Request failed | TenantId: {TenantId} | CustomerId: {CustomerId} | TraceId: {TraceId}",
-                tenantId, customerId, traceId);
+            _logger.LogWarning(
+                "[EmailVerification] Request failed | TenantId: {TenantId} | CustomerId: {CustomerId} | ErrorType: {ErrorType} | TraceId: {TraceId}",
+                tenantId, customerId, ex.GetType().Name, traceId);
             return new StorefrontEmailVerificationResult
             {
                 Success = false,
@@ -497,45 +491,29 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
 
     private async Task<(bool Allowed, int RetryAfterSeconds)> CheckResendRateLimitAsync(Guid tenantId, Guid customerId)
     {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var key = string.Format(ResendRateLimitKeyPrefix, tenantId, customerId);
-            var count = await db.StringGetAsync(key);
-
-            if (count.TryParse(out int currentCount) && currentCount >= _settings.MaxResendsPerHour)
-            {
-                var ttl = await db.KeyTimeToLiveAsync(key);
-                var retryAfter = ttl.HasValue ? (int)ttl.Value.TotalSeconds : 3600;
-                return (false, retryAfter);
-            }
-
-            return (true, 0);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[EmailVerification] Rate limit check failed, allowing request");
-            return (true, 0);
-        }
-    }
-
-    private async Task IncrementResendCounterAsync(Guid tenantId, Guid customerId)
-    {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var key = string.Format(ResendRateLimitKeyPrefix, tenantId, customerId);
-            
-            var newValue = await db.StringIncrementAsync(key);
-            if (newValue == 1)
-            {
-                await db.KeyExpireAsync(key, ResendRateLimitTtl);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[EmailVerification] Failed to increment resend counter");
-        }
+        // Reserve an attempt atomically. GET then INCR allows concurrent requests
+        // through the same limit; cache failure must not disable abuse protection.
+        const string script = """
+            local count = tonumber(redis.call('GET', KEYS[1]) or '0')
+            if count >= tonumber(ARGV[1]) then
+                local ttl = redis.call('TTL', KEYS[1])
+                if ttl < 0 then
+                    redis.call('EXPIRE', KEYS[1], ARGV[2])
+                    ttl = tonumber(ARGV[2])
+                end
+                return {0, ttl}
+            end
+            local next = redis.call('INCR', KEYS[1])
+            if next == 1 or redis.call('TTL', KEYS[1]) < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            return {1, 0}
+            """;
+        var key = string.Format(ResendRateLimitKeyPrefix, tenantId, customerId);
+        var result = (RedisResult[])(await _redis.GetDatabase().ScriptEvaluateAsync(
+            script, new RedisKey[] { key },
+            new RedisValue[] { _settings.MaxResendsPerHour, (int)ResendRateLimitTtl.TotalSeconds }))!;
+        return ((int)result[0] == 1, (int)result[1]);
     }
 
     private async Task<(int Count, TimeSpan? Ttl)> GetResendCountAsync(Guid tenantId, Guid customerId)
@@ -581,7 +559,7 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
         string verificationUrl,
         DateTime expiresAt)
     {
-        var displayName = customer.DisplayName ?? "Customer";
+        var displayName = System.Net.WebUtility.HtmlEncode(customer.DisplayName ?? "Customer");
         var expireHours = _settings.TokenExpirationHours;
 
         var subject = "Verify your email address";
@@ -685,10 +663,12 @@ This is an automated message from {_settings.SenderName}
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex,
-                "[EmailVerification] Failed to send verification email | Email: {Email}",
-                MaskEmail(customer.Email));
-            // Don't throw - email sending failure shouldn't block registration
+            _logger.LogWarning(
+                "[EmailVerification] Failed to dispatch verification email | CustomerId: {CustomerId} | ErrorType: {ErrorType}",
+                customer.Id, ex.GetType().Name);
+            // The registration caller owns account-creation success. Resend and
+            // dispatch callers must receive an honest failure, never "email sent".
+            throw;
         }
     }
 

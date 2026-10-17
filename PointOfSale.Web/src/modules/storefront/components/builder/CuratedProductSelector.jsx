@@ -14,14 +14,15 @@ export function CuratedProductSelector({ ids = [], onChange, maxItems = 8, limit
 
     useEffect(() => {
         const controller = new AbortController()
-        if (!ids.length) {
+        const requestedIds = selectedKey ? selectedKey.split(',') : []
+        if (!requestedIds.length) {
             setSelected([])
             setLoadingSelected(false)
             return () => controller.abort()
         }
         setLoadingSelected(true)
-        api.get('/products/lookup/selected', { params: { ids }, paramsSerializer: { indexes: null }, signal: controller.signal })
-            .then(({ data }) => setSelected(Array.isArray(data) ? data : []))
+        api.get('/products/lookup/selected', { params: { ids: requestedIds }, paramsSerializer: { indexes: null }, signal: controller.signal })
+            .then(({ data }) => { if (!controller.signal.aborted) setSelected(Array.isArray(data) ? data : []) })
             .catch(() => { if (!controller.signal.aborted) setSearchError(true) })
             .finally(() => { if (!controller.signal.aborted) setLoadingSelected(false) })
         return () => controller.abort()
@@ -36,6 +37,7 @@ export function CuratedProductSelector({ ids = [], onChange, maxItems = 8, limit
                 params: { search: query.trim(), isActive: true, pageSize: 30 },
                 signal: controller.signal,
             }).then(({ data }) => {
+                if (controller.signal.aborted) return
                 setResults(Array.isArray(data) ? data : [])
                 setSearchError(false)
             }).catch(() => { if (!controller.signal.aborted) setSearchError(true) })

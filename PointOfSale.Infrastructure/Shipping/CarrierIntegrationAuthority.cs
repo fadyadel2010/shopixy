@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.Geographic;
 using PointOfSale.Core.Entities.ShippingAdministration;
 using PointOfSale.Infrastructure.Data;
 
@@ -142,6 +143,9 @@ public sealed record CarrierWebhookTrustResolution(
 
 public interface ICarrierIntegrationAuthority
 {
+    // Configuration/connectivity only; never operational authorization.
+    Task<CarrierCredentialsResolution> ResolveConnectionCredentialsAsync(Guid tenantId, string carrierCode,
+        CancellationToken cancellationToken = default) => ResolveCredentialsAsync(tenantId, carrierCode, CarrierIntegrationPurpose.AdminValidation, cancellationToken);
     Task<IReadOnlyList<CarrierIntegrationConfigurationSnapshot>> ListRuntimeConfigurationsAsync(
         Guid tenantId,
         CarrierIntegrationPurpose purpose,
@@ -187,6 +191,10 @@ public interface ICarrierIntegrationAuthority
         Guid tenantId,
         string carrierCode,
         CancellationToken cancellationToken = default);
+
+    Task<CarrierWebhookTrustResolution> ResolveWebhookTrustForMutationAsync(
+        Guid tenantId, string carrierCode, CancellationToken cancellationToken = default)
+        => throw new InvalidOperationException("Locked webhook trust authority is not supported by this implementation.");
 }
 
 public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
@@ -196,19 +204,22 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
     private readonly ICarrierCapabilityRegistry _capabilityRegistry;
     private readonly ICarrierCredentialEncryptionService _credentialEncryption;
     private readonly ILogger<CarrierIntegrationAuthority> _logger;
+    private readonly BostaPickupVerificationCache? _pickupVerification;
 
     public CarrierIntegrationAuthority(
         ApplicationDbContext db,
         IShippingCarrierRegistry carrierRegistry,
         ICarrierCapabilityRegistry capabilityRegistry,
         ICarrierCredentialEncryptionService credentialEncryption,
-        ILogger<CarrierIntegrationAuthority> logger)
+        ILogger<CarrierIntegrationAuthority> logger,
+        BostaPickupVerificationCache? pickupVerification = null)
     {
         _db = db;
         _carrierRegistry = carrierRegistry;
         _capabilityRegistry = capabilityRegistry;
         _credentialEncryption = credentialEncryption;
         _logger = logger;
+        _pickupVerification = pickupVerification;
     }
 
     public async Task<IReadOnlyList<CarrierIntegrationConfigurationSnapshot>> ListRuntimeConfigurationsAsync(
@@ -282,7 +293,7 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             purpose,
             cancellationToken);
 
-        if (!readiness.CanExecute && PurposeRequiresExecutableReadiness(purpose))
+        if (!readiness.CanExecute && (normalizedCarrierCode == CarrierCodes.Mylerz || PurposeRequiresExecutableReadiness(purpose)))
         {
             return new CarrierCredentialsResolution(
                 false,
@@ -429,6 +440,17 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
                 DisplayName = adapter.DisplayName,
                 CreatedAt = DateTime.UtcNow
             };
+            if (normalizedCarrierCode == CarrierCodes.Bosta)
+            {
+                // These are adapter capabilities, not caller-authored claims. Bosta
+                // has no remote quote or label-retrieval implementation.
+                config.SupportsCod = true;
+                config.SupportsTracking = true;
+                config.SupportsWebhooks = true;
+                config.SupportsLabels = false;
+                config.SupportsQuotes = false;
+                config.SupportsCancellation = true;
+            }
             _db.Set<CarrierConfiguration>().Add(config);
         }
 
@@ -533,6 +555,16 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             readiness.Blockers);
     }
 
+    public async Task<CarrierCredentialsResolution> ResolveConnectionCredentialsAsync(Guid tenantId, string carrierCode,
+        CancellationToken cancellationToken = default)
+    {
+        var code = CarrierCodes.Normalize(carrierCode);
+        var config = await LoadConfigurationAsync(tenantId, code, cancellationToken);
+        return config == null
+            ? new(false, code, null, null, new[] { "CARRIER_CONFIGURATION_MISSING" })
+            : new(true, code, BuildCredentials(config), MapConfiguration(config), Array.Empty<string>());
+    }
+
     public async Task<CarrierValidationResult> ValidateResolvedCredentialsAsync(
         Guid tenantId,
         string carrierCode,
@@ -565,11 +597,7 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
         }
 
         var validationFingerprint = ComputeCredentialConfigurationFingerprint(configurationBeforeValidation);
-        var resolution = await ResolveCredentialsAsync(
-            tenantId,
-            normalizedCarrierCode,
-            CarrierIntegrationPurpose.AdminValidation,
-            cancellationToken);
+        var resolution = await ResolveConnectionCredentialsAsync(tenantId, normalizedCarrierCode, cancellationToken);
 
         if (!resolution.Succeeded || resolution.Credentials == null)
         {
@@ -581,10 +609,22 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             };
         }
 
-        var result = await adapter.ValidateCredentialsAsync(resolution.Credentials, cancellationToken);
+        var validationStartedAtUtc = DateTime.UtcNow;
+        CarrierValidationResult result;
+        try { result = await adapter.ValidateCredentialsAsync(resolution.Credentials, cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { result = Adapters.CarrierConnectionDiagnostics.Failure("CONNECTION_TIMEOUT"); }
+        catch (TimeoutException) { result = Adapters.CarrierConnectionDiagnostics.Failure("CONNECTION_TIMEOUT"); }
+        catch (HttpRequestException) { result = Adapters.CarrierConnectionDiagnostics.Failure("NETWORK_ERROR"); }
+        catch (Exception) { result = Adapters.CarrierConnectionDiagnostics.Failure("CONNECTION_TEST_EXCEPTION"); }
         var config = await LoadConfigurationAsync(tenantId, normalizedCarrierCode, cancellationToken);
         if (config != null)
         {
+            // EF identity resolution otherwise returns the pre-request tracked row.
+            // Re-read before admitting evidence from an in-flight provider request.
+            await _db.Entry(config).ReloadAsync(cancellationToken);
+            if (config.LastValidatedAtUtc > validationStartedAtUtc)
+                return Adapters.CarrierConnectionDiagnostics.Failure("CONNECTION_TEST_SUPERSEDED");
             var currentFingerprint = ComputeCredentialConfigurationFingerprint(config);
             if (!FixedTimeEquals(validationFingerprint, currentFingerprint))
             {
@@ -605,7 +645,8 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             }
 
             config.CredentialConfigurationFingerprint = currentFingerprint;
-            config.LastValidatedAtUtc = DateTime.UtcNow;
+            result.TestedAtUtc = validationStartedAtUtc;
+            config.LastValidatedAtUtc = validationStartedAtUtc;
             config.LastValidationSucceeded = result.Success;
             config.LastValidationError = result.ErrorMessage;
             config.LastValidatedConfigurationFingerprint = currentFingerprint;
@@ -637,6 +678,19 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
         return true;
     }
 
+    public async Task<CarrierWebhookTrustResolution> ResolveWebhookTrustForMutationAsync(
+        Guid tenantId, string carrierCode, CancellationToken cancellationToken = default)
+    {
+        if (!_db.Database.IsNpgsql() || _db.Database.CurrentTransaction == null)
+            throw new InvalidOperationException("Locked webhook trust requires the owned PostgreSQL business transaction.");
+        var normalized = CarrierCodes.Normalize(carrierCode);
+        // Called only AFTER order -> shipment -> inbox locks. Credential reads stay in this authority.
+        var config = await _db.Set<CarrierConfiguration>().FromSqlInterpolated($"SELECT * FROM \"CarrierConfigurations\" WHERE \"TenantId\"={tenantId} AND \"CarrierCode\"={normalized} AND NOT \"IsDeleted\" FOR UPDATE")
+            .IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        // Evaluate exactly the locked snapshot. Do not re-read a phantom replacement configuration.
+        return ResolveWebhookTrust(normalized, config);
+    }
+
     public async Task<CarrierWebhookTrustResolution> ResolveWebhookTrustAsync(
         Guid tenantId,
         string carrierCode,
@@ -644,6 +698,11 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
     {
         var normalizedCarrierCode = CarrierCodes.Normalize(carrierCode);
         var config = await LoadConfigurationAsync(tenantId, normalizedCarrierCode, cancellationToken);
+        return ResolveWebhookTrust(normalizedCarrierCode, config);
+    }
+
+    private CarrierWebhookTrustResolution ResolveWebhookTrust(string normalizedCarrierCode, CarrierConfiguration? config)
+    {
         var capability = _capabilityRegistry.GetCapability(normalizedCarrierCode);
         if (config == null ||
             !config.IsEnabled ||
@@ -717,6 +776,9 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
         var displayName = capability?.DisplayName ?? adapter?.DisplayName ?? carrierCode;
         var productionCapability = capability?.ProductionCapability ?? CarrierProductionCapability.Unavailable;
 
+        if (carrierCode == CarrierCodes.Mylerz)
+            blockers.Add(Adapters.MylerzAdapter.ContractUnavailableErrorCode);
+
         if (capability == null || adapter == null)
         {
             blockers.Add("UNSUPPORTED_CARRIER");
@@ -743,8 +805,28 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
         var credentials = config == null ? null : BuildCredentials(config);
         var missingCredentialFields = config == null || capability == null
             ? Array.Empty<string>()
-            : GetMissingRequiredCredentialFields(capability, credentials!);
+            : GetMissingRequiredCredentialFields(capability, credentials!, config);
         blockers.AddRange(missingCredentialFields);
+
+        // No provider calls in readiness/claim transactions. Missing explicit ID
+        // means provider-default mode, not missing credentials. A bounded
+        // server-owned proof from authenticated discovery is still required.
+        if (carrierCode == CarrierCodes.Bosta && purpose is CarrierIntegrationPurpose.ShipmentCreation or CarrierIntegrationPurpose.ExternalRegistration)
+        {
+            if (credentials?.ExtraConfig.TryGetValue("businessLocationId", out var pickupId) == true)
+            {
+                if (!BostaPickupSelections.ValidId(pickupId)) blockers.Add("BOSTA_BUSINESS_LOCATION_INVALID");
+            }
+            // Both modes require current authenticated ownership evidence. A
+            // syntactically valid saved override is not proof after key rotation.
+            {
+                var account = await _db.CarrierAccounts.IgnoreQueryFilters().AsNoTracking()
+                    .SingleOrDefaultAsync(a => a.TenantId == tenantId && a.CarrierCode == CarrierCodes.Bosta && !a.IsDeleted, cancellationToken);
+                if (config == null || credentials == null || account == null || account.Environment.ToString() != (credentials.UseSandbox ? "Sandbox" : "Production") ||
+                    _pickupVerification?.Read(tenantId, config.Id, account.Id, account.ActiveCredentialReferenceId, credentials) == null)
+                    blockers.Add("BOSTA_PICKUP_VERIFICATION_REQUIRED");
+            }
+        }
 
         var validationMatchesCurrentConfiguration = config != null &&
                                                     FixedTimeEquals(
@@ -764,16 +846,41 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             blockers.Add("CARRIER_CONNECTION_NOT_VERIFIED");
         }
 
-        var originReadinessRequired = capability?.RequiresOriginReadiness == true && warehouseId.HasValue;
-        var originReadinessSatisfied = !originReadinessRequired ||
+        var bostaOriginRequired = carrierCode == CarrierCodes.Bosta && purpose is CarrierIntegrationPurpose.ShipmentCreation or CarrierIntegrationPurpose.ExternalRegistration;
+        var originReadinessRequired = bostaOriginRequired || capability?.RequiresOriginReadiness == true && warehouseId.HasValue;
+        if (carrierCode == CarrierCodes.Dhl && PurposeRequiresVerifiedConnection(purpose))
+        {
+            // Reference-data authentication does not certify account/service entitlement.
+            blockers.Add("DHL_REMOTE_ACCOUNT_CERTIFICATION_REQUIRED");
+        }
+        var originReadinessSatisfied = bostaOriginRequired
+            ? !blockers.Any(b => b is "BOSTA_BUSINESS_LOCATION_INVALID" or "BOSTA_PICKUP_VERIFICATION_REQUIRED")
+            : !originReadinessRequired ||
                                        await IsOriginReadinessSatisfiedAsync(
                                            tenantId,
                                            carrierCode,
                                            warehouseId!.Value,
                                            cancellationToken);
-        if (originReadinessRequired && !originReadinessSatisfied)
+        if (!bostaOriginRequired && originReadinessRequired && !originReadinessSatisfied)
         {
             blockers.Add("ORIGIN_READINESS_MISSING");
+        }
+
+        if (carrierCode == CarrierCodes.Bosta && PurposeRequiresPublishedGeographyMapping(purpose))
+        {
+            var account = await _db.CarrierAccounts.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(a =>
+                a.TenantId == tenantId && a.CarrierCode == CarrierCodes.Bosta && !a.IsDeleted, cancellationToken);
+            if (account?.State != CarrierAccountState.Active) blockers.Add("BOSTA_INTEGRATION_ACTIVATION_REQUIRED");
+            if (purpose is CarrierIntegrationPurpose.ShipmentCreation or CarrierIntegrationPurpose.ExternalRegistration)
+                blockers.Add("BOSTA_PROVIDER_ACCOUNT_ELIGIBILITY_UNVERIFIED");
+        }
+
+        if (carrierCode == CarrierCodes.Aramex &&
+            capability?.RequiresGeographyMapping == true &&
+            PurposeRequiresPublishedGeographyMapping(purpose) &&
+            (config == null || !await HasPublishedGeographyMappingAsync(tenantId, carrierCode, config.UseSandbox, cancellationToken)))
+        {
+            blockers.Add("CARRIER_GEOGRAPHY_MAPPING_UNPUBLISHED");
         }
 
         if (shippingMethodId.HasValue && shippingMethodId.Value == Guid.Empty)
@@ -784,6 +891,8 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
         var canExecute = blockers.Count == 0;
         var credentialAvailability = CarrierCodes.IsManual(carrierCode)
             ? "NotRequired"
+            : carrierCode == CarrierCodes.Mylerz
+                ? "Unverified"
             : config == null
                 ? "Missing"
                 : missingCredentialFields.Length == 0
@@ -796,7 +905,7 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             IsManual: false,
             Enabled: config?.IsEnabled == true,
             CanExecute: canExecute,
-            Environment: config == null ? null : config.UseSandbox ? "Sandbox" : "Production",
+            Environment: config == null || capability?.EnvironmentSupported != true ? null : config.UseSandbox ? "Sandbox" : "Production",
             productionCapability,
             blockers,
             originReadinessRequired,
@@ -825,6 +934,67 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
                       account.OperationalState == CarrierOperationalState.Ready
                 select assignment.Id)
             .AnyAsync(cancellationToken);
+
+    private async Task<bool> HasPublishedGeographyMappingAsync(
+        Guid tenantId,
+        string carrierCode,
+        bool useSandbox,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var environment = useSandbox
+            ? CarrierGeographicEnvironment.Sandbox
+            : CarrierGeographicEnvironment.Production;
+
+        string? bostaReferenceScope = null;
+        if (carrierCode == CarrierCodes.Bosta)
+        {
+            var accountEnvironment = useSandbox ? CarrierAccountEnvironment.Sandbox : CarrierAccountEnvironment.Production;
+            var account = await _db.CarrierAccounts.IgnoreQueryFilters().AsNoTracking().SingleOrDefaultAsync(a =>
+                a.TenantId == tenantId && a.CarrierCode == CarrierCodes.Bosta && a.Environment == accountEnvironment && !a.IsDeleted, cancellationToken);
+            if (account?.ActiveCredentialReferenceId == null) return false;
+            bostaReferenceScope = $"bosta-v1:{account.Id:N}:{account.ActiveCredentialReferenceId:N}";
+        }
+
+        return await (
+            from provider in _db.CarrierProviders.AsNoTracking()
+            join release in _db.CarrierGeographicMappingReleases.AsNoTracking()
+                on provider.Id equals release.CarrierProviderId
+            join publication in _db.CarrierGeographicMappingPublications.AsNoTracking()
+                on release.Id equals publication.MappingReleaseId
+            where provider.IsActive &&
+                  provider.CarrierCode == carrierCode &&
+                  release.TenantId == tenantId &&
+                  release.Environment == environment &&
+                  release.AccountScopeKind == CarrierGeographicAccountScopeKind.TenantProviderAccount &&
+                  release.AccountScopeId == tenantId &&
+                  release.Status == GeographicReleaseStatus.Published &&
+                  release.PublishedAtUtc != null &&
+                  release.EffectiveFromUtc <= now &&
+                  (release.EffectiveToUtc == null || release.EffectiveToUtc > now) &&
+                  (release.FreshnessExpiresAtUtc == null || release.FreshnessExpiresAtUtc > now) &&
+                  publication.ActivatedAtUtc != null &&
+                  publication.ActivatedAtUtc <= now &&
+                  publication.SupersededAtUtc == null &&
+                  !_db.CarrierGeographicMappingPublications.AsNoTracking().Any(later => later.ActivatedAtUtc <= now && later.ActivatedAtUtc > publication.ActivatedAtUtc &&
+                      later.MappingRelease.CarrierProviderId == release.CarrierProviderId && later.MappingRelease.TenantId == release.TenantId &&
+                      later.MappingRelease.Environment == release.Environment && later.MappingRelease.AccountScopeKind == release.AccountScopeKind &&
+                      later.MappingRelease.AccountScopeId == release.AccountScopeId) &&
+                  (bostaReferenceScope == null || _db.CarrierGeographicSyncRuns.AsNoTracking().Any(run =>
+                      run.TenantId == tenantId && run.Environment == environment && run.SourceVersion == bostaReferenceScope &&
+                      run.CompletedAtUtc > now.AddDays(-1) && run.Status == CarrierGeographicSyncStatus.Completed &&
+                      _db.CarrierGeographicMappings.AsNoTracking().Any(mapping => mapping.MappingReleaseId == release.Id && mapping.Source == "bosta-sync:" + run.Id.ToString()))) &&
+                  _db.CarrierGeographicMappings.AsNoTracking().Any(mapping =>
+                      mapping.MappingReleaseId == release.Id &&
+                      mapping.CarrierProviderId == provider.Id &&
+                      mapping.RequiredForOperation == "ShipmentRegistration" &&
+                      mapping.MappingStatus == CarrierGeographicMappingStatus.Active &&
+                      (mapping.VerificationStatus == CarrierGeographicVerificationStatus.Reviewed ||
+                       mapping.VerificationStatus == CarrierGeographicVerificationStatus.ManuallyApproved) &&
+                      mapping.EffectiveFromUtc <= now &&
+                      (mapping.EffectiveToUtc == null || mapping.EffectiveToUtc > now))
+            select release.Id).AnyAsync(cancellationToken);
+    }
 
     private CarrierCredentials BuildCredentials(CarrierConfiguration config)
     {
@@ -862,13 +1032,14 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
 
     private static string[] GetMissingRequiredCredentialFields(
         CarrierCapabilityDescriptor capability,
-        CarrierCredentials credentials) =>
+        CarrierCredentials credentials,
+        CarrierConfiguration config) =>
         capability.CredentialFields
-            .Where(field => field.Required && string.IsNullOrWhiteSpace(ReadCredentialField(credentials, field.Target)))
+            .Where(field => field.Required && string.IsNullOrWhiteSpace(ReadCredentialField(credentials, config, field.Target)))
             .Select(field => $"CREDENTIAL_{field.Key.ToUpperInvariant()}_MISSING")
             .ToArray();
 
-    private static string? ReadCredentialField(CarrierCredentials credentials, string target)
+    private static string? ReadCredentialField(CarrierCredentials credentials, CarrierConfiguration config, string target)
     {
         if (string.Equals(target, "ApiKey", StringComparison.OrdinalIgnoreCase))
             return credentials.ApiKey;
@@ -878,6 +1049,8 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             return credentials.AccountId;
         if (string.Equals(target, "ApiUrl", StringComparison.OrdinalIgnoreCase))
             return credentials.ApiUrl;
+        if (string.Equals(target, "WebhookSecret", StringComparison.OrdinalIgnoreCase))
+            return config.WebhookSecret;
 
         const string extraPrefix = "ExtraConfig.";
         if (target.StartsWith(extraPrefix, StringComparison.OrdinalIgnoreCase))
@@ -898,12 +1071,12 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             config.IsDefault,
             !string.IsNullOrWhiteSpace(config.ApiKey),
             config.UseSandbox,
-            config.SupportsCod,
-            config.SupportsTracking,
-            config.SupportsWebhooks,
-            config.SupportsLabels,
-            config.SupportsQuotes,
-            config.SupportsCancellation,
+            config.CarrierCode != CarrierCodes.Mylerz && config.SupportsCod,
+            config.CarrierCode != CarrierCodes.Mylerz && config.SupportsTracking,
+            config.CarrierCode != CarrierCodes.Mylerz && config.SupportsWebhooks,
+            config.CarrierCode != CarrierCodes.Mylerz && config.SupportsLabels,
+            config.CarrierCode != CarrierCodes.Mylerz && config.SupportsQuotes,
+            config.CarrierCode != CarrierCodes.Mylerz && config.SupportsCancellation,
             config.Configuration,
             config.PickupAddress,
             config.PickupCity,
@@ -985,6 +1158,13 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
             or CarrierIntegrationPurpose.StorefrontAdmission
             or CarrierIntegrationPurpose.CommerceHubAdmission;
 
+    private static bool PurposeRequiresPublishedGeographyMapping(CarrierIntegrationPurpose purpose) =>
+        purpose is CarrierIntegrationPurpose.ShipmentCreation
+            or CarrierIntegrationPurpose.ExternalRegistration
+            or CarrierIntegrationPurpose.CheckoutAdmission
+            or CarrierIntegrationPurpose.StorefrontAdmission
+            or CarrierIntegrationPurpose.CommerceHubAdmission;
+
     private static bool PurposeRequiresExecutableReadiness(CarrierIntegrationPurpose purpose) =>
         purpose is not CarrierIntegrationPurpose.AdminValidation
             and not CarrierIntegrationPurpose.Cancellation
@@ -1020,8 +1200,7 @@ public sealed class CarrierIntegrationAuthority : ICarrierIntegrationAuthority
                     CarrierWebhookValidationMode.IpAllowlist,
                     "ip_allowlist",
                     allowlistedIps),
-            _ when string.Equals(carrierCode, CarrierCodes.Mylerz, StringComparison.Ordinal) ||
-                   string.Equals(carrierCode, CarrierCodes.Dhl, StringComparison.Ordinal) =>
+            _ when string.Equals(carrierCode, CarrierCodes.Dhl, StringComparison.Ordinal) =>
                 new CarrierWebhookTrustPolicy(
                     CarrierWebhookValidationMode.HmacSha256,
                     "hmac_sha256",

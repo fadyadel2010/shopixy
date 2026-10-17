@@ -360,7 +360,9 @@ public class AdminOrderService : IAdminOrderService
                 o.Id == orderId &&
                 o.TenantId == tenantId &&
                 o.Source == OrderSource.Ecommerce)
-            .AsNoTracking()
+            // xmin is a shadow property. Detached entities discard its loaded
+            // value, producing RowVersion="0" and unusable If-Match evidence.
+            .AsTracking()
             .AsSplitQuery()
             .Include(o => o.Customer)
             .Include(o => o.OnlineCustomer)
@@ -1143,9 +1145,11 @@ public class AdminOrderService : IAdminOrderService
         return actions;
     }
 
-    private static List<AdminOrderActionCapabilityDto> BuildAvailableShipmentActions(Shipment? shipment)
+    private List<AdminOrderActionCapabilityDto> BuildAvailableShipmentActions(Shipment? shipment)
     {
         if (shipment == null ||
+            shipment.Status == ShipmentStatus.Cancelled ||
+            _context.ShipmentCancellationOperations.Any(x => x.TenantId == shipment.TenantId && x.ShipmentId == shipment.Id) ||
             !ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled))
         {
             return new List<AdminOrderActionCapabilityDto>();
@@ -1403,7 +1407,9 @@ public class AdminOrderService : IAdminOrderService
                 ShippedAt = shipment.ShippedAtUtc,
                 DeliveredAt = shipment.DeliveredAtUtc,
                 CancelledAt = shipment.CancelledAtUtc,
-                CancellationReason = shipment.CancellationReason
+                CancellationReason = shipment.CancellationReason,
+                Cancellation = PointOfSale.Infrastructure.Shipping.ShipmentCancellationService.ReadResult(shipment,
+                    _context.ShipmentCancellationOperations.AsNoTracking().SingleOrDefault(x => x.TenantId == shipment.TenantId && x.ShipmentId == shipment.Id))
             },
             AvailableOrderActions = BuildAvailableOrderActions(order, paymentIntents),
             AvailableShipmentActions = BuildAvailableShipmentActions(shipment),
@@ -1428,7 +1434,7 @@ public class AdminOrderService : IAdminOrderService
                         : "GUEST",
                 Name = order.Customer?.Name ?? order.OnlineCustomer?.DisplayName ?? order.GuestName,
                 Email = order.Customer?.Email ?? order.OnlineCustomer?.Email ?? order.GuestEmail,
-                Phone = order.Customer?.Phone ?? order.OnlineCustomer?.Phone ?? order.GuestPhone,
+                Phone = PointOfSale.API.Services.PhoneRisk.OrderPhoneIdentity.Resolve(order.GuestPhone, order.Customer?.Phone, order.OnlineCustomer?.Phone),
                 IsGuest = !order.CustomerId.HasValue && !order.OnlineCustomerId.HasValue
             },
             CreatedAtUtc = order.CreatedAt,

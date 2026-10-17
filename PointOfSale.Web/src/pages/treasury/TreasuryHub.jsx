@@ -335,9 +335,12 @@ export default function TreasuryHub() {
                             <h3 id="treasury-transit-heading" className="text-xl font-bold text-gray-900">
                                 ⏳ {t('treasury.inTransit', 'In transit')} ({formatCurrency(totalClearing)})
                             </h3>
-                            <p className="text-sm text-gray-600 mt-1">
-                                {t('treasury.inTransitExplanation', 'Mapped Clearing accounts hold money in transit. Settlement requires provider or carrier evidence and cannot be moved with a Treasury transfer.')}
-                            </p>
+                             <p className="text-sm text-gray-600 mt-1">
+                                 {t('treasury.inTransitExplanation', 'Mapped Clearing accounts hold money in transit. Settlement requires provider or carrier evidence and cannot be moved with a Treasury transfer.')}
+                             </p>
+                             <p className="text-sm text-gray-600 mt-1" role="note">
+                                 {t('treasury.clearingSettlementUnavailable', 'COD and gateway clearing settlement is currently unavailable because authenticated carrier remittance or provider payout evidence is not integrated. Clearing balances cannot be moved through Treasury Transfers.')}
+                             </p>
                         </div>
                         {clearing.length === 0 ? (
                             <p className="text-sm text-gray-600" role="status">

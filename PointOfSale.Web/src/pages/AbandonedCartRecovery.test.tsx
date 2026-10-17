@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
@@ -130,5 +130,29 @@ describe('AbandonedCartRecovery readiness reporting', () => {
         }))
 
         expect(screen.getByText('The audited WhatsApp dispatcher is unavailable.')).toBeTruthy()
+    })
+
+    it('does not announce full success when accepted save cannot be read back', async () => {
+        await renderPage(eligibility())
+        fireEvent.change(document.getElementById('first-delay')!, { target: { value: '120' } })
+        api.put.mockResolvedValue({ data: { ...SETTINGS, firstMessageDelayMinutes: 120 } })
+        api.get.mockRejectedValue(new Error('offline'))
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+        await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(toast.showError).toHaveBeenCalled())
+        expect(toast.showSuccess).not.toHaveBeenCalled()
+        expect((document.getElementById('first-delay') as HTMLSelectElement).value).toBe('120')
+    })
+
+    it('excludes duplicate same-tick saves and protects the submitted form', async () => {
+        await renderPage(eligibility())
+        fireEvent.change(document.getElementById('first-delay')!, { target: { value: '120' } })
+        api.put.mockImplementation(() => new Promise(() => {}))
+        const save = screen.getByRole('button', { name: 'Save' })
+        fireEvent.click(save)
+        fireEvent.click(save)
+        expect(api.put).toHaveBeenCalledTimes(1)
+        expect(document.getElementById('first-delay')!.matches(':disabled')).toBe(true)
+        expect((screen.getByRole('button', { name: 'Refresh' }) as HTMLButtonElement).disabled).toBe(true)
     })
 })

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import api from '../services/api'
@@ -12,13 +12,11 @@ const BankOpeningBalance = () => {
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
     const [balances, setBalances] = useState({})
+    const [loadFailure, setLoadFailure] = useState(null)
 
-    useEffect(() => {
-        loadBanks()
-    }, [])
-
-    const loadBanks = async () => {
+    const loadBanks = useCallback(async () => {
         setLoading(true)
+        setLoadFailure(null)
         try {
             const response = await api.get('/banks/opening-balances')
             setBanks(response.data)
@@ -45,11 +43,15 @@ const BankOpeningBalance = () => {
             setBalances(initialBalances)
         } catch (error) {
             console.error('Failed to load banks', error)
-            showError(t('banks.failedToLoad'))
+            setLoadFailure(error)
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => { loadBanks() }, [loadBanks])
+    // Presentation changes must not reload and overwrite unsaved balances.
+    useEffect(() => { if (loadFailure) showError(t('banks.failedToLoad')) }, [loadFailure, showError, t])
 
     const handleBalanceChange = (bankId, field, value) => {
         setBalances(prev => ({
@@ -66,7 +68,7 @@ const BankOpeningBalance = () => {
 
         // Prepare data - only include banks with amount > 0 and no existing balance
         const bankBalances = Object.entries(balances)
-            .filter(([bankId, data]) => !data.hasExisting && parseFloat(data.amount) > 0)
+            .filter(([, data]) => !data.hasExisting && parseFloat(data.amount) > 0)
             .map(([bankId, data]) => ({
                 bankId,
                 amount: parseFloat(data.amount),

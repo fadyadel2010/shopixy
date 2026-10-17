@@ -39,7 +39,7 @@ afterEach(() => {
 
 const renderSidebar = () => render(
     <MemoryRouter initialEntries={['/']}>
-        <Sidebar />
+        <Sidebar isOpen onClose={() => {}} />
     </MemoryRouter>,
 )
 

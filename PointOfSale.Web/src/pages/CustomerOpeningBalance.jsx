@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import api from '../services/api'
@@ -12,13 +12,11 @@ const CustomerOpeningBalance = () => {
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
     const [balances, setBalances] = useState({})
+    const [loadFailure, setLoadFailure] = useState(null)
 
-    useEffect(() => {
-        loadCustomers()
-    }, [])
-
-    const loadCustomers = async () => {
+    const loadCustomers = useCallback(async () => {
         setLoading(true)
+        setLoadFailure(null)
         try {
             const response = await api.get('/customers/opening-balances')
             setCustomers(response.data)
@@ -47,11 +45,15 @@ const CustomerOpeningBalance = () => {
             setBalances(initialBalances)
         } catch (error) {
             console.error('Failed to load customers', error)
-            showError(t('openingBalance.failedToLoadCustomers'))
+            setLoadFailure(error)
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
+
+    useEffect(() => { loadCustomers() }, [loadCustomers])
+    // Presentation changes must not reload and overwrite unsaved balances.
+    useEffect(() => { if (loadFailure) showError(t('openingBalance.failedToLoadCustomers')) }, [loadFailure, showError, t])
 
     const handleBalanceChange = (customerId, field, value) => {
         setBalances(prev => ({
@@ -68,7 +70,7 @@ const CustomerOpeningBalance = () => {
 
         // Prepare data - only include customers with amount > 0 and no existing balance
         const customerBalances = Object.entries(balances)
-            .filter(([customerId, data]) => !data.hasExisting && parseFloat(data.amount) > 0)
+            .filter(([, data]) => !data.hasExisting && parseFloat(data.amount) > 0)
             .map(([customerId, data]) => ({
                 customerId,
                 amount: parseFloat(data.amount),

@@ -21,7 +21,7 @@ describe('dateFormat currency helpers', () => {
     })
 
     it('delegates signed currency rendering to Intl so bidi sign placement stays locale-aware', () => {
-        const options = { currencyDisplay: 'code' }
+        const options = { currencyDisplay: 'code' } satisfies Intl.NumberFormatOptions
 
         expect(formatSignedCurrency(10, 'USD', 'ar-EG', options)).toBe(
             formatCurrency(10, 'USD', 'ar-EG', {

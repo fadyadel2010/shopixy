@@ -219,6 +219,20 @@ describe('checkout order summary rendering', () => {
         expect(markup).toContain('$15.00');
     });
 
+    it('never calls unselected zero-cost preview free shipping or a final total', () => {
+        const markup = renderToStaticMarkup(<OrderSummary collapsible={false} />);
+        expect(markup).toContain('Select a shipping method');
+        expect(markup).not.toContain('Free Shipping');
+    });
+
+    it('shows an explicitly selected zero-cost method as free, using the server total', () => {
+        mockState.checkout.shippingMethods = [{ id: 'selected', name: 'Selected zero-cost method' }];
+        mockState.checkout.shippingMethodId = 'selected';
+        const markup = renderToStaticMarkup(<OrderSummary collapsible={false} />);
+        expect(markup).toContain('Selected zero-cost method');
+        expect(markup).not.toContain('Select a shipping method');
+    });
+
     it('uses the safe image fallback and readable missing-name label when presentation data is unavailable', () => {
         setSummaryState(makeCart([
             {

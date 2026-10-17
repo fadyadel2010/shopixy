@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
 import {
     Search, Package, Sparkles, Copy, Check, X,
-    Share2, ExternalLink, MessageCircle, DollarSign
+    Share2, MessageCircle, DollarSign
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 

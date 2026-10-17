@@ -50,7 +50,7 @@ export function MarketplaceProductPublicPage() {
             loading: t('marketplacePublic.product.loading'),
             imageAlt: t('marketplacePublic.product.imageAlt'),
         }),
-        [currentLang, t],
+        [t],
     )
     const [product, setProduct] = useState(null)
     const [footer, setFooter] = useState(null)

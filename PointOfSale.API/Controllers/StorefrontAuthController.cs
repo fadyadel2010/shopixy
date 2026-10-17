@@ -482,6 +482,30 @@ public class StorefrontAuthController : ControllerBase
 
     #region Social Login Endpoints (Phase 10.3.3)
 
+    [HttpPost("social/challenge/{provider}")]
+    [AllowAnonymous]
+    [EnableRateLimiting("PublicLoginRateLimit")]
+    public async Task<IActionResult> SocialChallenge(string provider, CancellationToken cancellationToken)
+    {
+        provider = provider.ToLowerInvariant();
+        var tenant = ValidateTenantHeader(GetTraceId());
+        if (tenant.Error != null) return tenant.Error;
+        var available = await _socialLoginService.GetAvailableProvidersAsync(tenant.TenantId!.Value, cancellationToken);
+        if (!(provider == "google" && available.Google || provider == "facebook" && available.Facebook))
+            return StatusCode(403, new ApiErrorResponse("PROVIDER_DISABLED", "Provider is unavailable", GetTraceId()));
+        return Ok(HttpContext.RequestServices.GetRequiredService<SocialLoginChallengeService>().Issue(HttpContext, tenant.TenantId.Value, provider));
+    }
+
+    private async Task<string?> ConsumeSocialChallenge(Guid tenant, string provider, string? state) =>
+        await HttpContext.RequestServices.GetRequiredService<SocialLoginChallengeService>().ConsumeAsync(HttpContext, tenant, provider, state);
+
+    private IActionResult RejectSocialState()
+    {
+        _cookieHelper.ClearAccessTokenCookie(Response);
+        _cookieHelper.ClearRefreshTokenCookie(Response);
+        return Unauthorized(new ApiErrorResponse("INVALID_LOGIN_STATE", "Login attempt expired or did not match this browser. Start again.", GetTraceId()));
+    }
+
     /// <summary>
     /// Get available social login providers for this tenant.
     /// Used by frontend to show/hide social login buttons.
@@ -539,18 +563,23 @@ public class StorefrontAuthController : ControllerBase
             tenantId,
             traceId);
 
+        var nonce = await ConsumeSocialChallenge(tenantId, "google", request.State);
+        if (nonce == null) return RejectSocialState();
         var result = await _socialLoginService.GoogleLoginAsync(
             tenantId,
             request.IdToken,
             ipAddress,
             userAgent,
-            cancellationToken);
+            cancellationToken, nonce);
 
         if (!result.Success)
         {
+            _cookieHelper.ClearAccessTokenCookie(Response);
+            _cookieHelper.ClearRefreshTokenCookie(Response);
             var statusCode = result.Error switch
             {
                 "PROVIDER_DISABLED" => StatusCodes.Status403Forbidden,
+                "PROVIDER_UNAVAILABLE" => StatusCodes.Status503ServiceUnavailable,
                 "ACCOUNT_DEACTIVATED" => StatusCodes.Status401Unauthorized,
                 _ => StatusCodes.Status401Unauthorized
             };
@@ -637,6 +666,7 @@ public class StorefrontAuthController : ControllerBase
             tenantId,
             traceId);
 
+        if (await ConsumeSocialChallenge(tenantId, "facebook", request.State) == null) return RejectSocialState();
         var result = await _socialLoginService.FacebookLoginAsync(
             tenantId,
             request.AccessToken,
@@ -646,9 +676,12 @@ public class StorefrontAuthController : ControllerBase
 
         if (!result.Success)
         {
+            _cookieHelper.ClearAccessTokenCookie(Response);
+            _cookieHelper.ClearRefreshTokenCookie(Response);
             var statusCode = result.Error switch
             {
                 "PROVIDER_DISABLED" => StatusCodes.Status403Forbidden,
+                "PROVIDER_UNAVAILABLE" => StatusCodes.Status503ServiceUnavailable,
                 "ACCOUNT_DEACTIVATED" => StatusCodes.Status401Unauthorized,
                 _ => StatusCodes.Status401Unauthorized
             };
@@ -966,6 +999,7 @@ public class StorefrontAuthController : ControllerBase
     {
         Customer = response.Customer,
         ExpiresAt = response.ExpiresAt,
+        VerificationEmailSent = response.VerificationEmailSent,
         AccessToken = string.Empty,
         RefreshToken = string.Empty
     };

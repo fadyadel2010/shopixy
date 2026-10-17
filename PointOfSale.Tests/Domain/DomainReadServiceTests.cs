@@ -66,6 +66,17 @@ public class DomainReadServiceTests
     }
 
     [Fact]
+    public async Task GetDomainListAsync_DoesNotDisguiseAQueryFailureAsAnEmptyPortfolio()
+    {
+        var tenantId = Guid.NewGuid();
+        var context = CreateInMemoryContext(tenantId);
+        var service = CreateService(context);
+        await context.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.GetDomainListAsync(tenantId, 1, 20));
+    }
+
+    [Fact]
     public async Task GetDomainListAsync_ReturnsPagedDomains()
     {
         var tenantId = Guid.NewGuid();

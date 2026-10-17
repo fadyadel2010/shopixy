@@ -11,6 +11,8 @@ import {
 } from '../services/adminSmartOffersApi'
 import { useAuthStore } from '../store/authStore'
 import SmartOfferEditor from './SmartOfferEditor'
+import { useOfferOperations } from '../hooks/useOfferOperations'
+import { useRTL } from '../hooks/useRTL'
 
 const initialFilter = {
     search: '',
@@ -50,6 +52,8 @@ export default function SmartOffersPage() {
     const { t } = useTranslation()
     const { confirm } = useConfirmDialog()
     const user = useAuthStore((state) => state.user)
+    const { busy, beginRead, beginMutation } = useOfferOperations(user)
+    const { dir } = useRTL()
     const [offers, setOffers] = useState([])
     const [stats, setStats] = useState(emptyState)
     const [filter, setFilter] = useState(initialFilter)
@@ -69,6 +73,7 @@ export default function SmartOffersPage() {
     }, [filter, user])
 
     const loadOffers = async () => {
+        const current = beginRead('list')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setOffers([])
             setStats(emptyState)
@@ -80,16 +85,21 @@ export default function SmartOffersPage() {
             setLoading(true)
             setError('')
             const admittedOffers = await listAdminSmartOffers(filter, user)
+            if (!current()) return false
             setOffers(admittedOffers)
+            return true
         } catch (requestError) {
+            if (!current()) return false
             setOffers([])
             setError(requestError.response?.data?.message || t('SmartOffersPage.messages.loadError'))
+            return false
         } finally {
-            setLoading(false)
+            if (current()) setLoading(false)
         }
     }
 
     const loadStats = async () => {
+        const current = beginRead('stats')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setStats(emptyState)
             return
@@ -97,13 +107,14 @@ export default function SmartOffersPage() {
 
         try {
             const admittedStats = await getAdminSmartOfferStats(user)
+            if (!current()) return
             setStats({
                 totalOffers: admittedStats.totalOffers ?? admittedStats.TotalOffers ?? 0,
                 activeOffers: admittedStats.activeOffers ?? admittedStats.ActiveOffers ?? 0,
                 exitIntentOffers: admittedStats.exitIntentOffers ?? admittedStats.ExitIntentOffers ?? 0,
             })
-        } catch (requestError) {
-            setStats(emptyState)
+        } catch {
+            if (current()) setStats(null)
         }
     }
 
@@ -120,6 +131,7 @@ export default function SmartOffersPage() {
     }
 
     const openDetails = async (offer) => {
+        const current = beginRead('details')
         const offerId = offer?.id ?? offer?.Id
         if (!offerId || !user?.tenantId || !(user?.id || user?.userId)) {
             setSelectedOffer(null)
@@ -131,12 +143,13 @@ export default function SmartOffersPage() {
             setDetailsLoading(true)
             setError('')
             const admittedOffer = await getAdminSmartOffer(offerId, user)
-            setSelectedOffer(admittedOffer)
+            if (current()) setSelectedOffer(admittedOffer)
         } catch (requestError) {
+            if (!current()) return
             setSelectedOffer(null)
             setError(requestError.response?.data?.message || t('SmartOffersPage.messages.loadError'))
         } finally {
-            setDetailsLoading(false)
+            if (current()) setDetailsLoading(false)
         }
     }
 
@@ -151,24 +164,29 @@ export default function SmartOffersPage() {
     }
 
     const handleSave = async (payload) => {
+        const operation = beginMutation()
+        if (!operation) return
         try {
             setSaving(true)
             setEditorError('')
 
             if (editingOffer) {
                 await updateAdminSmartOffer(editingOffer, payload, user)
-                setBanner(t('SmartOffersPage.messages.updateSuccess'))
             } else {
                 await createAdminSmartOffer(payload, user)
-                setBanner(t('SmartOffersPage.messages.createSuccess'))
             }
 
+            if (!operation.current()) return
             closeEditor(true)
-            await loadOffers()
+            setBanner('')
+            if (await loadOffers()) setBanner(t(editingOffer ? 'SmartOffersPage.messages.updateSuccess' : 'SmartOffersPage.messages.createSuccess'))
+            else setError(t('offers.savedReloadFailed'))
+            await loadStats()
         } catch (requestError) {
-            setEditorError(requestError.response?.data?.message || t('SmartOffersPage.messages.saveError'))
+            if (operation.current()) setEditorError(requestError.response?.data?.message || t('SmartOffersPage.messages.saveError'))
         } finally {
-            setSaving(false)
+            if (operation.current()) setSaving(false)
+            operation.finish()
         }
     }
 
@@ -182,6 +200,9 @@ export default function SmartOffersPage() {
     }
 
     const handleDelete = async (offer) => {
+        const operation = beginMutation()
+        if (!operation) return
+        try {
         const confirmed = await confirm({
             confirmLabel: t('SmartOffersPage.actions.delete'),
             description: t('SmartOffersPage.messages.deleteConfirm', { name: offer.name }),
@@ -189,40 +210,50 @@ export default function SmartOffersPage() {
             variant: 'danger',
         })
 
-        if (!confirmed) {
+        if (!confirmed || !operation.current()) {
             return
         }
 
         try {
             await archiveAdminSmartOffer(offer)
-            setBanner(t('SmartOffersPage.messages.deleteSuccess'))
-            await loadOffers()
+            if (!operation.current()) return
+            setBanner('')
+            if (await loadOffers()) setBanner(t('SmartOffersPage.messages.deleteSuccess'))
+            else setError(t('offers.savedReloadFailed'))
+            await loadStats()
         } catch (requestError) {
-            setError(requestError.response?.data?.message || t('SmartOffersPage.messages.deleteError'))
+            if (operation.current()) setError(requestError.response?.data?.message || t('SmartOffersPage.messages.deleteError'))
         }
+        } finally { operation.finish() }
     }
 
     const handleToggleStatus = async (offer) => {
+        const operation = beginMutation()
+        if (!operation) return
         try {
             const nextStatus = offer.status === 'Active' ? 'Inactive' : 'Active'
             await updateAdminSmartOffer(offer, {
                 ...offer,
                 status: nextStatus,
             }, user)
-            setBanner(
+            if (!operation.current()) return
+            setBanner('')
+            const loaded = await loadOffers()
+            if (loaded) setBanner(
                 t('SmartOffersPage.messages.statusUpdated', {
                     name: offer.name,
                     status: formatOfferStatus(nextStatus, t).toLowerCase(),
                 }),
             )
-            await loadOffers()
+            else setError(t('offers.savedReloadFailed'))
+            await loadStats()
         } catch (requestError) {
-            setError(requestError.response?.data?.message || t('SmartOffersPage.messages.statusUpdateError'))
-        }
+            if (operation.current()) setError(requestError.response?.data?.message || t('SmartOffersPage.messages.statusUpdateError'))
+        } finally { operation.finish() }
     }
 
     return (
-        <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(249,115,22,0.18),_transparent_35%),linear-gradient(180deg,_#fff7ed_0%,_#ffffff_45%,_#f8fafc_100%)] px-4 py-8 sm:px-6 lg:px-8">
+        <div dir={dir} className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(249,115,22,0.18),_transparent_35%),linear-gradient(180deg,_#fff7ed_0%,_#ffffff_45%,_#f8fafc_100%)] px-4 py-8 sm:px-6 lg:px-8">
             <div className="mx-auto max-w-7xl space-y-8">
                 <section className="rounded-[32px] bg-slate-950 px-6 py-8 text-white shadow-[0_25px_80px_rgba(15,23,42,0.24)]">
                     <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -233,17 +264,17 @@ export default function SmartOffersPage() {
                         </div>
                         <button
                             type="button"
-                            onClick={openCreate}
+                            disabled={busy} onClick={openCreate}
                             className="rounded-2xl bg-orange-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400"
                         >{t('SmartOffersPage.actions.createOffer')}</button>
                     </div>
                 </section>
 
-                <section className="grid gap-4 md:grid-cols-3">
+                {stats && <section className="grid gap-4 md:grid-cols-3">
                     <StatCard label={t('SmartOffersPage.stats.totalOffers')} value={stats.totalOffers} accent="from-slate-950 to-slate-700" />
                     <StatCard label={t('SmartOffersPage.stats.activeOffers')} value={stats.activeOffers} accent="from-emerald-500 to-teal-400" />
                     <StatCard label={t('SmartOffersPage.stats.exitIntent')} value={stats.exitIntentOffers} accent="from-orange-500 to-amber-300" />
-                </section>
+                </section>}
 
                 <section className="rounded-[32px] border border-slate-200 bg-white/90 p-6 shadow-xl backdrop-blur">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -266,7 +297,7 @@ export default function SmartOffersPage() {
                         </div>
                         <button
                             type="button"
-                            onClick={loadOffers}
+                            onClick={() => { loadOffers(); loadStats() }}
                             className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
                         >{t('SmartOffersPage.actions.refresh')}</button>
                     </div>
@@ -299,7 +330,7 @@ export default function SmartOffersPage() {
                             <div className="overflow-x-auto">
                                 <table className="min-w-full divide-y divide-slate-200">
                                     <thead className="bg-slate-50">
-                                        <tr className="text-left text-xs uppercase tracking-[0.2em] text-slate-500">
+                                        <tr className="text-start text-xs uppercase tracking-[0.2em] text-slate-500">
                                             <th className="px-5 py-4">
                                                 <button type="button" onClick={() => handleSort('name')}>
                                                     {t('SmartOffersPage.offer')}
@@ -364,7 +395,7 @@ export default function SmartOffersPage() {
                                                         >Details</button>
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleToggleStatus(offer)}
+                                                            disabled={busy} onClick={() => handleToggleStatus(offer)}
                                                             className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                                         >
                                                             {offer.status === 'Active'
@@ -373,12 +404,12 @@ export default function SmartOffersPage() {
                                                         </button>
                                                         <button
                                                             type="button"
-                                                            onClick={() => openEdit(offer)}
+                                                            disabled={busy} onClick={() => openEdit(offer)}
                                                             className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                                         >{t('SmartOffersPage.actions.edit')}</button>
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleDelete(offer)}
+                                                            disabled={busy} onClick={() => handleDelete(offer)}
                                                             className="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
                                                         >{t('SmartOffersPage.actions.delete')}</button>
                                                     </div>
@@ -389,6 +420,11 @@ export default function SmartOffersPage() {
                                 </table>
                             </div>
                         )}
+                    </div>
+                    <div className="mt-4 flex items-center justify-between">
+                        <button type="button" disabled={loading || filter.page <= 1} onClick={() => setFilter(current => ({ ...current, page: current.page - 1 }))}>{t('common.previous')}</button>
+                        <span>{filter.page}</span>
+                        <button type="button" disabled={loading || offers.length < filter.pageSize} onClick={() => setFilter(current => ({ ...current, page: current.page + 1 }))}>{t('common.next')}</button>
                     </div>
                 </section>
             </div>
@@ -405,7 +441,7 @@ export default function SmartOffersPage() {
             <SmartOfferDetailsModal
                 offer={selectedOffer}
                 loading={detailsLoading}
-                onClose={() => setSelectedOffer(null)}
+                onClose={() => { beginRead('details'); setDetailsLoading(false); setSelectedOffer(null) }}
             />
         </div>
     )

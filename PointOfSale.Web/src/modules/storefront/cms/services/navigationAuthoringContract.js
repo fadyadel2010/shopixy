@@ -1,3 +1,5 @@
+import { containsAsciiControl } from '../../../../security/textCharacterPolicy'
+
 const CANONICAL_TYPES = new Set([
     'category',
     'product',
@@ -10,7 +12,6 @@ const CANONICAL_TYPES = new Set([
 const ENTITY_TYPES = new Set(['category', 'product', 'cms'])
 const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const EMPTY_GUID = '00000000-0000-0000-0000-000000000000'
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/
 const ROW_VERSION_PATTERN = /^[1-9]\d*$/
 
 const isBackendGuid = (value) => GUID_PATTERN.test(value || '') && value !== EMPTY_GUID
@@ -213,7 +214,7 @@ const assertObviousClientValidity = (link, menu, index) => {
     if (link.type === 'custom' && (
         !link.path ||
         link.path.length > 2048 ||
-        CONTROL_CHARACTER_PATTERN.test(link.path) ||
+        containsAsciiControl(link.path) ||
         !link.path.startsWith('/') ||
         link.path.startsWith('//') ||
         link.path.includes('\\')
@@ -225,7 +226,7 @@ const assertObviousClientValidity = (link, menu, index) => {
     }
 
     if (link.type === 'external') {
-        if (!link.path || link.path.length > 2048 || CONTROL_CHARACTER_PATTERN.test(link.path)) {
+        if (!link.path || link.path.length > 2048 || containsAsciiControl(link.path)) {
             throw new NavigationAuthoringContractError(
                 'NAVIGATION_CLIENT_INVALID',
                 `${context} requires a valid http(s) URL.`

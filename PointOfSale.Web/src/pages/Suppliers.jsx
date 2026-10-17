@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../components/Toast'
@@ -21,6 +21,9 @@ export default function Suppliers() {
     const [totalPages, setTotalPages] = useState(1)
     const [showModal, setShowModal] = useState(false)
     const [editingSupplier, setEditingSupplier] = useState(null)
+    const [isSaving, setIsSaving] = useState(false)
+    const saveInFlightRef = useRef(false)
+    const requestIdRef = useRef(0)
     const [formData, setFormData] = useState({
         name: '',
         email: '',
@@ -38,19 +41,24 @@ export default function Suppliers() {
         fetchSuppliers()
     }, [page, search])
 
+    useEffect(() => () => { requestIdRef.current += 1 }, [])
+
     const fetchSuppliers = async () => {
+        const requestId = ++requestIdRef.current
         setLoading(true)
         try {
             const response = await api.get('/suppliers', {
                 params: { page, pageSize: 20, search: search || undefined }
             })
+            if (requestId !== requestIdRef.current) return
             setSuppliers(response.data.items)
             setTotalPages(response.data.totalPages)
         } catch (error) {
+            if (requestId !== requestIdRef.current) return
             console.error('Error fetching suppliers:', error)
             showError(t('suppliers.failedToLoad'))
         } finally {
-            setLoading(false)
+            if (requestId === requestIdRef.current) setLoading(false)
         }
     }
 
@@ -61,6 +69,7 @@ export default function Suppliers() {
     }
 
     const handleEdit = (supplier) => {
+        if (saveInFlightRef.current) return
         setEditingSupplier(supplier)
         setFormData({
             name: supplier.name,
@@ -75,6 +84,7 @@ export default function Suppliers() {
     }
 
     const handleAdd = () => {
+        if (saveInFlightRef.current) return
         setEditingSupplier(null)
         setFormData({
             name: '',
@@ -90,6 +100,9 @@ export default function Suppliers() {
 
     const handleSubmit = async (e) => {
         e.preventDefault()
+        if (saveInFlightRef.current) return
+        saveInFlightRef.current = true
+        setIsSaving(true)
         try {
             if (editingSupplier) {
                 await api.put(`/suppliers/${editingSupplier.id}`, formData)
@@ -103,6 +116,9 @@ export default function Suppliers() {
         } catch (error) {
             console.error('Error saving supplier:', error)
             showError(t('suppliers.failedToSave'))
+        } finally {
+            saveInFlightRef.current = false
+            setIsSaving(false)
         }
     }
 
@@ -305,11 +321,12 @@ export default function Suppliers() {
                                 <button
                                     type="button"
                                     onClick={() => setShowModal(false)}
+                                    disabled={isSaving}
                                     className="btn-secondary"
                                 >
                                     {t('common.cancel')}
                                 </button>
-                                <button type="submit" className="btn-primary">
+                                <button type="submit" disabled={isSaving} aria-busy={isSaving || undefined} className="btn-primary">
                                     {t('common.save')}
                                 </button>
                             </div>

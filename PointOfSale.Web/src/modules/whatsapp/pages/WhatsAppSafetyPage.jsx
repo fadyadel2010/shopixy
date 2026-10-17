@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import KillSwitchToggle from '../components/KillSwitchToggle'
 import { useWhatsAppApi } from '../hooks/useWhatsAppApi'
@@ -12,7 +12,7 @@ export default function WhatsAppSafetyPage() {
     const [status, setStatus] = useState({ isKilled: false, reason: null, activatedAt: null, activatedBy: null })
     const [refreshKey, setRefreshKey] = useState(0)
 
-    const fetchStatus = async () => {
+    const fetchStatus = useCallback(async () => {
         try {
             const data = await getKillSwitchStatus()
             setStatus(data)
@@ -20,11 +20,11 @@ export default function WhatsAppSafetyPage() {
             console.error('Failed to fetch kill switch status:', err)
             showError(err.message || t('whatsapp.safety.messages.statusFetchFailed'))
         }
-    }
+    }, [getKillSwitchStatus, showError, t])
 
     useEffect(() => {
         fetchStatus()
-    }, [refreshKey])
+    }, [fetchStatus, refreshKey])
 
     const handleActivate = async (reason) => {
         try {

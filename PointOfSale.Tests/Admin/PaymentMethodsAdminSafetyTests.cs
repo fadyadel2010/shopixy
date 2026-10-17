@@ -201,6 +201,7 @@ public sealed class PaymentMethodsAdminSafetyTests
             SupportsOnline = true,
             SupportsOffline = false,
             ConfigEncrypted = existingConfig,
+            IsSandbox = false, // This fixture intentionally contains production keys.
             FeeType = "fixed",
             CreatedAt = DateTime.UtcNow
         });
@@ -514,8 +515,10 @@ public sealed class PaymentMethodsAdminSafetyTests
         Assert.False(paymentMethod.IsEnabled);
     }
 
-    [Fact]
-    public async Task EnablePaymentMethod_WhenConfigurationIsValid_EnablesMethod()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnablePaymentMethod_ProductionKeys_RequiresMatchingEnvironment(bool sandbox)
     {
         var tenantId = Guid.NewGuid();
         var dataProtectionProvider = new EphemeralDataProtectionProvider();
@@ -536,6 +539,7 @@ public sealed class PaymentMethodsAdminSafetyTests
                 ["secretKey"] = "sk_live_valid",
                 ["webhookSecret"] = "whsec_valid"
             }),
+            IsSandbox = sandbox,
             FeeType = "fixed",
             CreatedAt = DateTime.UtcNow
         });
@@ -550,6 +554,15 @@ public sealed class PaymentMethodsAdminSafetyTests
         var controller = CreateControllerWithPublisher(dbContext, tenantId, dataProtectionProvider, publisher.Object);
 
         var result = await controller.EnablePaymentMethod("STRIPE", CancellationToken.None);
+
+        if (sandbox)
+        {
+            var refused = Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Contains("environment", SerializeToJson(refused.Value).RootElement.GetProperty("validationErrors").ToString());
+            Assert.False((await dbContext.TenantPaymentMethods.SingleAsync()).IsEnabled);
+            publisher.VerifyNoOtherCalls();
+            return;
+        }
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<PaymentMethodResponseDto>(ok.Value);

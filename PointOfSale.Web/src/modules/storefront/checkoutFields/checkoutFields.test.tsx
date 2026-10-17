@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import i18n from '../../../i18n/config'
@@ -616,5 +616,59 @@ describe('Checkout Fields admin UI', () => {
                 }),
             }),
         ))
+    })
+
+    it('keeps option focus while typing a complete value', async () => {
+        const user = userEvent.setup()
+        renderPage()
+        await user.click(await screen.findByRole('button', { name: 'Add Custom Field' }))
+        await user.selectOptions(editorFieldType(), 'SELECT')
+        const option = screen.getByPlaceholderText('Option value')
+        await user.type(option, 'Large')
+        expect(screen.getByPlaceholderText('Option value')).toHaveValue('Large')
+        expect(option).toHaveFocus()
+    })
+
+    it('preserves EMAIL length constraints when only its label changes', async () => {
+        const user = userEvent.setup()
+        vi.mocked(checkoutFieldsService.getFields).mockResolvedValue({ fields: [systemField, {
+            ...customField, fieldType: 'EMAIL', configuration: { schemaVersion: 1, minLength: 5, maxLength: 80 },
+        }] })
+        renderPage()
+        const row = (await screen.findByText('T-shirt Size')).closest('li')!
+        await user.click(within(row).getByRole('button', { name: 'Edit' }))
+        await user.clear(editorLabelInput())
+        await user.type(editorLabelInput(), 'Contact email')
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+        expect(checkoutFieldsService.updateField).toHaveBeenCalledWith(customField.id, expect.objectContaining({
+            configuration: { schemaVersion: 1, minLength: 5, maxLength: 80 },
+        }))
+    })
+
+    it('suppresses same-tick form submissions before React renders the busy state', async () => {
+        const user = userEvent.setup()
+        let accept!: (value: typeof customField) => void
+        vi.mocked(checkoutFieldsService.createField).mockImplementation(() => new Promise(resolve => { accept = resolve }))
+        renderPage()
+        await user.click(await screen.findByRole('button', { name: 'Add Custom Field' }))
+        await user.type(editorLabelInput(), 'Company')
+        const form = editorLabelInput().closest('form')!
+        act(() => { fireEvent.submit(form); fireEvent.submit(form) })
+        expect(checkoutFieldsService.createField).toHaveBeenCalledTimes(1)
+        await act(async () => accept(customField))
+    })
+
+    it('retains a committed field and reports readback failure separately without inviting a duplicate create', async () => {
+        const user = userEvent.setup()
+        vi.mocked(checkoutFieldsService.getFields).mockResolvedValueOnce({ fields: [systemField] }).mockRejectedValueOnce({ response: { status: 503 } })
+        vi.mocked(checkoutFieldsService.createField).mockResolvedValue({ ...customField, label: 'Company' })
+        renderPage()
+        await user.click(await screen.findByRole('button', { name: 'Add Custom Field' }))
+        await user.type(editorLabelInput(), 'Company')
+        await user.click(screen.getByRole('button', { name: 'Save' }))
+        await screen.findByText('Unable to load checkout fields')
+        expect(screen.queryByText('Custom field created.')).not.toBeInTheDocument()
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        expect(await screen.findByText(/saved, but.*reload/i)).toBeInTheDocument()
     })
 })

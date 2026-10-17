@@ -14,7 +14,7 @@ const apiMock = vi.hoisted(() => ({ get: vi.fn(), requestPosSessionRefresh: vi.f
 vi.mock('../services/api', () => ({
     default: apiMock,
     requestPosSessionRefresh: apiMock.requestPosSessionRefresh,
-    isDefinitiveAuthFailure: error => [401, 403].includes(error?.response?.status),
+    isDefinitiveAuthFailure: (error: { response?: { status?: number } }) => [401, 403].includes(error?.response?.status ?? 0),
 }))
 
 const tenantId = '22222222-2222-4222-8222-222222222222'
@@ -32,8 +32,12 @@ const owner = {
 }
 
 const renderSidebar = (route = '/') => render(<MemoryRouter initialEntries={[route]}><Sidebar isOpen onClose={() => {}} /></MemoryRouter>)
-const branch = key => document.querySelector(`button[aria-controls="sidebar-submenu-${key}"]`)
-const assertDiscoverable = href => {
+const branch = (key: string) => {
+    const button = document.querySelector(`button[aria-controls="sidebar-submenu-${key}"]`)
+    if (!button) throw new Error(`Missing sidebar branch: ${key}`)
+    return button
+}
+const assertDiscoverable = (href: string) => {
     const link = document.querySelector(`aside a[href="${href}"]`)
     expect(link).toBeInTheDocument()
     for (let node = link?.parentElement; node; node = node.parentElement) {
@@ -54,7 +58,7 @@ describe('first-login sidebar navigation hydration', () => {
     afterEach(() => { cleanup(); queryClient.clear(); vi.restoreAllMocks() })
 
     it('discovers both authorized links on the initial session bootstrap without visiting either route or requesting its data', async () => {
-        let resolveSession
+        let resolveSession!: (value: { data: { user: typeof owner } }) => void
         apiMock.get.mockReturnValue(new Promise(resolve => { resolveSession = resolve }))
         render(<MemoryRouter initialEntries={['/']}><AuthBootstrap /><Sidebar isOpen onClose={() => {}} /></MemoryRouter>)
         expect(document.querySelector('aside a[href="/ecommerce/payment-methods"]')).toBeNull()
@@ -62,8 +66,8 @@ describe('first-login sidebar navigation hydration', () => {
         assertDiscoverable('/ecommerce/payment-methods')
         assertDiscoverable('/ecommerce/shipping-methods')
         expect(apiMock.get.mock.calls.map(([url]) => url)).toEqual(['/auth/session'])
-        expect(useAuthStore.getState().user.navigationCapabilities).toEqual([])
-        expect(useAuthStore.getState().user.effectivePermissions).toEqual(owner.effectivePermissions)
+        expect(useAuthStore.getState().user?.navigationCapabilities).toEqual([])
+        expect(useAuthStore.getState().user?.effectivePermissions).toEqual(owner.effectivePermissions)
     })
 
     it.each(['{}', 'null', '{broken', JSON.stringify({ 'operations-payments': false, 'operations-shipping': false })])('initializes discoverable navigation from a legacy/empty/corrupt cache: %s', cached => {
@@ -80,7 +84,7 @@ describe('first-login sidebar navigation hydration', () => {
         const view = renderSidebar()
         fireEvent.click(branch('operations-payments'))
         expect(branch('operations-payments')).toHaveAttribute('aria-expanded', 'false')
-        await waitFor(() => expect(JSON.parse(localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY)).expanded['operations-payments']).toBe(false))
+        await waitFor(() => expect(JSON.parse(localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY) ?? '{}').expanded['operations-payments']).toBe(false))
         view.unmount()
         useAuthStore.getState().logout()
         useAuthStore.getState().login(owner)
@@ -126,10 +130,11 @@ describe('first-login sidebar navigation hydration', () => {
         if (paymentAllowed) assertDiscoverable('/ecommerce/payment-methods')
         if (shippingAllowed) assertDiscoverable('/ecommerce/shipping-methods')
         view.unmount()
-        for (const [path, permission, allowed] of [
+        const routes: [string, string, boolean][] = [
             ['/ecommerce/payment-methods', 'storefront.payments.manage', paymentAllowed],
             ['/ecommerce/shipping-methods', 'shipping.manage', shippingAllowed],
-        ]) {
+        ]
+        for (const [path, permission, allowed] of routes) {
             const routeView = render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/" element={<p>Denied landing</p>} /><Route element={<PosPermissionRouteGuard permission={permission} />}><Route path={path} element={<p>Protected workspace</p>} /></Route></Routes></MemoryRouter>)
             expect(Boolean(screen.queryByText('Protected workspace'))).toBe(allowed)
             expect(Boolean(screen.queryByText('Denied landing'))).toBe(!allowed)

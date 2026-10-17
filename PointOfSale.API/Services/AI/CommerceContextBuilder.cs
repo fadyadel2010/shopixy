@@ -12,6 +12,7 @@ using PointOfSale.API.Services.AI.Models;
 using PointOfSale.API.Services.Cart;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -78,50 +79,16 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         // PHASE 6.5: Detect if this is a post-purchase inquiry
         var isPostPurchaseInquiry = DetectPostPurchaseIntent(sanitizedMessage);
 
-        // Kick off storefront config fetch as a fire-and-forget task to run in parallel
+        // Fetch configuration first; all SQL readers below share this scoped context.
         var storefrontTask = GetStorefrontConfigAsync(tenantId);
 
-        // Build all context parts in parallel
-        var tasks = new List<Task>();
-
-        // 1. Shop Context (will await storefrontTask internally)
-        var shopTask = BuildShopContextAsync(tenantId, storefrontTask, correlationId);
-        tasks.Add(shopTask);
-
-        // 2. Products Context (from cart + visible products)
-        var productsTask = BuildProductsContextAsync(storefrontTask, tenantId, customerId, productIdsInView, cartSessionId, correlationId);
-        tasks.Add(productsTask);
-
-        // 3. Shipping Context (needs cart for weight/subtotal)
-        var shippingTask = BuildShippingContextAsync(tenantId, customerId, cartSessionId, correlationId);
-        tasks.Add(shippingTask);
-
-        // 4. Order Draft Context (current cart)
-        var orderDraftTask = BuildOrderDraftContextAsync(tenantId, customerId, cartSessionId, correlationId);
-        tasks.Add(orderDraftTask);
-
-        // 5. Customer Context
-        var customerTask = BuildCustomerContextAsync(tenantId, customerId);
-        tasks.Add(customerTask);
-
-        // PHASE 6.5: 6. Order & Shipment Context (if post-purchase inquiry)
-        Task<OrderTrackingContext?>? orderTask = null;
-        Task<ShipmentTrackingContext?>? shipmentTask = null;
-        Task<HistoricalContext?>? historicalTask = null;
-
-        if (isPostPurchaseInquiry && customerId.HasValue)
-        {
-            orderTask = BuildOrderTrackingContextAsync(tenantId, customerId.Value, sanitizedMessage, correlationId);
-            tasks.Add(orderTask);
-        }
-
-        await Task.WhenAll(tasks);
-
-        context.Shop = await shopTask;
-        context.Products = await productsTask;
-        context.Shipping = await shippingTask;
-        context.OrderDraft = await orderDraftTask;
-        context.Customer = await customerTask;
+        // These services share the scoped SQL DbContext. Do not start concurrent
+        // database operations on it (or let best-effort catches hide their failures).
+        context.Shop = await BuildShopContextAsync(tenantId, storefrontTask, correlationId);
+        context.Products = await BuildProductsContextAsync(storefrontTask, tenantId, customerId, productIdsInView, cartSessionId, correlationId);
+        context.Shipping = await BuildShippingContextAsync(tenantId, customerId, cartSessionId, correlationId);
+        context.OrderDraft = await BuildOrderDraftContextAsync(tenantId, customerId, cartSessionId, correlationId);
+        context.Customer = await BuildCustomerContextAsync(tenantId, customerId);
         
         // Phase 8: Set personality from the storefront config (await the task with error handling)
         try
@@ -139,19 +106,15 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         }
 
         // PHASE 6.5: Populate order/shipment/historical context
-        if (orderTask != null)
+        if (isPostPurchaseInquiry && customerId.HasValue)
         {
-            context.Order = await orderTask;
+            context.Order = await BuildOrderTrackingContextAsync(tenantId, customerId.Value, sanitizedMessage, correlationId);
 
             // If order found, load shipment
             if (context.Order != null)
             {
-                shipmentTask = BuildShipmentTrackingContextAsync(tenantId, context.Order.Id, correlationId);
-                context.Shipment = await shipmentTask;
-
-                // Build historical context with confidence
-                historicalTask = BuildHistoricalContextAsync(context.Order, context.Shipment);
-                context.Historical = await historicalTask;
+                context.Shipment = await BuildShipmentTrackingContextAsync(tenantId, context.Order.Id, correlationId);
+                context.Historical = await BuildHistoricalContextAsync(context.Order, context.Shipment);
             }
         }
 
@@ -335,8 +298,10 @@ public class CommerceContextBuilder : ICommerceContextBuilder
                 var productDocs = await _productRepository.GetByProductIdsAsync(
                     tenantId, 
                     productIdsToLoad.Take(_options.MaxProductsInContext).ToList());
+                var publicProducts = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+                    _dbContext, productDocs, tenantId, CancellationToken.None);
 
-                foreach (var doc in productDocs)
+                foreach (var doc in publicProducts.Where(p => p.IsActive && p.IsOnlineVisible))
                 {
                     products.Add(MapProductToContext(doc, currency));
                 }
@@ -427,7 +392,7 @@ public class CommerceContextBuilder : ICommerceContextBuilder
                     Id = m.Id,
                     Name = m.Name,
                     Carrier = m.CarrierName,
-                    Price = m.Price > 0 ? m.Price : m.BaseRate,
+                    Price = m.Price,
                     PricePerKg = m.RatePerKg,
                     EstimatedDays = m.EstimatedDays.HasValue 
                         ? $"{m.EstimatedDays} days" 
@@ -498,15 +463,12 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         {
             try
             {
-                // Load customer details from MongoDB
-                var collection = _mongoDatabase.GetCollection<OnlineCustomerDocument>("online_customers");
-                var customer = await collection
-                    .Find(c => c.TenantId == tenantId && c.CustomerId == customerId.Value)
-                    .FirstOrDefaultAsync();
+                var customer = await _dbContext.OnlineCustomers.AsNoTracking()
+                    .SingleOrDefaultAsync(c => c.TenantId == tenantId && c.Id == customerId.Value && c.IsActive);
 
                 if (customer != null)
                 {
-                    customerContext.Name = $"{customer.FirstName} {customer.LastName}".Trim();
+                    customerContext.Name = customer.DisplayName;
                     customerContext.Email = customer.Email;
                     customerContext.Phone = customer.Phone;
                     // Location could be derived from default address if available
@@ -569,25 +531,21 @@ public class CommerceContextBuilder : ICommerceContextBuilder
             // Try to extract order number from message
             var orderNumber = ExtractOrderNumber(message);
 
-            // Load order from MongoDB (read model)
-            var ordersCollection = _mongoDatabase.GetCollection<OrderDocument>("orders");
-
-            OrderDocument? order = null;
+            // Use current SQL order snapshots rather than a partial, incompatible
+            // Mongo DTO whose status/payment fields may lag or fail deserialization.
+            var orders = _dbContext.Orders.AsNoTracking().Include(o => o.Items)
+                .Where(o => o.TenantId == tenantId && o.OnlineCustomerId == customerId && !o.IsDeleted);
+            PointOfSale.Core.Entities.Order? order;
 
             if (!string.IsNullOrEmpty(orderNumber))
             {
                 // Search by order number
-                order = await ordersCollection
-                    .Find(o => o.TenantId == tenantId && o.OnlineCustomerId == customerId && o.OrderNumber == orderNumber)
-                    .FirstOrDefaultAsync();
+                order = await orders.SingleOrDefaultAsync(o => o.OrderNumber == orderNumber);
             }
             else
             {
                 // Get most recent order for customer
-                order = await ordersCollection
-                    .Find(o => o.TenantId == tenantId && o.OnlineCustomerId == customerId)
-                    .SortByDescending(o => o.CreatedAtUtc)
-                    .FirstOrDefaultAsync();
+                order = await orders.OrderByDescending(o => o.CreatedAt).ThenBy(o => o.Id).FirstOrDefaultAsync();
             }
 
             if (order == null)
@@ -598,22 +556,23 @@ public class CommerceContextBuilder : ICommerceContextBuilder
             // Map to tracking context
             return new OrderTrackingContext
             {
-                Id = order.OrderId,
+                Id = order.Id,
                 Number = order.OrderNumber,
-                Status = order.Status,
-                CreatedAt = order.CreatedAtUtc,
+                Status = order.Status.ToString(),
+                CreatedAt = order.CreatedAt,
                 Items = order.Items?.Select(i => new OrderItemTrackingContext
                 {
                     Name = i.ProductName,
                     Quantity = i.Quantity,
                     Price = i.UnitPrice
                 }).ToList() ?? new(),
-                Total = order.GrandTotal,
+                Total = order.Total,
+                Currency = order.Currency,
                 Payment = new PaymentTrackingContext
                 {
-                    Status = order.PaymentStatus ?? "Unknown",
-                    Method = order.PaymentMethod ?? "Unknown",
-                    Amount = order.GrandTotal
+                    Status = order.PaymentStatus.ToString(),
+                    Method = order.PaymentMethodName ?? order.PaymentMethodCode,
+                    Amount = order.Total
                 }
             };
         }
@@ -634,12 +593,8 @@ public class CommerceContextBuilder : ICommerceContextBuilder
     {
         try
         {
-            // Load shipment from MongoDB (read model)
-            var shipmentsCollection = _mongoDatabase.GetCollection<ShipmentDocument>("shipments");
-
-            var shipment = await shipmentsCollection
-                .Find(s => s.TenantId == tenantId && s.OrderId == orderId)
-                .FirstOrDefaultAsync();
+            var shipment = await _dbContext.Shipments.AsNoTracking()
+                .SingleOrDefaultAsync(s => s.TenantId == tenantId && s.OrderId == orderId && !s.IsDeleted);
 
             if (shipment == null)
             {
@@ -650,17 +605,12 @@ public class CommerceContextBuilder : ICommerceContextBuilder
             return new ShipmentTrackingContext
             {
                 Exists = true,
-                Carrier = shipment.CarrierName,
+                Carrier = shipment.CarrierCode,
                 TrackingNumber = shipment.TrackingNumber,
-                Status = shipment.Status,
+                Status = shipment.Status.ToString(),
                 EstimatedDelivery = shipment.EstimatedDeliveryDate,
-                Timeline = shipment.Timeline?.Select(t => new ShipmentEventContext
-                {
-                    Status = t.Status,
-                    At = t.Timestamp,
-                    Location = t.Location,
-                    Notes = t.Description
-                }).ToList() ?? new()
+                // This aggregate does not supply an authoritative event timeline.
+                Timeline = new()
             };
         }
         catch (Exception ex)
@@ -686,9 +636,9 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         {
             OrderCreatedAt = order.CreatedAt,
             IsLegacyOrder = false,
-            ShippingIntegrationEnabledAtCreation = true,
-            PaymentIntegrationEnabledAtCreation = true,
-            EventTrackingEnabledAtCreation = true,
+            ShippingIntegrationEnabledAtCreation = null,
+            PaymentIntegrationEnabledAtCreation = null,
+            EventTrackingEnabledAtCreation = null,
             EventsIncomplete = false
         };
 
@@ -700,7 +650,6 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         var orderAge = DateTime.UtcNow - order.CreatedAt;
         if (orderAge.TotalDays > 180)
         {
-            historical.IsLegacyOrder = true;
             confidence = DataConfidenceLevel.Medium;
             confidenceNote = "This order was placed several months ago. Some tracking details may not be available.";
         }
@@ -711,9 +660,8 @@ public class CommerceContextBuilder : ICommerceContextBuilder
             if (order.Status == "Delivered" || order.Status == "Completed")
             {
                 // Order delivered but no shipment tracking
-                historical.ShippingIntegrationEnabledAtCreation = false;
                 confidence = DataConfidenceLevel.Low;
-                confidenceNote = "This order was delivered before automated tracking was enabled. Detailed shipment information is not available.";
+                confidenceNote = "No shipment snapshot is available. This does not establish when automated tracking was enabled.";
             }
             else if (order.Status == "Processing" || order.Status == "Pending")
             {
@@ -733,9 +681,8 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         // Check if shipment timeline is empty
         if (shipment != null && shipment.Exists && (shipment.Timeline == null || !shipment.Timeline.Any()))
         {
-            historical.EventTrackingEnabledAtCreation = false;
             confidence = DataConfidenceLevel.Medium;
-            confidenceNote = "Detailed tracking events were not recorded for this shipment.";
+            confidenceNote = "Detailed tracking events are not supplied in this context. Do not infer that events were never recorded.";
         }
 
         historical.Confidence = confidence;
@@ -753,7 +700,7 @@ public class CommerceContextBuilder : ICommerceContextBuilder
         var patterns = new[]
         {
             @"#(\d+)",
-            @"ORD-(\d+)",
+            @"\b(ORD-[A-Z0-9]+-\d{4}-\d+|ORD-\d+)\b",
             @"order\s+(\d+)",
             @"رقم\s+(\d+)" // Arabic: "number 12345"
         };

@@ -134,7 +134,9 @@ public sealed class DomainReadService : IDomainReadService
             _logger.LogError(ex,
                 "Error fetching domain list | TenantId: {TenantId} | TraceId: {TraceId}",
                 tenantId, traceId);
-            return EmptyPage<DomainSummaryDto, DomainListPageDto>(page, pageSize);
+            // An unavailable query is not evidence of an empty portfolio. Let the
+            // controller return its error contract so the administrator can retry.
+            throw;
         }
     }
 

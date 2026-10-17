@@ -43,7 +43,7 @@ public sealed class StorefrontCheckoutPricingTotalsAuthorityCertificationTests
         Assert.Contains("formatMoney(pricing.tax, currency)", orderSummary, StringComparison.Ordinal);
         Assert.Contains("formatMoney(pricing.paymentFee, currency)", orderSummary, StringComparison.Ordinal);
         Assert.Contains("formatMoney(pricing.total, currency)", orderSummary, StringComparison.Ordinal);
-        Assert.Contains("Unable to load the latest checkout pricing.", orderSummary, StringComparison.Ordinal);
+        Assert.Contains("t('checkout.summary.unavailable')", orderSummary, StringComparison.Ordinal);
 
         Assert.Contains("Checkout displays ONLY backend pricing quotes", reviewStep, StringComparison.Ordinal);
         Assert.Contains("const pricing = useCheckoutStore(selectPricingPreview);", reviewStep, StringComparison.Ordinal);
@@ -203,7 +203,7 @@ public sealed class StorefrontCheckoutPricingTotalsAuthorityCertificationTests
         var current = new DirectoryInfo(startPath);
         while (current != null)
         {
-            if (current.GetFiles("*.sln").Any() || current.GetDirectories("PointOfSale.API").Any())
+            if (current.GetFiles("*.sln").Any() || File.Exists(Path.Combine(current.FullName, "PointOfSale.API", "PointOfSale.API.csproj")))
             {
                 return current.FullName;
             }

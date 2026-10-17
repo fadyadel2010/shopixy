@@ -1,0 +1,18 @@
+import type { HttpRequestOptions, HttpResponse } from '../core/httpContracts';
+import type { ApiJson } from './apiJson';
+type Response = Promise<HttpResponse<ApiJson>>;
+export function listPosUsers(params?: Record<string, unknown>, config?: HttpRequestOptions): Response;
+export function getPosUser(userId: string, config?: HttpRequestOptions): Response;
+export function getPosUserRoles(config?: HttpRequestOptions): Response;
+export function getPosUserAudit(userId: string, params?: Record<string, unknown>, config?: HttpRequestOptions): Response;
+export function invitePosUser(payload: { email?: string; role?: string; firstName?: string; lastName?: string; username?: string }): Response;
+export function resendPosUserInvitation(userId: string, version?: string): Response;
+export function revokePosUserInvitation(userId: string, reason?: string, version?: string): Response;
+export function updatePosUserProfile(userId: string, payload: Record<string, string>, version?: string): Response;
+export function changePosUserRole(userId: string, role: string, version?: string): Response;
+export function changePosUserStatus(userId: string, isActive: boolean, reason?: string, version?: string): Response;
+export function issuePosUserPasswordReset(userId: string, version?: string): Response;
+export function revokePosUserSession(userId: string, reason?: string, version?: string): Response;
+export function transferPosOwnership(targetUserId: string, targetVersion: string, currentOwnerVersion?: string): Response;
+export function acceptPosUserInvitation(token: string, password: string): Response;
+export function completePosPasswordReset(token: string, password: string): Response;

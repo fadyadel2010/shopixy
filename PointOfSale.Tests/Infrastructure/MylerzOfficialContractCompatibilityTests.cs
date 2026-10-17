@@ -7,10 +7,10 @@ namespace PointOfSale.Tests.Infrastructure;
 
 public sealed class MylerzOfficialContractCompatibilityTests
 {
-    private const string ContractUnavailable = "MYLERZ_OFFICIAL_CONTRACT_UNAVAILABLE";
+    private const string ContractUnavailable = MylerzAdapter.ContractUnavailableErrorCode;
 
     [Fact]
-    public async Task CreateShipment_WithoutOfficialPublicContract_FailsBeforeOutboundCall()
+    public async Task CreateShipment_WithoutMerchantQualification_FailsBeforeOutboundCall()
     {
         var handler = new RecordingHandler();
         var adapter = CreateAdapter(handler);
@@ -23,7 +23,16 @@ public sealed class MylerzOfficialContractCompatibilityTests
     }
 
     [Fact]
-    public async Task Quote_WithoutOfficialPublicContract_FailsBeforeOutboundCall()
+    public async Task UncertainCreationLookup_IsUnsupportedWithoutOutboundCall()
+    {
+        var handler = new RecordingHandler();
+        var adapter = CreateAdapter(handler);
+        Assert.Null(await adapter.GetShipmentByCarrierRequestIdAsync("ship-original-request", Credentials()));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Quote_WithoutMerchantBillingQualification_FailsBeforeOutboundCall()
     {
         var handler = new RecordingHandler();
         var adapter = CreateAdapter(handler);
@@ -37,7 +46,7 @@ public sealed class MylerzOfficialContractCompatibilityTests
     }
 
     [Fact]
-    public async Task Tracking_WithoutOfficialPublicContract_FailsBeforeOutboundCall()
+    public async Task Tracking_WithoutMerchantStatusQualification_FailsBeforeOutboundCall()
     {
         var handler = new RecordingHandler();
         var adapter = CreateAdapter(handler);
@@ -63,7 +72,7 @@ public sealed class MylerzOfficialContractCompatibilityTests
     }
 
     [Fact]
-    public async Task CredentialValidation_WithoutOfficialPublicContract_FailsBeforeOutboundCall()
+    public async Task CredentialValidation_RequiresTheDocumentedTokenResponse_NotJustHttp200()
     {
         var handler = new RecordingHandler();
         var adapter = CreateAdapter(handler);
@@ -71,8 +80,8 @@ public sealed class MylerzOfficialContractCompatibilityTests
         var result = await adapter.ValidateCredentialsAsync(Credentials());
 
         Assert.False(result.Success);
-        Assert.Equal(ContractUnavailable, result.ErrorCode);
-        Assert.Empty(handler.Requests);
+        Assert.Equal("MYLERZ_TOKEN_RESPONSE_SCHEMA_UNQUALIFIED", result.ErrorCode);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]

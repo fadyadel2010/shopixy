@@ -106,6 +106,8 @@ export function StorefrontBuilderPage() {
     const previewAbortControllerRef = useRef(null)
     const saveRequestIdRef = useRef(0)
     const loadRequestIdRef = useRef(0)
+    const publishInFlightRef = useRef(false)
+    const mountedRef = useRef(true)
 
     // DnD Sensors
     const sensors = useSensors(
@@ -213,7 +215,7 @@ export function StorefrontBuilderPage() {
         }
     }, [isDirty])
 
-    const loadPageData = useCallback(async (page, templateId) => {
+    const loadPageData = useCallback(async (page, templateId, { preserveCandidateOnFailure = false } = {}) => {
         loadAbortControllerRef.current?.abort()
         const controller = new AbortController()
         loadAbortControllerRef.current = controller
@@ -221,8 +223,10 @@ export function StorefrontBuilderPage() {
         loadRequestIdRef.current = requestId
         setLoadError(null)
         setIsLoadingWorkspace(true)
-        setStoreConfig(null)
-        admitSections([])
+        if (!preserveCandidateOnFailure) {
+            setStoreConfig(null)
+            admitSections([])
+        }
 
         try {
             const [adminConfig, runtimeConfig] = await Promise.all([
@@ -267,19 +271,21 @@ export function StorefrontBuilderPage() {
             )
             console.log('[Builder] Setting backend-admitted sections for', page, ':', acceptedSections.length, 'sections')
             admitSections(acceptedSections)
+            return true
         } catch (error) {
-            if (isRequestCanceled(error)) {
-                return
+            if (controller.signal.aborted || requestId !== loadRequestIdRef.current || isRequestCanceled(error)) {
+                return false
             }
 
             console.error('Failed to load page data:', error)
-            setStoreConfig(null)
+            if (!preserveCandidateOnFailure) setStoreConfig(null)
             setSaveStatus('error')
             setLoadError(
                 error?.response?.data?.message
                 || (isRTL ? 'فشل تحميل بيانات الصفحة.' : 'Failed to load page data.')
             )
-            admitSections([])
+            if (!preserveCandidateOnFailure) admitSections([])
+            return false
         } finally {
             if (loadAbortControllerRef.current === controller) {
                 loadAbortControllerRef.current = null
@@ -408,7 +414,9 @@ export function StorefrontBuilderPage() {
 
     // Cleanup
     useEffect(() => {
+        mountedRef.current = true
         return () => {
+            mountedRef.current = false
             abortPendingSave()
             loadAbortControllerRef.current?.abort()
             previewAbortControllerRef.current?.abort()
@@ -486,6 +494,7 @@ export function StorefrontBuilderPage() {
                 return
             }
 
+            if (controller.signal.aborted) return
             const preview = deriveCurrentVendorScopedDto(
                 await storeConfigService.getPreviewConfig({ signal: controller.signal,
                     ...(searchParams.get('themePreviewToken') ? { params: { preview: true, draftThemePreviewToken: searchParams.get('themePreviewToken') } } : {}),
@@ -522,6 +531,8 @@ export function StorefrontBuilderPage() {
     }, [currentUser, isDirty, isRTL, persistPageLayout, sections, storeConfig, searchParams])
 
     const handlePublish = async () => {
+        if (publishInFlightRef.current) return
+        publishInFlightRef.current = true
         try {
             const result = isDirty
                 ? await persistPageLayout(sections)
@@ -530,6 +541,7 @@ export function StorefrontBuilderPage() {
                 return
             }
 
+            if (!mountedRef.current) return
             setPublishing(true)
             setPublishError(null)
             const publishRowVersion = getAcceptedWorkspaceRowVersion(result.config) || requireWorkspaceAdmission()
@@ -542,6 +554,7 @@ export function StorefrontBuilderPage() {
                 getActiveStorageKey(),
                 buildIfMatchOptions(publishRowVersion),
             )
+            if (!mountedRef.current) return
             const acceptedConfig = admitWorkspaceConfig(response, result.config)
             if (!acceptedConfig) {
                 throw new Error('Current backend publish response authority is unavailable.')
@@ -579,7 +592,8 @@ export function StorefrontBuilderPage() {
                 setConflict({ message: error?.response?.data?.message })
             }
         } finally {
-            setPublishing(false)
+            publishInFlightRef.current = false
+            if (mountedRef.current) setPublishing(false)
         }
     }
 
@@ -626,9 +640,10 @@ export function StorefrontBuilderPage() {
     }, [abortPendingSave, admitSections, getAcceptedSectionsFromConfig, markClean, persistPageLayout, storeConfig, targetPage, templateIdFromUrl, isRTL, t])
 
     const handleLoadLatest = useCallback(async () => {
-        setConflict(null)
-        await loadPageData(targetPage, templateIdFromUrl)
-        setFeedback({ kind: 'info', title: t('storefront.homepageEditor.latestLoaded'), message: t('storefront.homepageEditor.latestReplaced') })
+        if (await loadPageData(targetPage, templateIdFromUrl, { preserveCandidateOnFailure: true })) {
+            setConflict(null)
+            setFeedback({ kind: 'info', title: t('storefront.homepageEditor.latestLoaded'), message: t('storefront.homepageEditor.latestReplaced') })
+        }
     }, [loadPageData, targetPage, templateIdFromUrl])
 
     const handleRetryConflict = useCallback(async () => {
@@ -739,7 +754,7 @@ export function StorefrontBuilderPage() {
                         </p>
                         {loadError && (
                             <button
-                                onClick={() => loadPageData(targetPage, templateIdFromUrl)}
+                                onClick={() => loadPageData(targetPage, templateIdFromUrl, { preserveCandidateOnFailure: true })}
                                 className="mt-5 inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
                             >
                                 {isRTL ? 'إعادة المحاولة' : 'Retry admission'}

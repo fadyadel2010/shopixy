@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ServiceSearchRequest } from '../types';
-import { useFormatting } from '../../hooks/useFormatting';
+import type { PresentationFormatting } from '../presentationFormatting';
 
-interface FiltersProps {
+interface FiltersProps extends Pick<PresentationFormatting, 'dir' | 'formatNumber'> {
   onChange: (filters: Partial<ServiceSearchRequest>) => void;
 }
 
@@ -13,9 +13,8 @@ interface FiltersProps {
  * - No client-side filtering
  * - All filters sent to backend
  */
-export function Filters({ onChange }: FiltersProps) {
+export function Filters({ onChange, dir, formatNumber }: FiltersProps) {
   const { t } = useTranslation();
-  const { dir, formatNumber } = useFormatting();
   const [minRating, setMinRating] = useState<number | undefined>();
   const [trustBadge, setTrustBadge] = useState<string | undefined>();
 

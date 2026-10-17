@@ -27,7 +27,7 @@ import {
 const CUSTOM_FIELD_TYPES = ['TEXT', 'TEXTAREA', 'NUMBER', 'EMAIL', 'PHONE', 'SELECT', 'RADIO', 'CHECKBOX', 'DATE', 'IMAGE', 'FILE', 'MULTI_IMAGE']
 const UPLOAD_FIELD_TYPES = new Set(['IMAGE', 'FILE', 'MULTI_IMAGE'])
 const OPTION_FIELD_TYPES = new Set(['SELECT', 'RADIO'])
-const TEXT_CONFIG_TYPES = new Set(['TEXT', 'TEXTAREA'])
+const TEXT_CONFIG_TYPES = new Set(['TEXT', 'TEXTAREA', 'EMAIL', 'PHONE'])
 const EMPTY_OPERATORS = new Set(['IS_EMPTY', 'IS_NOT_EMPTY'])
 
 const emptyDraft = {
@@ -584,6 +584,7 @@ function FieldEditor({ draft, fields, errors, isSaving, onChange, onClose, onSav
             panelClassName="max-h-[90vh] max-w-3xl overflow-y-auto"
         >
             <form className="mt-5 space-y-5" onSubmit={(event) => { event.preventDefault(); onSave() }}>
+                <fieldset disabled={isSaving} className="space-y-5">
                 {errors.length > 0 ? (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
                         <p className="font-medium">{t('checkoutFields.validation.title', 'Fix these issues before saving:')}</p>
@@ -600,6 +601,7 @@ function FieldEditor({ draft, fields, errors, isSaving, onChange, onClose, onSav
                             id="checkout-field-label"
                             ref={initialFocusRef}
                             value={draft.label}
+                            maxLength={120}
                             onChange={(event) => patchDraft({ label: event.target.value })}
                             className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                             aria-invalid={errors.some((error) => error.includes(t('checkoutFields.label', 'Label')))}
@@ -633,6 +635,7 @@ function FieldEditor({ draft, fields, errors, isSaving, onChange, onClose, onSav
                     <textarea
                         id="checkout-field-help-text"
                         value={draft.helpText}
+                        maxLength={500}
                         onChange={(event) => patchDraft({ helpText: event.target.value })}
                         rows={3}
                         className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
@@ -698,6 +701,7 @@ function FieldEditor({ draft, fields, errors, isSaving, onChange, onClose, onSav
                         {t('checkoutFields.save', 'Save')}
                     </button>
                 </div>
+                </fieldset>
             </form>
         </AuthoringDialog>
     )
@@ -833,7 +837,7 @@ function FieldTypeConfiguration({ draft, configuration, updateConfiguration, upd
                 <legend className="px-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{t('checkoutFields.options', 'Options')}</legend>
                 <div className="mt-3 space-y-3">
                     {options.map((option, index) => (
-                        <div key={`${option.value}-${index}`} className="flex flex-col gap-2 sm:flex-row">
+                        <div key={index} className="flex flex-col gap-2 sm:flex-row">
                             <label className="flex-1 text-sm font-medium text-gray-700 dark:text-gray-200">
                                 <span className="sr-only">{t('checkoutFields.optionLabel', 'Option Label')}</span>
                                 <input value={option.label} onChange={(event) => updateOption(index, event.target.value)} placeholder={t('checkoutFields.optionPlaceholder', 'Option value')} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
@@ -914,6 +918,7 @@ export function CheckoutFieldsPage() {
     const [validationErrors, setValidationErrors] = useState([])
     const [pendingDelete, setPendingDelete] = useState(null)
     const [confirmDiscard, setConfirmDiscard] = useState(false)
+    const operationRef = useRef(false)
 
     const {
         fields,
@@ -952,6 +957,7 @@ export function CheckoutFieldsPage() {
     }
 
     const closeEditor = () => {
+        if (operationRef.current) return
         if (isDirty) {
             setConfirmDiscard(true)
             return
@@ -969,41 +975,48 @@ export function CheckoutFieldsPage() {
     }
 
     const saveEditor = async () => {
+        if (!editorDraft || operationRef.current || isOrdering) return
         const errors = validateDraft(editorDraft, t)
         setValidationErrors(errors)
         if (errors.length) return
 
+        operationRef.current = true
         try {
             if (editorDraft.id) {
-                await updateField(editorDraft.id, buildPayload(editorDraft, { includeType: !isSystemField(editorDraft) }))
-                showSuccess(t('checkoutFields.saved', 'Checkout field saved.'))
+                const outcome = await updateField(editorDraft.id, buildPayload(editorDraft, { includeType: !isSystemField(editorDraft) }))
+                if (!outcome.readbackFailed) showSuccess(t('checkoutFields.saved', 'Checkout field saved.'))
             } else {
-                await createField(buildPayload(editorDraft, { includeType: true }))
-                showSuccess(t('checkoutFields.created', 'Custom field created.'))
+                const outcome = await createField(buildPayload(editorDraft, { includeType: true }))
+                if (!outcome.readbackFailed) showSuccess(t('checkoutFields.created', 'Custom field created.'))
             }
             setEditorDraft(null)
             setOriginalDraft(null)
             setValidationErrors([])
         } catch (err) {
             showError(err?.response?.data?.message || t('checkoutFields.saveFailed', 'Unable to save checkout field.'))
+        } finally {
+            operationRef.current = false
         }
     }
 
     const confirmDelete = async () => {
-        if (!pendingDelete) return
+        if (!pendingDelete || operationRef.current || isOrdering) return
+        operationRef.current = true
         try {
-            await deleteField(pendingDelete.id)
-            showSuccess(t('checkoutFields.archived', 'Custom field archived.'))
+            const outcome = await deleteField(pendingDelete.id)
+            if (!outcome.readbackFailed) showSuccess(t('checkoutFields.archived', 'Custom field archived.'))
             setPendingDelete(null)
         } catch (err) {
             showError(err?.response?.data?.message || t('checkoutFields.archiveFailed', 'Unable to archive checkout field.'))
+        } finally {
+            operationRef.current = false
         }
     }
 
     const persistOrder = async (nextFields) => {
         try {
-            await reorderFields(nextFields)
-            showSuccess(t('checkoutFields.orderSaved', 'Checkout field order saved.'))
+            const result = await reorderFields(nextFields)
+            if (result) showSuccess(t('checkoutFields.orderSaved', 'Checkout field order saved.'))
         } catch (err) {
             showError(err?.response?.data?.message || t('checkoutFields.orderFailed', 'Unable to save checkout field order.'))
         }

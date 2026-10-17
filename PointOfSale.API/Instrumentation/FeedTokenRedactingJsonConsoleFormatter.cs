@@ -22,7 +22,8 @@ namespace PointOfSale.API.Instrumentation;
 /// any application middleware runs; with IncludeScopes enabled that credential
 /// would be copied into every log line of the request. Redaction is
 /// deterministic prefix + final-segment based (<see cref="PublicFeedPathRedactor"/>);
-/// every non-feed value is written byte-identical to the built-in formatter.
+/// non-feed state values retain the built-in shape. Exception diagnostics use a
+/// safe renderer rather than the CLR's reflection-heavy stack formatter.
 /// </summary>
 public sealed class FeedTokenRedactingJsonConsoleFormatter : ConsoleFormatter, IDisposable
 {
@@ -58,9 +59,9 @@ public sealed class FeedTokenRedactingJsonConsoleFormatter : ConsoleFormatter, I
             logEntry.LogLevel,
             logEntry.Category,
             logEntry.EventId.Id,
-            logEntry.Exception?.ToString(),
+            logEntry.Exception == null ? null : ExceptionDiagnosticFormatter.Format(logEntry.Exception),
             logEntry.State != null,
-            logEntry.State?.ToString(),
+            ToInvariantString(logEntry.State),
             logEntry.State as IReadOnlyList<KeyValuePair<string, object?>>,
             stamp);
     }
@@ -158,7 +159,7 @@ public sealed class FeedTokenRedactingJsonConsoleFormatter : ConsoleFormatter, I
                 if (scope is IEnumerable<KeyValuePair<string, object?>> scopeItems)
                 {
                     state.WriteStartObject();
-                    state.WriteString("Message", PublicFeedPathRedactor.RedactEmbedded(scope.ToString()));
+                    state.WriteString("Message", PublicFeedPathRedactor.RedactEmbedded(ToInvariantString(scope)));
                     foreach (KeyValuePair<string, object?> item in scopeItems)
                     {
                         WriteItem(state, item);
@@ -228,7 +229,9 @@ public sealed class FeedTokenRedactingJsonConsoleFormatter : ConsoleFormatter, I
         }
     }
 
-    private static string? ToInvariantString(object? obj) => Convert.ToString(obj, CultureInfo.InvariantCulture);
+    private static string? ToInvariantString(object? obj) => obj is Exception exception
+        ? ExceptionDiagnosticFormatter.Format(exception)
+        : Convert.ToString(obj, CultureInfo.InvariantCulture);
 
     internal JsonConsoleFormatterOptions FormatterOptions { get; set; }
 

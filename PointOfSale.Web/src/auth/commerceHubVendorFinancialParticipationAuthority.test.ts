@@ -102,7 +102,6 @@ const earningsDashboard = {
                     payoutItemId: '5a5a5a5a-5a5a-45a5-85a5-5a5a5a5a5a5a',
                     earningId: '12121212-1212-4121-8121-121212121212',
                     subOrderId: '23232323-2323-4232-8232-232323232323',
-                    payoutId: '55555555-5555-4555-8555-555555555555',
                     orderNumber: 'CH-1001',
                     amount: 200,
                 },

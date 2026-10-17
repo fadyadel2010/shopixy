@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -181,10 +182,11 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                 var result = (RedisResult[]?)await database.ScriptEvaluateAsync(
                     ReadOwnedScript,
                     new RedisKey[] { key, invalidationGenerationKey });
-                generationAfterRead = result is { Length: > 0 } &&
-                                      long.TryParse(result[0].ToString(), out var generation)
-                    ? generation
-                    : 0L;
+                if (result is not { Length: 2 })
+                {
+                    throw new InvalidOperationException("Owned cache read returned incomplete generation evidence.");
+                }
+                generationAfterRead = ParseInvalidationGeneration(result[0].ToString());
                 cachedValue = result is { Length: > 1 } && !result[1].IsNull
                     ? result[1].ToString()
                     : RedisValue.Null;
@@ -888,9 +890,14 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
     }
 
     private static long ParseInvalidationGeneration(RedisValue value)
-        => value.IsNullOrEmpty || !long.TryParse(value.ToString(), out var generation)
-            ? 0L
-            : generation;
+    {
+        // Only a missing key denotes the initial generation. Corrupt/negative
+        // evidence must not revive a generation-zero (or forged) envelope.
+        if (value.IsNull) return 0L;
+        if (!long.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var generation))
+            throw new InvalidOperationException("Owned cache invalidation generation is invalid.");
+        return generation;
+    }
 }
 
 public sealed class RedisCacheInvalidationException : Exception

@@ -19,7 +19,9 @@ public sealed class CacheCoreAndCleanupArchitectureTests
 
         Assert.Contains("AdvanceInvalidationGenerationAsync", productOwner, StringComparison.Ordinal);
         Assert.Contains("StorefrontProductsInvalidationGenerationKey", productOwner, StringComparison.Ordinal);
-        Assert.Contains("GetOrCreateOwnedAsync", productReader, StringComparison.Ordinal);
+        // Status-aware population distinguishes a SQL-refreshed DTO from a cache
+        // candidate; it uses the same owned atomic generation fence.
+        Assert.Contains("GetOrCreateOwnedWithStatusAsync", productReader, StringComparison.Ordinal);
         Assert.Contains("GetOrCreateOwnedAsync", homeReader, StringComparison.Ordinal);
 
         Assert.Contains("AdvanceInvalidationGenerationAsync", shippingOwner, StringComparison.Ordinal);
@@ -65,17 +67,23 @@ public sealed class CacheCoreAndCleanupArchitectureTests
     }
 
     [Fact]
-    public void RequiredInvalidationAndOwnedPopulationStayFailClosedAndRaceFenced()
+    public async Task RequiredInvalidationAndOwnedPopulationStayFailClosedAndRaceFenced()
     {
         var cache = ReadRepoFile("PointOfSale.Infrastructure/Redis/Services/RedisJsonCacheService.cs");
         var envelope = ReadRepoFile("PointOfSale.Infrastructure/Redis/Models/CacheEnvelope.cs");
 
         Assert.Contains("RedisCacheInvalidationException", cache, StringComparison.Ordinal);
         Assert.Contains("AdvanceInvalidationGenerationAsync", cache, StringComparison.Ordinal);
-        Assert.Contains("Condition.StringEqual", cache, StringComparison.Ordinal);
         Assert.Contains("GetOrCreateOwnedAsync", cache, StringComparison.Ordinal);
         Assert.Contains("InvalidationGeneration", envelope, StringComparison.Ordinal);
         Assert.DoesNotContain("invalidation failed (non-critical)", cache, StringComparison.OrdinalIgnoreCase);
+        // Lua replaced the old Redis transaction condition. Assert observable
+        // rejection/fencing, not the spelling of an obsolete transaction API.
+        var behavior = new Infrastructure.Phase5OwnedCacheTests();
+        await behavior.InvalidGeneration_CannotAdmitAnOldEnvelope("corrupt");
+        await behavior.InvalidGeneration_CannotAdmitAnOldEnvelope("-1");
+        await behavior.RequiredInvalidation_UnavailableEnabledRedisThrows_DisabledRedisIsExplicitlyOptional();
+        await new Infrastructure.ComprehensiveCacheRemediationTests().RedisWrite_GenerationAdvancedBeforePopulation_FencesStaleValue();
     }
 
     [Fact]

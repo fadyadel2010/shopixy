@@ -230,7 +230,8 @@ export default function OrdersPage() {
         staleTime: 30_000,
     })
 
-    const orders = ordersQuery.isFetching || ordersQuery.isError ? [] : (ordersQuery.data?.orders ?? [])
+    const orders = useMemo(() => ordersQuery.isFetching || ordersQuery.isError ? [] : (ordersQuery.data?.orders ?? []),
+        [ordersQuery.isFetching, ordersQuery.isError, ordersQuery.data?.orders])
     const meta = ordersQuery.data?.meta
     const totalCount = meta?.totalCount ?? 0
     const totalPages = meta?.totalPages ?? 0

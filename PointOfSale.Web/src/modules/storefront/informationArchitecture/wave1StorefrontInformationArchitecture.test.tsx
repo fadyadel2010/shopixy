@@ -19,15 +19,16 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter } from 'react-router-dom'
 import i18n from '../../../i18n/config'
 import Sidebar from '../../../components/Sidebar'
 import { useAuthStore } from '../../../store/authStore'
 import {
     OPERATIONS_NAVIGATION,
     STOREFRONT_PRODUCT_NAVIGATION,
-    resolveStorefrontScreen,
+    resolveStorefrontScreen as resolveScreen,
 } from './storefrontInformationArchitecture'
+import type { StorefrontNavigationNode } from './storefrontInformationArchitecture'
 
 const iaSource = () =>
     readFileSync(
@@ -85,26 +86,35 @@ const ownerUser = {
 
 const rootNode = OPERATIONS_NAVIGATION
 
-const findNodeByKey = (tree, key) => {
-    if (tree.key === key) return tree
+const searchNode = (tree: StorefrontNavigationNode, predicate: (node: StorefrontNavigationNode) => boolean): StorefrontNavigationNode | null => {
+    if (predicate(tree)) return tree
     for (const child of tree.children || []) {
-        const found = findNodeByKey(child, key)
+        const found = searchNode(child, predicate)
         if (found) return found
     }
     return null
 }
 
-const findNodeByPath = (tree, path) => {
-    if (tree.path === path) return tree
-    for (const child of tree.children || []) {
-        const found = findNodeByPath(child, path)
-        if (found) return found
-    }
-    return null
+const findNodeByKey = (tree: StorefrontNavigationNode, key: string): StorefrontNavigationNode & { children: StorefrontNavigationNode[] } => {
+    const node = searchNode(tree, candidate => candidate.key === key)
+    if (!node?.children) throw new Error(`Expected navigation group ${key}`)
+    return { ...node, children: node.children }
 }
 
-const collectAllPaths = (tree) => {
-    const paths = []
+const findNodeByPath = (tree: StorefrontNavigationNode, path: string): StorefrontNavigationNode => {
+    const node = searchNode(tree, candidate => candidate.path === path)
+    if (!node) throw new Error(`Expected navigation path ${path}`)
+    return node
+}
+
+const resolveStorefrontScreen = (path: string) => {
+    const screen = resolveScreen(path)
+    if (!screen) throw new Error(`Expected Storefront screen ${path}`)
+    return screen
+}
+
+const collectAllPaths = (tree: StorefrontNavigationNode): string[] => {
+    const paths: string[] = []
     if (tree.path) paths.push(tree.path)
     for (const child of tree.children || []) {
         paths.push(...collectAllPaths(child))
@@ -112,8 +122,8 @@ const collectAllPaths = (tree) => {
     return paths
 }
 
-const collectAllScreenIds = (tree) => {
-    const ids = []
+const collectAllScreenIds = (tree: StorefrontNavigationNode): string[] => {
+    const ids: string[] = []
     if (tree.screenIds) ids.push(...tree.screenIds)
     for (const child of tree.children || []) {
         ids.push(...collectAllScreenIds(child))
@@ -121,8 +131,8 @@ const collectAllScreenIds = (tree) => {
     return ids
 }
 
-const collectLeafNodes = (tree) => {
-    const leaves = []
+const collectLeafNodes = (tree: StorefrontNavigationNode): StorefrontNavigationNode[] => {
+    const leaves: StorefrontNavigationNode[] = []
     if (tree.path && !tree.children) leaves.push(tree)
     for (const child of tree.children || []) {
         leaves.push(...collectLeafNodes(child))
@@ -247,8 +257,11 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
         it('groups Shipping under a Shipping sub-group', () => {
             const shippingGroup = findNodeByKey(rootNode, 'operations-shipping')
             expect(shippingGroup).toBeDefined()
-            expect(shippingGroup.children).toHaveLength(1)
+            expect(shippingGroup.children).toHaveLength(2)
             expect(findNodeByPath(rootNode, '/ecommerce/shipping-methods')).toBeDefined()
+            const shipments = findNodeByPath(rootNode, '/admin/shipping/shipments')
+            expect(shipments.permission).toBe('shipping.view')
+            expect(shipments.capability).toBe('commercehub.storefront.manage')
         })
 
         it('groups Marketing screens under a Marketing sub-group with Attribution sub-children', () => {
@@ -350,6 +363,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             for (const node of leafNodes) {
                 expect(node.path).toBeDefined()
                 expect(node.screenIds).toBeDefined()
+                if (!node.screenIds) throw new Error(`Missing screen identity for ${node.path}`)
                 expect(node.screenIds.length).toBeGreaterThan(0)
                 expect(node.labelKey).toBeDefined()
             }
@@ -392,7 +406,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
         })
 
         it('returns null for unknown /ecommerce paths', () => {
-            const screen = resolveStorefrontScreen('/ecommerce/nonexistent')
+            const screen = resolveScreen('/ecommerce/nonexistent')
             expect(screen).toBeNull()
         })
     })
@@ -462,6 +476,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             // The Orders group button should be rendered (expanded by the auto-expand effect)
             const ordersGroup = (await screen.findAllByRole('button', { name: 'Orders' }))
                 .find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-operations-orders')
+            if (!ordersGroup) throw new Error('Operations Orders navigation group is missing')
             expect(ordersGroup).toBeInTheDocument()
 
             // Orders link should be visible within the expanded Orders group
@@ -504,6 +519,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
 
             const ordersGroup = (await screen.findAllByRole('button', { name: 'Orders' }))
                 .find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-operations-orders')
+            if (!ordersGroup) throw new Error('Operations Orders toggle is missing')
             fireEvent.click(ordersGroup)
 
             // New actors discover the Operations hierarchy expanded initially.
