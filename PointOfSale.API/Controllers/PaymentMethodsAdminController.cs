@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Localization;
+using PointOfSale.API.Services.Payments;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
@@ -39,6 +40,7 @@ public class PaymentMethodsAdminController : ControllerBase
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<PaymentMethodsAdminController> _logger;
     private readonly ITenantContext _tenantContext;
+    private readonly IStorefrontPaymentRuntimeReadinessService _runtimeReadiness;
 
     private const string DataProtectionPurpose = "PaymentMethodSecrets";
     private static readonly string[] SupportedPaymentMethodCodes =
@@ -56,7 +58,8 @@ public class PaymentMethodsAdminController : ControllerBase
         IDataProtectionProvider dataProtectionProvider,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<PaymentMethodsAdminController> logger,
-        ITenantContext tenantContext)
+        ITenantContext tenantContext,
+        IStorefrontPaymentRuntimeReadinessService runtimeReadiness)
     {
         _dbContext = dbContext;
         _eventPublisher = eventPublisher;
@@ -64,6 +67,7 @@ public class PaymentMethodsAdminController : ControllerBase
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
         _tenantContext = tenantContext;
+        _runtimeReadiness = runtimeReadiness;
     }
 
     private Guid TenantId => _tenantContext.RequiredTenantId;
@@ -102,6 +106,10 @@ public class PaymentMethodsAdminController : ControllerBase
             .ToListAsync(cancellationToken);
 
         var response = methods.Select(MapToDto).ToList();
+        foreach (var method in response)
+        {
+            await PopulateCheckoutReadinessAsync(method, tenantId, cancellationToken);
+        }
         
         _logger.LogDebug("Retrieved {Count} payment methods", response.Count);
         
@@ -128,7 +136,9 @@ public class PaymentMethodsAdminController : ControllerBase
             return NotFound(new { error = "PAYMENT_METHOD_NOT_FOUND", message = $"Payment method '{code}' not found" });
         }
 
-        return Ok(MapToDto(method));
+        var response = MapToDto(method);
+        await PopulateCheckoutReadinessAsync(response, tenantId, cancellationToken);
+        return Ok(response);
     }
 
     /// <summary>
@@ -744,6 +754,24 @@ public class PaymentMethodsAdminController : ControllerBase
         };
     }
 
+    private async Task PopulateCheckoutReadinessAsync(
+        PaymentMethodResponseDto method,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        // Configuration validity and activation are not runtime availability.
+        // Use the same authority as the public catalog, never infer it from Sandbox.
+        var readiness = !method.IsSupported
+            ? StorefrontPaymentRuntimeReadiness.Blocked(method.UnsupportedReasonCode ?? "PROVIDER_UNSUPPORTED")
+            : !method.IsEnabled
+                ? StorefrontPaymentRuntimeReadiness.Blocked("TENANT_METHOD_DISABLED")
+                : !method.IsConfigurationValid
+                    ? StorefrontPaymentRuntimeReadiness.Blocked("TENANT_METHOD_CONFIGURATION_INVALID")
+                    : await _runtimeReadiness.EvaluateAsync(tenantId, method.Code, cancellationToken);
+        method.IsAvailableForCheckout = readiness.IsReady;
+        method.CheckoutUnavailableReasonCode = readiness.FirstFailedGate;
+    }
+
     private async Task PublishCreatedEvent(TenantPaymentMethod method, string traceId, CancellationToken cancellationToken)
     {
         var configuration = EvaluateConfiguration(method);
@@ -1228,6 +1256,9 @@ public class PaymentMethodResponseDto
     public string FeeType { get; set; } = "fixed";
     public bool RequiresConfiguration { get; set; }
     public bool IsConfigurationValid { get; set; }
+    // Populated on fresh reads, not inferred from a successful configuration write.
+    public bool? IsAvailableForCheckout { get; set; }
+    public string? CheckoutUnavailableReasonCode { get; set; }
     public List<string> ConfigurationErrors { get; set; } = new();
     // Allow-listed customer-facing recipient only; never gateway credentials.
     public Dictionary<string, string> PublicConfiguration { get; set; } = new();

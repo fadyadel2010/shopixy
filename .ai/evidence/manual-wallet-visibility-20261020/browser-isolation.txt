@@ -1,0 +1,63 @@
+### Result
+{"probes":[{"method":"get","url":"/admin/payment-methods/MANUALWALLET","status":403,"code":"TENANT_FORBIDDEN"},{"method":"put","url":"/admin/payment-methods/MANUALWALLET/configure","status":403,"code":"TENANT_FORBIDDEN"},{"method":"get","url":"/admin/orders/f17895bc-b5b0-43fb-87c9-cdb9da69494d","status":403,"code":"TENANT_FORBIDDEN"},{"method":"post","url":"/admin/payments/manual-wallet/82d45236-e358-4415-a129-f9a804e7c2d1/confirm","status":403,"code":"TENANT_FORBIDDEN"},{"method":"get","url":"/admin/payments/manual-wallet/proof-image/82d45236-e358-4415-a129-f9a804e7c2d1","status":403,"code":"TENANT_FORBIDDEN"}],"invalid":[{"status":400,"body":{"code":"MANUALWALLET","message":"Manual Wallet recipient cannot be cleared or invalidated.","traceId":"90175305-5b35-4bc2-b401-c831a39f51a1","data":{"validationErrors":["A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method."]}}},{"status":400,"body":{"code":"MANUALWALLET","message":"Manual Wallet recipient cannot be cleared or invalidated.","traceId":"02b216fd-23b5-4bb0-bc10-1faff5b0b726","data":{"validationErrors":["A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method."]}}}],"unchanged":true,"proof":{"status":200,"type":"image/png","size":41235},"publicProbes":[{"path":"/payment-methods","status":403},{"path":"/payments/manual-wallet/config","status":403},{"path":"/payments/82d45236-e358-4415-a129-f9a804e7c2d1","status":403}],"passed":true}
+### Ran Playwright code
+```js
+await (async page => {
+    const admin = page.context().pages().find(p => p.url().startsWith('http://localhost:5173/'));
+    const storefront = page.context().pages().find(p => p.url().startsWith('http://ahramstore.localhost:5174/'));
+    const result = await admin.evaluate(async () => {
+        const api = (await import('/src/services/api.js')).default;
+        const foreign = '11111111-1111-4111-8111-111111111111';
+        const original = (await api.get('/admin/payment-methods/MANUALWALLET')).data;
+        const probes = [];
+        for (const [method, url, data] of [
+            ['get', '/admin/payment-methods/MANUALWALLET'],
+            ['put', '/admin/payment-methods/MANUALWALLET/configure', {configuration: {walletNumber: '01000000088'}}],
+            ['get', '/admin/orders/f17895bc-b5b0-43fb-87c9-cdb9da69494d'],
+            ['post', '/admin/payments/manual-wallet/82d45236-e358-4415-a129-f9a804e7c2d1/confirm', {}],
+            ['get', '/admin/payments/manual-wallet/proof-image/82d45236-e358-4415-a129-f9a804e7c2d1']
+        ]) {
+            try { const r = await api.request({method, url, data, headers: {'X-Tenant-Id': foreign}}); probes.push({method, url, status: r.status}); }
+            catch (e) { probes.push({method, url, status: e.response?.status, code: e.response?.data?.code}); }
+        }
+        const invalid = [];
+        for (const value of ['', 'not-a-wallet']) {
+            try { const r = await api.put('/admin/payment-methods/MANUALWALLET/configure', {configuration: {walletNumber: value}}); invalid.push({status: r.status}); }
+            catch (e) { invalid.push({status: e.response?.status, body: e.response?.data}); }
+        }
+        const unchanged = JSON.stringify(original) === JSON.stringify((await api.get('/admin/payment-methods/MANUALWALLET')).data);
+        const proof = await api.get('/admin/payments/manual-wallet/proof-image/82d45236-e358-4415-a129-f9a804e7c2d1', {responseType: 'blob'});
+        const dataUrl = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(proof.data); });
+        const proofTab = window.open('', '_blank');
+        proofTab.document.title = 'Actual retained synthetic proof — Admin API readback';
+        const image = proofTab.document.createElement('img'); image.src = dataUrl; image.alt = 'Actual TEST ONLY uploaded proof'; proofTab.document.body.append(image);
+        return {probes, invalid, unchanged, proof: {status: proof.status, type: proof.data.type, size: proof.data.size}};
+    });
+    const proofPage = page.context().pages().find(p => p.url() === 'about:blank');
+    await proofPage.locator('img').waitFor();
+    await proofPage.waitForFunction(() => document.querySelector('img')?.complete && document.querySelector('img').naturalWidth > 0);
+    await proofPage.screenshot({path: '.ai/evidence/manual-wallet-visibility-20261020/actual-retained-proof-readback.png', fullPage: true});
+    await proofPage.close();
+    const publicProbes = await storefront.evaluate(async () => {
+        const loaded = performance.getEntriesByType('resource').find(e => e.name.includes('/src/bootstrap/index.ts'))?.name || '/src/bootstrap/index.ts';
+        const {getRequestHeaders} = await import(loaded);
+        const probes = [];
+        for (const path of ['/payment-methods', '/payments/manual-wallet/config', '/payments/82d45236-e358-4415-a129-f9a804e7c2d1']) {
+            const r = await fetch('/api/storefront' + path, {headers: {...getRequestHeaders(), 'X-Tenant-Id': '11111111-1111-4111-8111-111111111111'}, credentials: 'include'});
+            probes.push({path, status: r.status});
+        }
+        return probes;
+    });
+    return {...result, publicProbes, passed: result.unchanged && result.probes.every(p => p.status === 403) && result.invalid.every(p => p.status === 400) && publicProbes.every(p => p.status === 403)};
+}
+)(page);
+```
+### Open tabs
+- 0: (current) [Storefront](http://ahramstore.localhost:5174/orders/f17895bc-b5b0-43fb-87c9-cdb9da69494d/confirmation?orderNumber=ORD-C9C5-2026-01081&paymentMethod=MANUALWALLET&totalAmount=35&currency=EGP)
+- 1: [Point of Sale System](http://localhost:5173/ecommerce/orders?search=ORD-C9C5-2026-01081&page=1)
+### Page
+- Page URL: http://ahramstore.localhost:5174/orders/f17895bc-b5b0-43fb-87c9-cdb9da69494d/confirmation?orderNumber=ORD-C9C5-2026-01081&paymentMethod=MANUALWALLET&totalAmount=35&currency=EGP
+- Page Title: Storefront
+- Console: 3 errors, 2 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-10-20T17-34-54-893Z.log#L1151-L1163

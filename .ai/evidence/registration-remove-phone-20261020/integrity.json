@@ -1,0 +1,103 @@
+{
+  "checks": [
+    {
+      "name": "No task accounts existed before testing",
+      "passed": true
+    },
+    {
+      "name": "All eleven form/layout/validation/request checks passed",
+      "passed": true
+    },
+    {
+      "name": "Primary EN/LTR and AR/RTL phone-free form and validation passed",
+      "passed": true
+    },
+    {
+      "name": "Exactly two distinct synthetic SQL identities retained, no duplicate retry",
+      "passed": true
+    },
+    {
+      "name": "Real normal and response-loss requests omitted phone",
+      "passed": true
+    },
+    {
+      "name": "Both actual registration requests returned 200",
+      "passed": true
+    },
+    {
+      "name": "Response-loss UI retained values and did not retry automatically",
+      "passed": true
+    },
+    {
+      "name": "SQL confirmed committed response-loss identity before retry",
+      "passed": true
+    },
+    {
+      "name": "Actual duplicate retry returned EMAIL_EXISTS and retained values",
+      "passed": true
+    },
+    {
+      "name": "Both identities activated under existing policy and phones persisted NULL",
+      "passed": true
+    },
+    {
+      "name": "Registration initially left email unverified with no login sessions",
+      "passed": true
+    },
+    {
+      "name": "Exactly two tenant-bound verification records consumed",
+      "passed": true
+    },
+    {
+      "name": "Both verified accounts logged in and logged out",
+      "passed": true
+    },
+    {
+      "name": "main: SQL, login and refreshed profile identify the same customer",
+      "passed": true
+    },
+    {
+      "name": "main: verification/activation readback matches real verification",
+      "passed": true
+    },
+    {
+      "name": "loss: SQL, login and refreshed profile identify the same customer",
+      "passed": true
+    },
+    {
+      "name": "loss: verification/activation readback matches real verification",
+      "passed": true
+    },
+    {
+      "name": "New QA sessions revoked through logout",
+      "passed": true
+    },
+    {
+      "name": "No POS users or POS customers created",
+      "passed": true
+    },
+    {
+      "name": "All 54 pre-existing customer phone fingerprints unchanged",
+      "passed": true
+    },
+    {
+      "name": "Saved application configuration unchanged",
+      "passed": true
+    },
+    {
+      "name": "Stored-phone QA profile and verification/activation data unchanged",
+      "passed": true
+    },
+    {
+      "name": "Only the deliberately logged-in existing synthetic identity has whole-row drift",
+      "passed": true
+    }
+  ],
+  "passed": 23,
+  "failed": 0,
+  "originalWholeIdentityFingerprintMatched": false,
+  "existingIdentityDrift": [
+    "efa41aeb-74c8-45ed-adc2-194210c5cd20"
+  ],
+  "driftExplanation": "Existing synthetic QA login updates LastLoginAtUtc AND UpdatedAtUtc (StorefrontAuthService). Original fingerprint excluded only LastLoginAtUtc. Original mismatch retained; no baseline replaced."
+}

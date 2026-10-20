@@ -53,7 +53,7 @@ public sealed class Phase5ConfiguredTests
             await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => second.SaveChangesAsync());
             using var telemetry = new CommerceReliabilityTelemetry();
             var events = new Mock<IEventPublisher>();
-            var controller = new PaymentMethodsAdminController(first, events.Object, new EphemeralDataProtectionProvider(), telemetry, NullLogger<PaymentMethodsAdminController>.Instance, new TestTenantContext(tenant))
+            var controller = new PaymentMethodsAdminController(first, events.Object, new EphemeralDataProtectionProvider(), telemetry, NullLogger<PaymentMethodsAdminController>.Instance, new TestTenantContext(tenant), PaymentMethodRuntimeTestStub.Ready())
             { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             controller.Request.Headers.IfMatch = "1";
             Assert.IsType<ConflictObjectResult>(await controller.UpsertPaymentMethod("COD", new() { DisplayName = "stale editor" }, default));

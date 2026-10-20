@@ -1,0 +1,22 @@
+[
+    {
+        "hash":  "9DCF8E8B9CA15CB26A3644C15AC0DDFEE4AA1D76A9DBEAB6AFE9004A2C58E4C3",
+        "path":  "PointOfSale.Storefront/src/auth/api/authApi.registration.test.ts"
+    },
+    {
+        "hash":  "59BE52D50EB682537FFE7E0C6943E5AE864078C759F7190D606262DBC191A4F2",
+        "path":  "PointOfSale.Storefront/src/auth/api/authApi.ts"
+    },
+    {
+        "hash":  "9282F4C4EE54B62FCD6BAC29FC5116042EB9A97D090C09F6391551492B51162E",
+        "path":  "PointOfSale.Storefront/src/auth/components/RegisterForm.tsx"
+    },
+    {
+        "hash":  "C688871FECB444766274813429E042C8A014D09C72F1F73243DFCBAD9B9DC939",
+        "path":  "PointOfSale.Storefront/src/auth/pages/RegisterPage.registration.test.tsx"
+    },
+    {
+        "hash":  "7F37D538B93650388D6309F375E289634B61C9B90012151B835CCF9CF3C2F24E",
+        "path":  "PointOfSale.Storefront/src/auth/types/auth.types.ts"
+    }
+]

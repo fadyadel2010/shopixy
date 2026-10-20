@@ -1,0 +1,36 @@
+{
+  "observedUtc": "2026-10-20T17:18:33.761Z",
+  "failed": false,
+  "server": {
+    "status": 200,
+    "body": {
+      "customer": {
+        "id": "7a46ac29-3107-4a3c-8bf6-24980621be07",
+        "email": "regphone20261020-remove-loss-adbe5771@example.test",
+        "displayName": "QA Remove Phone Response Loss",
+        "provider": "local",
+        "emailVerified": false,
+        "createdAtUtc": "2026-10-20T17:18:33.5038412Z"
+      },
+      "accessToken": "",
+      "refreshToken": "",
+      "expiresAt": "2026-10-20T17:18:33.6480219Z",
+      "verificationEmailSent": true
+    },
+    "requestKeys": [
+      "displayName",
+      "email",
+      "password"
+    ],
+    "request": {
+      "displayName": "QA Remove Phone Response Loss",
+      "email": "regphone20261020-remove-loss-adbe5771@example.test",
+      "password": "[REDACTED]"
+    },
+    "correlation": "31332481-9314-4702-9a5b-aabea909559b"
+  },
+  "postCount": 1,
+  "valuesPreserved": true,
+  "browserError": "Network error. Please check your connection.",
+  "requiresSqlReadbackBeforeRetry": true
+}

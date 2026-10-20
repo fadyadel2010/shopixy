@@ -1,0 +1,42 @@
+async page => {
+    const storefront = page.context().pages().find(p => p.url().startsWith('http://ahramstore.localhost:5174/'));
+    const identity = await storefront.evaluate(async () => (await (await import('/src/services/api/httpClient.ts')).httpClient.get('/api/storefront/auth/me')).data);
+    if (identity.email !== 'fadyadel2060@gmail.com') throw new Error('Unexpected customer account');
+    const cart = await storefront.evaluate(async () => (await (await import('/src/services/api/httpClient.ts')).httpClient.get('/api/storefront/cart')).data);
+    if (cart.items.length) return {failed: 'Existing cart is nonempty; inspect before touching it', cart};
+    await storefront.goto('http://ahramstore.localhost:5174/products/cert-media-simple-20261007');
+    const add = storefront.waitForResponse(r => r.url().includes('/cart/items') && r.request().method() === 'POST');
+    await storefront.getByRole('region', {name: 'Superstore buying confidence'}).getByRole('button', {name: 'Add to Cart', exact: true}).click();
+    const response = await add;
+    if (response.status() !== 200) return {failed: 'Add failed', status: response.status()};
+    await storefront.goto('http://ahramstore.localhost:5174/cart');
+    await storefront.getByRole('button', {name: 'Proceed to Checkout', exact: true}).click();
+    await storefront.getByRole('textbox', {name: 'Full Name', exact: true}).fill('MWVIS20261020 TEST ONLY');
+    await storefront.getByRole('textbox', {name: 'Phone Number', exact: true}).fill('1000000097');
+    await storefront.getByRole('textbox', {name: 'Email Address', exact: true}).fill('wallet-visibility-qa@example.test');
+    await storefront.getByRole('textbox', {name: 'City', exact: true}).fill('QA City');
+    await storefront.getByRole('textbox', {name: 'Area / District', exact: true}).fill('QA Area');
+    await storefront.getByRole('textbox', {name: 'Street Address', exact: true}).fill('TEST ONLY - NO DELIVERY');
+    await storefront.getByRole('textbox', {name: 'Order Notes', exact: true}).fill('MWVIS20261020-WALLET TEST ONLY no transfer no shipment');
+    await storefront.getByRole('radio', {name: /^Standard Shipping/}).check();
+    await storefront.getByRole('button', {name: 'Continue to Payment', exact: true}).click();
+    const methods = await storefront.locator('input[name=paymentMethod]').evaluateAll(inputs => inputs.map(input => ({code: input.value, disabled: input.disabled})));
+    if (!methods.some(m => m.code === 'COD') || !methods.some(m => m.code === 'MANUALWALLET')) throw new Error('Expected COD and wallet in actual payment selector');
+    await storefront.screenshot({path: '.ai/evidence/manual-wallet-visibility-20261020/checkout-both-options.png', fullPage: true});
+    await storefront.getByText('P5QA20261017-817 TEST ONLY Wallet', {exact: true}).click();
+    await storefront.getByRole('button', {name: 'VF Vodafone Cash', exact: true}).click();
+    await storefront.getByPlaceholder('01xxxxxxxxx').fill('01000000097');
+    const proof = await page.context().newPage();
+    await proof.setContent('<html><body style="font:28px sans-serif;padding:45px;border:10px solid red"><h1>TEST-ONLY — NOT A REAL RECEIPT</h1><p>MWVIS20261020 synthetic wallet visibility QA</p><p>No transfer. No delivery. EGP 35.00 test order.</p></body></html>');
+    await proof.screenshot({path: '.ai/evidence/manual-wallet-visibility-20261020/TEST-ONLY-NOT-A-REAL-RECEIPT.png'});
+    await proof.close();
+    await storefront.locator('input[type=file]').setInputFiles('.ai/evidence/manual-wallet-visibility-20261020/TEST-ONLY-NOT-A-REAL-RECEIPT.png');
+    await storefront.getByRole('button', {name: 'Review Order', exact: true}).click();
+    await storefront.getByRole('button', {name: 'Place Order', exact: true}).waitFor();
+    await storefront.screenshot({path: '.ai/evidence/manual-wallet-visibility-20261020/wallet-review-before-submit.png', fullPage: true});
+    const state = await storefront.evaluate(async () => {
+        const s = (await import('/src/store/checkoutStore.ts')).useCheckoutStore.getState();
+        return {paymentMethod: s.paymentMethod, pricing: s.pricing, checkoutSessionId: s.checkoutSessionId, proofFileKey: s.manualWalletProofFileKey};
+    });
+    return {identity: {id: identity.id, email: identity.email}, methods, state, text: await storefront.locator('main').innerText(), submitted: false};
+}

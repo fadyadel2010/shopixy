@@ -1,0 +1,5 @@
+{
+    "exitCode":  0,
+    "command":  "npx vitest run src/auth src/services/api/httpClient.privacy.test.ts src/utils/phone.test.ts src/utils/checkoutFieldRules.test.ts src/store/checkoutStore.validation.test.ts src/components/checkout/ShippingStep.localization.test.ts",
+    "observedUtc":  "2026-10-20T17:14:56.2691211Z"
+}

@@ -1,0 +1,236 @@
+{
+  "observedUtc": "2026-10-20T17:18:22.760Z",
+  "checks": [
+    {
+      "name": "Exactly four registration inputs, including no hidden phone",
+      "pass": true
+    },
+    {
+      "name": "No Phone label, placeholder or validation message",
+      "pass": true
+    },
+    {
+      "name": "1440: four aligned groups, regular spacing, no overflow",
+      "pass": true
+    },
+    {
+      "name": "390: four aligned groups, regular spacing, no overflow",
+      "pass": true
+    },
+    {
+      "name": "320: four aligned groups, regular spacing, no overflow",
+      "pass": true
+    },
+    {
+      "name": "All required field messages remain",
+      "pass": true
+    },
+    {
+      "name": "Invalid email, short password and confirmation mismatch",
+      "pass": true
+    },
+    {
+      "name": "Uppercase, lowercase and digit password rules unchanged",
+      "pass": true
+    },
+    {
+      "name": "Actual POST contains only displayName, email and password",
+      "pass": true
+    },
+    {
+      "name": "Real registration succeeds once with unverified identity and email dispatch",
+      "pass": true
+    },
+    {
+      "name": "Registration does not grant an authenticated session",
+      "pass": true
+    }
+  ],
+  "controls": [
+    {
+      "id": "register-name",
+      "name": "displayName",
+      "type": "text",
+      "autocomplete": "name"
+    },
+    {
+      "id": "register-email",
+      "name": "email",
+      "type": "email",
+      "autocomplete": "email"
+    },
+    {
+      "id": "register-password",
+      "name": "password",
+      "type": "password",
+      "autocomplete": "new-password"
+    },
+    {
+      "id": "register-confirm-password",
+      "name": "confirmPassword",
+      "type": "password",
+      "autocomplete": "new-password"
+    }
+  ],
+  "layouts": [
+    {
+      "width": 1440,
+      "groups": 4,
+      "boxes": [
+        {
+          "x": 536.7999877929688,
+          "y": 351.1000061035156,
+          "width": 366.3999938964844,
+          "height": 77.20000457763672
+        },
+        {
+          "x": 536.7999877929688,
+          "y": 448.3000183105469,
+          "width": 366.3999938964844,
+          "height": 77.20000457763672
+        },
+        {
+          "x": 536.7999877929688,
+          "y": 545.5,
+          "width": 366.3999938964844,
+          "height": 99.20000457763672
+        },
+        {
+          "x": 536.7999877929688,
+          "y": 664.7000122070312,
+          "width": 366.3999938964844,
+          "height": 77.20000457763672
+        }
+      ],
+      "gaps": [
+        20.00000762939453,
+        19.999977111816406,
+        20.00000762939453
+      ],
+      "viewport": 1440,
+      "scrollWidth": 1440
+    },
+    {
+      "width": 390,
+      "groups": 4,
+      "boxes": [
+        {
+          "x": 48.79999923706055,
+          "y": 343.1000061035156,
+          "width": 292.8000183105469,
+          "height": 77.20000457763672
+        },
+        {
+          "x": 48.79999923706055,
+          "y": 440.3000183105469,
+          "width": 292.8000183105469,
+          "height": 77.20000457763672
+        },
+        {
+          "x": 48.79999923706055,
+          "y": 537.5,
+          "width": 292.8000183105469,
+          "height": 115.20000457763672
+        },
+        {
+          "x": 48.79999923706055,
+          "y": 672.7000122070312,
+          "width": 292.8000183105469,
+          "height": 77.20000457763672
+        }
+      ],
+      "gaps": [
+        20.00000762939453,
+        19.999977111816406,
+        20.00000762939453
+      ],
+      "viewport": 390,
+      "scrollWidth": 390
+    },
+    {
+      "width": 320,
+      "groups": 4,
+      "boxes": [
+        {
+          "x": 48.79999923706055,
+          "y": 356.70001220703125,
+          "width": 222.40000915527344,
+          "height": 77.20000457763672
+        },
+        {
+          "x": 48.79999923706055,
+          "y": 453.8999938964844,
+          "width": 222.40000915527344,
+          "height": 77.20000457763672
+        },
+        {
+          "x": 48.79999923706055,
+          "y": 551.1000366210938,
+          "width": 222.40000915527344,
+          "height": 115.20000457763672
+        },
+        {
+          "x": 48.79999923706055,
+          "y": 686.2999877929688,
+          "width": 222.40000915527344,
+          "height": 77.20000457763672
+        }
+      ],
+      "gaps": [
+        19.999977111816406,
+        20.000038146972656,
+        19.99994659423828
+      ],
+      "viewport": 320,
+      "scrollWidth": 320
+    }
+  ],
+  "validation": {
+    "required": {
+      "name": "Name is required",
+      "email": "Email is required",
+      "password": "Password is required",
+      "confirm-password": "Please confirm your password"
+    },
+    "invalid": {
+      "email": "Please enter a valid email",
+      "password": "Password must be at least 8 characters",
+      "confirmation": "Passwords do not match"
+    },
+    "weak": [
+      "Password must include uppercase, lowercase, and a number",
+      "Password must include uppercase, lowercase, and a number",
+      "Password must include uppercase, lowercase, and a number"
+    ]
+  },
+  "registration": {
+    "url": "http://ahramstore.localhost:5175/api/storefront/auth/register?lang=en",
+    "request": {
+      "displayName": "QA Remove Phone",
+      "email": "regphone20261020-remove-main-adbe5771@example.test",
+      "password": "[REDACTED]"
+    },
+    "requestKeys": [
+      "displayName",
+      "email",
+      "password"
+    ],
+    "status": 200,
+    "body": {
+      "customer": {
+        "id": "4b75b153-8c2e-4c7d-ae63-fe3497b3ec0c",
+        "email": "regphone20261020-remove-main-adbe5771@example.test",
+        "displayName": "QA Remove Phone",
+        "provider": "local",
+        "emailVerified": false,
+        "createdAtUtc": "2026-10-20T17:18:22.0634716Z"
+      },
+      "accessToken": "",
+      "refreshToken": "",
+      "expiresAt": "2026-10-20T17:18:22.656401Z",
+      "verificationEmailSent": true
+    },
+    "postCount": 1,
+    "correlation": "38ac4f20-28c2-411b-afbc-525aca4fb3e1"
+  }
+}

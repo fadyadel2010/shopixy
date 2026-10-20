@@ -96,6 +96,30 @@ afterEach(() => {
 })
 
 describe('PaymentMethods provider catalog', () => {
+    it('shows runtime unavailability separately from enabled and valid configuration', async () => {
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/catalog') ? providerCatalog : [{
+            id: 'wallet', code: 'MANUALWALLET', displayName: 'Manual Wallet', requiresConfiguration: true,
+            isConfigurationValid: true, isEnabled: true, isSandbox: false,
+            isAvailableForCheckout: false, checkoutUnavailableReasonCode: 'MANUAL_PAYMENT_ENVIRONMENT_MISMATCH',
+            publicConfiguration: { walletNumber: '01000000000' },
+        }] }))
+        render(<PaymentMethods />)
+        const row = (await screen.findByText('MANUALWALLET')).closest('tr')!
+        expect(within(row).getByText('Enabled')).toBeInTheDocument()
+        expect(within(row).getByText(/Sandbox Mode must match the active payment runtime/)).toBeInTheDocument()
+        expect(within(row).getByText('MANUAL_PAYMENT_ENVIRONMENT_MISMATCH')).toBeInTheDocument()
+        expect(within(row).getByRole('button', { name: 'common.disable' })).toBeInTheDocument()
+        expect(apiMock.put).not.toHaveBeenCalled()
+    })
+
+    it('shows checkout availability without interpreting sandbox as activation', async () => {
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/catalog') ? providerCatalog : [{
+            id: 'wallet', code: 'MANUALWALLET', displayName: 'Manual Wallet', requiresConfiguration: true,
+            isConfigurationValid: true, isEnabled: true, isSandbox: true, isAvailableForCheckout: true,
+        }] }))
+        render(<PaymentMethods />)
+        expect(await screen.findByText('Available for checkout (order limits still apply)')).toBeInTheDocument()
+    })
     it.each(['', '  ', 'bad-wallet', '1234567', '123456789012345678901'])('rejects unusable wallet recipient %s', (value) => {
         expect(isValidManualWalletNumber(value)).toBe(false)
     })

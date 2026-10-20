@@ -1,0 +1,58 @@
+{
+  "observedUtc": "2026-10-20T17:18:51.941Z",
+  "localCaptureOnly": true,
+  "results": [
+    {
+      "kind": "main",
+      "email": "regphone20261020-remove-main-adbe5771@example.test",
+      "verification": {
+        "status": 200,
+        "success": true,
+        "correlation": "20b10175-8268-4d42-827e-66531a84eecf"
+      },
+      "login": {
+        "status": 200,
+        "customerId": "4b75b153-8c2e-4c7d-ae63-fe3497b3ec0c",
+        "emailVerified": true
+      },
+      "refreshed": {
+        "status": 200,
+        "body": {
+          "id": "4b75b153-8c2e-4c7d-ae63-fe3497b3ec0c",
+          "email": "regphone20261020-remove-main-adbe5771@example.test",
+          "displayName": "QA Remove Phone",
+          "provider": "local",
+          "emailVerified": true,
+          "createdAtUtc": "2026-10-20T17:18:22.063471Z"
+        }
+      },
+      "loggedOut": true
+    },
+    {
+      "kind": "loss",
+      "email": "regphone20261020-remove-loss-adbe5771@example.test",
+      "verification": {
+        "status": 200,
+        "success": true,
+        "correlation": "e6c59764-8f69-4aeb-8fdd-cb90659f8fce"
+      },
+      "login": {
+        "status": 200,
+        "customerId": "7a46ac29-3107-4a3c-8bf6-24980621be07",
+        "emailVerified": true
+      },
+      "refreshed": {
+        "status": 200,
+        "body": {
+          "id": "7a46ac29-3107-4a3c-8bf6-24980621be07",
+          "email": "regphone20261020-remove-loss-adbe5771@example.test",
+          "displayName": "QA Remove Phone Response Loss",
+          "provider": "local",
+          "emailVerified": true,
+          "createdAtUtc": "2026-10-20T17:18:33.503841Z"
+        }
+      },
+      "loggedOut": true
+    }
+  ]
+}

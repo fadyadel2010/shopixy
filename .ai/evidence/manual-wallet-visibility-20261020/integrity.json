@@ -1,0 +1,90 @@
+{
+  "checks": [
+    {
+      "name": "COD persisted configuration/version unchanged",
+      "passed": true
+    },
+    {
+      "name": "Only original two payment rows remain; no Stripe/Paymob mutation",
+      "passed": true
+    },
+    {
+      "name": "Final wallet disabled with no encrypted synthetic recipient",
+      "passed": true
+    },
+    {
+      "name": "Original wallet metadata, Sandbox and support flags preserved",
+      "passed": true
+    },
+    {
+      "name": "Exactly two new task orders; stale requests created none",
+      "passed": true
+    },
+    {
+      "name": "Wallet and COD both retained",
+      "passed": true
+    },
+    {
+      "name": "Quote, persisted wallet order and intent amount agree at35",
+      "passed": true
+    },
+    {
+      "name": "Wallet intent Paid and order Collected/Processing",
+      "passed": true
+    },
+    {
+      "name": "Net merchandise allocation25, shipping covered at order level",
+      "passed": true
+    },
+    {
+      "name": "One posted balanced wallet journal35",
+      "passed": true
+    },
+    {
+      "name": "Accounting outbox processed and points to retained journal",
+      "passed": true
+    },
+    {
+      "name": "COD35 remains pending unpaid with no wallet intent or journal",
+      "passed": true
+    },
+    {
+      "name": "Projection identity/tenant/total/currency agrees: ORD-C9C5-2026-01081",
+      "passed": true
+    },
+    {
+      "name": "Projection lifecycle agrees: ORD-C9C5-2026-01081",
+      "passed": true
+    },
+    {
+      "name": "Projection identity/tenant/total/currency agrees: ORD-C9C5-2026-01082",
+      "passed": true
+    },
+    {
+      "name": "Projection lifecycle agrees: ORD-C9C5-2026-01082",
+      "passed": true
+    },
+    {
+      "name": "Unrelated original edit byte-preserved: PointOfSale.Storefront/src/auth/api/authApi.registration.test.ts",
+      "passed": true
+    },
+    {
+      "name": "Unrelated original edit byte-preserved: PointOfSale.Storefront/src/auth/api/authApi.ts",
+      "passed": true
+    },
+    {
+      "name": "Unrelated original edit byte-preserved: PointOfSale.Storefront/src/auth/components/RegisterForm.tsx",
+      "passed": true
+    },
+    {
+      "name": "Unrelated original edit byte-preserved: PointOfSale.Storefront/src/auth/pages/RegisterPage.registration.test.tsx",
+      "passed": true
+    },
+    {
+      "name": "Unrelated original edit byte-preserved: PointOfSale.Storefront/src/auth/types/auth.types.ts",
+      "passed": true
+    }
+  ],
+  "passed": 21,
+  "failed": 0
+}

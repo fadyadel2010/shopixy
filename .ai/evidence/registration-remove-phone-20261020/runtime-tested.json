@@ -1,0 +1,114 @@
+{
+    "primaryStorefront":  "http://ahramstore.localhost:5174",
+    "workspace":  "C:\\Users\\fadya\\source\\repos\\PointOfSale",
+    "listeners":  [
+                      {
+                          "LocalAddress":  "::1",
+                          "LocalPort":  5175,
+                          "OwningProcess":  6348
+                      },
+                      {
+                          "LocalAddress":  "::1",
+                          "LocalPort":  5174,
+                          "OwningProcess":  16332
+                      },
+                      {
+                          "LocalAddress":  "::1",
+                          "LocalPort":  5173,
+                          "OwningProcess":  16656
+                      },
+                      {
+                          "LocalAddress":  "::1",
+                          "LocalPort":  5011,
+                          "OwningProcess":  21932
+                      },
+                      {
+                          "LocalAddress":  "::1",
+                          "LocalPort":  5010,
+                          "OwningProcess":  21300
+                      },
+                      {
+                          "LocalAddress":  "127.0.0.1",
+                          "LocalPort":  5011,
+                          "OwningProcess":  21932
+                      },
+                      {
+                          "LocalAddress":  "127.0.0.1",
+                          "LocalPort":  5010,
+                          "OwningProcess":  21300
+                      },
+                      {
+                          "LocalAddress":  "127.0.0.1",
+                          "LocalPort":  2526,
+                          "OwningProcess":  6256
+                      }
+                  ],
+    "sourceHashes":  [
+                         {
+                             "sha256":  "9282F4C4EE54B62FCD6BAC29FC5116042EB9A97D090C09F6391551492B51162E",
+                             "path":  "PointOfSale.Storefront/src/auth/components/RegisterForm.tsx"
+                         },
+                         {
+                             "sha256":  "59BE52D50EB682537FFE7E0C6943E5AE864078C759F7190D606262DBC191A4F2",
+                             "path":  "PointOfSale.Storefront/src/auth/api/authApi.ts"
+                         },
+                         {
+                             "sha256":  "7F37D538B93650388D6309F375E289634B61C9B90012151B835CCF9CF3C2F24E",
+                             "path":  "PointOfSale.Storefront/src/auth/types/auth.types.ts"
+                         },
+                         {
+                             "sha256":  "13E73D23ECEA20A0777305FA5FF629C05983F44814B63028173044606FDD09CE",
+                             "path":  "PointOfSale.API/Services/Storefront/StorefrontAuthService.cs"
+                         },
+                         {
+                             "sha256":  "06CD45701E18C7CA391782CDFE9A8DF3CC2F455A01A3582577C38EA9BAAACEF3",
+                             "path":  "PointOfSale.API/Services/Storefront/StorefrontEmailVerificationService.cs"
+                         },
+                         {
+                             "sha256":  "1F4A0C98FAA0DC0964B26FF71A3D1DF761ED332977F2AD29119794BECE43E256",
+                             "path":  "PointOfSale.API/Controllers/StorefrontAuthController.cs"
+                         }
+                     ],
+    "api":  "http://localhost:5011",
+    "observedUtc":  "2026-10-20T17:22:43.3177759Z",
+    "storefront":  "http://ahramstore.localhost:5175",
+    "apiDllHash":  "867126D2BBCF4612528DA5348242082C00EE199C4C5A6739CA0AFDFF69EC6E37",
+    "processes":  [
+                      {
+                          "ProcessId":  16656,
+                          "ParentProcessId":  23648,
+                          "CreationDate":  "\/Date(1792493284035)\/",
+                          "ExecutablePath":  "C:\\Program Files\\nodejs\\node.exe"
+                      },
+                      {
+                          "ProcessId":  16332,
+                          "ParentProcessId":  13680,
+                          "CreationDate":  "\/Date(1792506456736)\/",
+                          "ExecutablePath":  "C:\\Program Files\\nodejs\\node.exe"
+                      },
+                      {
+                          "ProcessId":  21300,
+                          "ParentProcessId":  18304,
+                          "CreationDate":  "\/Date(1792516394108)\/",
+                          "ExecutablePath":  "C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.API\\bin\\Debug\\net9.0\\PointOfSale.API.exe"
+                      },
+                      {
+                          "ProcessId":  6256,
+                          "ParentProcessId":  10488,
+                          "CreationDate":  "\/Date(1792516580223)\/",
+                          "ExecutablePath":  "C:\\Users\\fadya\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe"
+                      },
+                      {
+                          "ProcessId":  21932,
+                          "ParentProcessId":  6748,
+                          "CreationDate":  "\/Date(1792516646086)\/",
+                          "ExecutablePath":  "C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.API\\bin\\Debug\\net9.0\\PointOfSale.API.exe"
+                      },
+                      {
+                          "ProcessId":  6348,
+                          "ParentProcessId":  16188,
+                          "CreationDate":  "\/Date(1792516678459)\/",
+                          "ExecutablePath":  "C:\\Program Files\\nodejs\\node.exe"
+                      }
+                  ]
+}

@@ -32,7 +32,7 @@ public sealed class Phase5PaymentConfigurationTests
         var events = new Mock<IEventPublisher>();
         events.SetReturnsDefault(Task.CompletedTask);
         var controller = new PaymentMethodsAdminController(db, events.Object, new EphemeralDataProtectionProvider(),
-            telemetry, NullLogger<PaymentMethodsAdminController>.Instance, new TestTenantContext(tenant))
+            telemetry, NullLogger<PaymentMethodsAdminController>.Instance, new TestTenantContext(tenant), PaymentMethodRuntimeTestStub.Ready())
         { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
         var dto = new UpsertPaymentMethodDto { DisplayName = "P5QA validation" };
         switch (scenario) {

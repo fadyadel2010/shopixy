@@ -86,7 +86,8 @@ public sealed class PaymentMethodsAdminSyncReliabilityTests
             new EphemeralDataProtectionProvider(),
             new CommerceReliabilityTelemetry(),
             NullLogger<PaymentMethodsAdminController>.Instance,
-            tenantContext)
+            tenantContext,
+            PointOfSale.Tests.Infrastructure.PaymentMethodRuntimeTestStub.Ready())
         {
             ControllerContext = new ControllerContext
             {

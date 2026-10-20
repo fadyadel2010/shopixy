@@ -35,7 +35,7 @@ public sealed class ManualWalletConfiguredTenantTests
         await other.Database.UseTransactionAsync(tx.GetDbTransaction());
         using var telemetry=new CommerceReliabilityTelemetry();
         var protection=new EphemeralDataProtectionProvider();var publisher=new Mock<IEventPublisher>();publisher.SetReturnsDefault(Task.CompletedTask);
-        PaymentMethodsAdminController Controller(ApplicationDbContext context,Guid tenant)=>new(context,publisher.Object,protection,telemetry,NullLogger<PaymentMethodsAdminController>.Instance,new TestTenantContext(tenant)){ControllerContext=new ControllerContext{HttpContext=new DefaultHttpContext()}};
+        PaymentMethodsAdminController Controller(ApplicationDbContext context,Guid tenant)=>new(context,publisher.Object,protection,telemetry,NullLogger<PaymentMethodsAdminController>.Instance,new TestTenantContext(tenant),PaymentMethodRuntimeTestStub.Ready()){ControllerContext=new ControllerContext{HttpContext=new DefaultHttpContext()}};
         var a=Controller(db,first);var b=Controller(other,second);
         Assert.IsType<BadRequestObjectResult>(await a.EnablePaymentMethod("MANUALWALLET",default));
         // Failed create remains only tracked; discard it before the successful configure.

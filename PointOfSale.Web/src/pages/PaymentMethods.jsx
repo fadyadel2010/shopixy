@@ -155,6 +155,15 @@ export default function PaymentMethods() {
     const isRTL = i18n.language === 'ar'
     const getLocalizedMethodName = (method) =>
         isRTL && method?.displayNameAr ? method.displayNameAr : method?.displayName
+    const getCheckoutReadinessMessage = (method) => {
+        if (method.isAvailableForCheckout === true) {
+            return t('paymentMethods.checkoutReady', 'Available for checkout (order limits still apply)')
+        }
+        if (method.checkoutUnavailableReasonCode === 'MANUAL_PAYMENT_ENVIRONMENT_MISMATCH') {
+            return t('paymentMethods.walletEnvironmentMismatch', 'Unavailable at checkout: Sandbox Mode must match the active payment runtime. This is separate from Enable; ask the administrator which environment is permitted.')
+        }
+        return t('paymentMethods.checkoutUnavailable', 'Unavailable at checkout')
+    }
 
     const [methods, setMethods] = useState([])
     const [loading, setLoading] = useState(true)
@@ -616,6 +625,12 @@ export default function PaymentMethods() {
                                             <span className={`rounded-full px-2 py-1 text-xs font-semibold ${getTenantState(method).className}`}>
                                                 {getTenantState(method).label}
                                             </span>
+                                            {method.hasTenantPaymentMethod && method.isAvailableForCheckout != null && (
+                                                <div className={`mt-2 max-w-xs text-xs ${method.isAvailableForCheckout ? 'text-green-700' : 'text-amber-800'}`}>
+                                                    <p>{getCheckoutReadinessMessage(method)}</p>
+                                                    {method.checkoutUnavailableReasonCode && <code>{method.checkoutUnavailableReasonCode}</code>}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 text-center align-top">
                                             <div className="flex flex-wrap justify-center gap-2">
@@ -842,6 +857,9 @@ export default function PaymentMethods() {
                                     ? 'Recipient wallet number is shown as saved. Sandbox mode is not activation; use Enable in the list after saving.'
                                     : t('paymentMethods.secretHandlingDescription')}
                             </p>
+                            {editingMethod.code === 'MANUALWALLET' && editingMethod.isAvailableForCheckout === false && (
+                                <p className="mt-2 text-sm text-amber-800">{getCheckoutReadinessMessage(editingMethod)}</p>
+                            )}
                         </div>
 
                         <form onSubmit={handleConfigSubmit} className="space-y-4 p-6">

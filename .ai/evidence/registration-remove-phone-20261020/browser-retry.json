@@ -1,0 +1,17 @@
+{
+  "observedUtc": "2026-10-20T17:18:40.085Z",
+  "failed": false,
+  "status": 400,
+  "body": {
+    "code": "EMAIL_EXISTS",
+    "message": "An account with this email already exists",
+    "traceId": "00-f15616b98e2206aa4db13dd899da88b2-fd01ca4bfc49f210-01"
+  },
+  "valuesPreserved": true,
+  "requestKeys": [
+    "displayName",
+    "email",
+    "password"
+  ],
+  "browserError": "An account with this email already exists."
+}

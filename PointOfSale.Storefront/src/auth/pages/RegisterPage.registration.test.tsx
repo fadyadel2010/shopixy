@@ -25,20 +25,28 @@ describe('registration lifecycle presentation', () => {
     it('keeps the existing form mounted during submission instead of replacing it with auth loading', () => {
         mocks.auth.isLoading = true;
         const html = renderToStaticMarkup(<RegisterPage />);
-        expect(html).toContain('id="register-phone"');
+        expect(html).toContain('id="register-email"');
+        expect(html).not.toContain('register-phone');
         expect(html).toContain('Creating account...');
     });
     it('shows initial unknown authentication loading, not an actionable register form', () => {
         mocks.guard.status = 'unknown';
-        expect(renderToStaticMarkup(<RegisterPage />)).not.toContain('id="register-phone"');
+        expect(renderToStaticMarkup(<RegisterPage />)).not.toContain('id="register-email"');
     });
-    it('renders invalid phone beside the optional phone field without raw server detail', () => {
-        mocks.auth.error = { code: 'INVALID_PHONE', message: 'raw internal detail must not render' };
+    it('renders exactly the remaining controls without a phone label, hidden value or error', () => {
         const html = renderToStaticMarkup(<RegisterPage />);
-        expect(html).toContain('id="register-phone-error"');
-        expect(html).toContain('Enter a valid phone number');
-        expect(html).toContain('aria-describedby="register-phone-error"');
-        expect(html).not.toContain('raw internal detail');
-        expect(html).toContain('(Optional)');
+        expect(html.match(/<input\b/g)).toHaveLength(4);
+        for (const field of ['name', 'email', 'password', 'confirm-password']) {
+            expect(html).toContain(`id="register-${field}"`);
+        }
+        expect(html).not.toMatch(/phone|type="tel"|autocomplete="tel"|\(Optional\)/i);
+        expect(html).toContain('At least 8 characters with uppercase, lowercase, and a number');
+    });
+    it('keeps request failures visible without restoring a removed field', () => {
+        mocks.auth.error = { code: 'EMAIL_EXISTS', message: 'An account with this email already exists' };
+        const html = renderToStaticMarkup(<RegisterPage />);
+        expect(html).toContain('role="alert"');
+        expect(html).toContain('An account with this email already exists');
+        expect(html).not.toContain('register-phone');
     });
 });

@@ -21,7 +21,6 @@ interface RegisterFormProps {
 interface FormData {
     displayName: string;
     email: string;
-    phone: string;
     password: string;
     confirmPassword: string;
 }
@@ -29,7 +28,6 @@ interface FormData {
 interface FormErrors {
     displayName?: string;
     email?: string;
-    phone?: string;
     password?: string;
     confirmPassword?: string;
 }
@@ -48,7 +46,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     const [formData, setFormData] = useState<FormData>({
         displayName: '',
         email: '',
-        phone: '',
         password: '',
         confirmPassword: '',
     });
@@ -61,11 +58,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
-    const phoneError = formErrors.phone || (error?.code === 'INVALID_PHONE'
-        ? t('auth.validation.phoneInvalid', {
-            defaultValue: 'Enter a valid phone number, including the country code for international numbers.',
-        })
-        : undefined);
 
     // Validate form
     const validateForm = useCallback((): boolean => {
@@ -152,7 +144,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 displayName: formData.displayName.trim(),
                 email: formData.email.trim().toLowerCase(),
                 password: formData.password,
-                phone: formData.phone.trim() || undefined,
             });
             if (mounted.current) onSuccess?.(result);
         } catch {
@@ -182,7 +173,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
             </div>
 
             {/* Error display */}
-            {error && error.code !== 'INVALID_PHONE' && (
+            {error && (
                 <AuthErrorRenderer
                     error={error}
                     onDismiss={clearError}
@@ -268,47 +259,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                     {formErrors.email && (
                         <p id="register-email-error" className="mt-1.5 text-sm text-red-600">
                             {formErrors.email}
-                        </p>
-                    )}
-                </div>
-
-                {/* Phone field (optional) */}
-                <div>
-                    <label
-                        htmlFor="register-phone"
-                        className="block text-sm font-medium text-text mb-1.5"
-                    >
-                        {t('auth.fields.phone', { defaultValue: 'Phone' })}
-                        <span className="text-muted font-normal ms-1">
-                            ({t('common.optional', { defaultValue: 'Optional' })})
-                        </span>
-                    </label>
-                    <input
-                        id="register-phone"
-                        name="phone"
-                        type="tel"
-                        autoComplete="tel"
-                        value={formData.phone}
-                        onChange={handleChange}
-                        disabled={isLoading}
-                        className={`
-                            w-full px-4 py-3 rounded-lg border
-                            bg-background text-text placeholder:text-muted
-                            transition-all duration-200
-                            focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                            disabled:bg-subtle disabled:text-muted
-                            ${phoneError
-                                ? 'border-red-300 focus:ring-red-500'
-                                : 'border-border hover:border-text'
-                            }
-                        `}
-                        placeholder="+1234567890"
-                        aria-invalid={!!phoneError}
-                        aria-describedby={phoneError ? 'register-phone-error' : undefined}
-                    />
-                    {phoneError && (
-                        <p id="register-phone-error" role="alert" className="mt-1.5 text-sm text-red-600">
-                            {phoneError}
                         </p>
                     )}
                 </div>

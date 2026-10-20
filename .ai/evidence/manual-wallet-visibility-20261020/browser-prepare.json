@@ -1,0 +1,24 @@
+{
+  "identity": {
+    "id": "3e6129bf-5bac-4d26-86da-c7c42cb53833",
+    "email": "fadyadel2060@gmail.com"
+  },
+  "methods": [
+    {
+      "code": "COD",
+      "disabled": false
+    },
+    {
+      "code": "MANUALWALLET",
+      "disabled": false
+    }
+  ],
+  "state": {
+    "paymentMethod": null,
+    "pricing": null,
+    "checkoutSessionId": null,
+    "proofFileKey": null
+  },
+  "text": "Home\nShopping Cart\nCheckout\nCheckout\nShipping\nPayment\n3\nReview\nCheckout details saved at 8:38 PM.\nShipping Information\nEdit\n\nMWVIS20261020 TEST ONLY\n\n+201000000097\n\nTEST ONLY - NO DELIVERY, QA Area, QA City\n\nNote: MWVIS20261020-WALLET TEST ONLY no transfer no shipment\n\nShipping Method\nEdit\n\nStandard Shipping\n\nEstimated delivery: 7 days\n\nEGP 10.00\n\nPayment Method\nEdit\n\nP5QA20261017-817 TEST ONLY Wallet\n\nTransfer to our wallet and upload proof of payment\n\nPay on Delivery\nSubtotal (1)\nEGP 25.00\nShipping\nEGP 10.00\nTax\nEGP 0.00\nTotal\nEGP 35.00\n✓\nPrices are revalidated when you place the order\n✓\nShipping and stock are revalidated when you place the order\n✓\nDelivery, customer payment and merchant remittance are separate\nBack to Payment\nPlace Order\n\nYour information is secure and encrypted\n\nOrder Summary\n\nCERT Media Simple 20261007\n\nSKU: CERT-MEDIA-S-20261007\n\nQty: 1\n\nEGP 25.00 each\n\nEGP 25.00\n\nHave a coupon?\nApply\nSubtotal\nEGP 25.00\nShipping(Standard Shipping)\nEGP 10.00\nTax\nEGP 0.00\nTotal\nEGP 35.00",
+  "submitted": false
+}

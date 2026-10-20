@@ -1,0 +1,28 @@
+### Result
+{"observedUtc":"2026-10-20T17:38:15.629Z","adminUrl":"http://localhost:5173/ecommerce/payment-methods","storefrontUrl":"http://ahramstore.localhost:5174/","methods":[{"version":13,"id":"5fd1c166-73cd-4235-a127-9efffad10b23","code":"COD","displayName":"Cash on Delivery","displayNameAr":"+º+ä+»+ü+¦ +¦+å+» +º+ä+º+¦+¬+ä+º+à","description":"Pay with cash when your order is delivered","descriptionAr":"+º+»+ü+¦ +å+é+»+º+ï +¦+å+» +º+¦+¬+ä+º+à +++ä+¿+â","isEnabled":true,"sortOrder":1,"supportsOnline":false,"supportsOffline":true,"isSandbox":true,"icon":"cash","fee":0,"feeType":"fixed","requiresConfiguration":false,"isConfigurationValid":true,"isAvailableForCheckout":true,"configurationErrors":[],"publicConfiguration":{"keys":[],"recipientPresent":false},"isSupported":true,"createdAt":"2026-09-24T13:53:43.42612Z","updatedAt":"2026-10-16T22:38:39.931481Z"},{"version":27,"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"+à+¡+ü+++¬ +º+«+¬+¿+º+¦ +ü+é++","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"+¡+ê+ä +ä+à+¡+ü+++¬+å+º +ê+º+¦+ü+¦ +¦+ê+¦+¬ +º+ä+¬+¡+ê+è+ä","isEnabled":true,"sortOrder":5,"supportsOnline":false,"supportsOffline":true,"isSandbox":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","requiresConfiguration":true,"isConfigurationValid":true,"isAvailableForCheckout":true,"configurationErrors":[],"publicConfiguration":{"keys":["walletNumber"],"recipientPresent":true},"isSupported":true,"createdAt":"2026-10-16T22:38:22.186501Z","updatedAt":"2026-10-20T17:32:18.445263Z"}],"publicResult":{"status":200,"headers":{"cache-control":"private, no-store, no-cache, max-age=0, must-revalidate","connection":"close","content-security-policy":"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'","content-type":"application/json; charset=utf-8","date":"Tue, 20 Oct 2026 17:38:14 GMT","expires":"0","pragma":"no-cache","server":"Kestrel","surrogate-control":"no-store","transfer-encoding":"chunked","vary":"Origin","x-content-type-options":"nosniff","x-correlation-id":"d1a4e7ab-e191-46a9-89a5-3dc0c249766b","x-frame-options":"DENY","x-request-id":"d1a4e7ab-e191-46a9-89a5-3dc0c249766b"},"body":{"status":"AVAILABLE","paymentMethods":[{"id":"5fd1c166-73cd-4235-a127-9efffad10b23","code":"COD","displayName":"Cash on Delivery","displayNameAr":"+º+ä+»+ü+¦ +¦+å+» +º+ä+º+¦+¬+ä+º+à","description":"Pay with cash when your order is delivered","descriptionAr":"+º+»+ü+¦ +å+é+»+º+ï +¦+å+» +º+¦+¬+ä+º+à +++ä+¿+â","supportsOnline":false,"supportsOffline":true,"icon":"cash","fee":0,"feeType":"fixed","sortOrder":1,"isAvailable":true},{"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"+à+¡+ü+++¬ +º+«+¬+¿+º+¦ +ü+é++","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"+¡+ê+ä +ä+à+¡+ü+++¬+å+º +ê+º+¦+ü+¦ +¦+ê+¦+¬ +º+ä+¬+¡+ê+è+ä","supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","sortOrder":5,"isAvailable":true}],"totalCount":2,"configuredCount":2,"enabledCount":2,"availableCount":2},"tenant":{"id":"c9c5c1ae-949e-498e-bc63-07242daeb49d","name":"AhramStore"}}}
+### Ran Playwright code
+```js
+await (async page => {
+    const pages = page.context().pages();
+    const admin = pages.find(p => p.url().startsWith('http://localhost:5173/'));
+    const storefront = pages.find(p => p.url().startsWith('http://ahramstore.localhost:5174/'));
+    const methods = await admin.evaluate(async () => (await (await import('/src/services/api.js')).default.get('/admin/payment-methods')).data);
+    const publicResult = await storefront.evaluate(async () => {
+        const api = (await import('/src/services/api/httpClient.ts')).httpClient;
+        const response = await api.get('/api/storefront/payment-methods');
+        const config = await api.get('/api/storefront/store-config');
+        return {status: response.status, headers: response.headers, body: response.data, tenant: {id: config.data.tenantId, name: config.data.storeName}};
+    });
+    return {observedUtc: new Date().toISOString(), adminUrl: admin.url(), storefrontUrl: storefront.url(), methods: methods.map(m => ({...m, publicConfiguration: {keys: Object.keys(m.publicConfiguration || {}), recipientPresent: !!m.publicConfiguration?.walletNumber}})), publicResult};
+}
+)(page);
+```
+### Open tabs
+- 0: (current) [Storefront](http://ahramstore.localhost:5174/)
+- 1: [Point of Sale System](http://localhost:5173/ecommerce/payment-methods)
+### Page
+- Page URL: http://ahramstore.localhost:5174/
+- Page Title: Storefront
+- Console: 3 errors, 1 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-10-20T17-34-54-893Z.log#L190-L205

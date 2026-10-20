@@ -883,7 +883,8 @@ public sealed class FawryFinancialAuthorityContainmentTests
             new EphemeralDataProtectionProvider(),
             new CommerceReliabilityTelemetry(),
             NullLogger<PaymentMethodsAdminController>.Instance,
-            tenantContext)
+            tenantContext,
+            PointOfSale.Tests.Infrastructure.PaymentMethodRuntimeTestStub.Ready())
         {
             ControllerContext = new ControllerContext
             {

@@ -309,6 +309,33 @@ describe('checkout state authority regression', () => {
         expect(state.error).toBe('checkout.errors.fawryUnavailable.message');
     });
 
+    it('admits usable Manual Wallet without receiving any recipient or private configuration', async () => {
+        vi.spyOn(httpClient, 'get').mockResolvedValue({ data: { status: 'AVAILABLE', paymentMethods: [{
+            id: '90000000-0000-4000-8000-000000000003', code: 'MANUALWALLET', displayName: 'QA wallet',
+            supportsOnline: false, supportsOffline: true, fee: 0, feeType: 'fixed', sortOrder: 5, isAvailable: true,
+        }] } });
+        await useCheckoutStore.getState().fetchPaymentMethods();
+        expect(useCheckoutStore.getState().paymentMethods.map(method => method.code)).toEqual(['MANUALWALLET']);
+        expect(useCheckoutStore.getState().paymentSelectionStatus).toBe('valid');
+    });
+
+    it('an older wallet response cannot overwrite a newer disabled response after checkout reset', async () => {
+        let resolveOld!: (value: unknown) => void;
+        const get = vi.spyOn(httpClient, 'get').mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve; }) as never);
+        const older = useCheckoutStore.getState().fetchPaymentMethods();
+        useCheckoutStore.getState().reset();
+        get.mockResolvedValueOnce({ data: { status: 'EMPTY', paymentMethods: [] } });
+        await useCheckoutStore.getState().fetchPaymentMethods();
+        resolveOld({ data: { status: 'AVAILABLE', paymentMethods: [{
+            id: '90000000-0000-4000-8000-000000000003', code: 'MANUALWALLET', displayName: 'QA wallet',
+            supportsOnline: false, supportsOffline: true, fee: 0, feeType: 'fixed', sortOrder: 5, isAvailable: true,
+        }] } });
+        await older;
+        expect(useCheckoutStore.getState().paymentMethods).toEqual([]);
+        expect(useCheckoutStore.getState().paymentMethodsStatus).toBe('EMPTY');
+        expect(useCheckoutStore.getState().paymentMethod).toBeNull();
+    });
+
     it('admits only the latest shipping selection response', async () => {
         setResolvedTenant(cart().tenantId);
         const resolvers = new Map<string, (value: unknown) => void>();

@@ -1,0 +1,111 @@
+{
+  "observedUtc": "2026-10-20T17:31:15.296Z",
+  "adminUrl": "http://localhost:5173/ecommerce/payment-methods",
+  "storefrontUrl": "http://ahramstore.localhost:5174/",
+  "methods": [
+    {
+      "version": 13,
+      "id": "5fd1c166-73cd-4235-a127-9efffad10b23",
+      "code": "COD",
+      "displayName": "Cash on Delivery",
+      "displayNameAr": "الدفع عند الاستلام",
+      "description": "Pay with cash when your order is delivered",
+      "descriptionAr": "ادفع نقداً عند استلام طلبك",
+      "isEnabled": true,
+      "sortOrder": 1,
+      "supportsOnline": false,
+      "supportsOffline": true,
+      "isSandbox": true,
+      "icon": "cash",
+      "fee": 0,
+      "feeType": "fixed",
+      "requiresConfiguration": false,
+      "isConfigurationValid": true,
+      "configurationErrors": [],
+      "publicConfiguration": {
+        "keys": [],
+        "recipientPresent": false
+      },
+      "isSupported": true,
+      "createdAt": "2026-09-24T13:53:43.42612Z",
+      "updatedAt": "2026-10-16T22:38:39.931481Z"
+    },
+    {
+      "version": 24,
+      "id": "8596894a-df67-44c5-8e0e-f64372bc1d74",
+      "code": "MANUALWALLET",
+      "displayName": "P5QA20261017-817 TEST ONLY Wallet",
+      "displayNameAr": "محفظة اختبار فقط",
+      "description": "Transfer to our wallet and upload proof of payment",
+      "descriptionAr": "حول لمحفظتنا وارفع صورة التحويل",
+      "isEnabled": true,
+      "sortOrder": 5,
+      "supportsOnline": false,
+      "supportsOffline": true,
+      "isSandbox": false,
+      "icon": "phone-portrait",
+      "fee": 0,
+      "feeType": "fixed",
+      "requiresConfiguration": true,
+      "isConfigurationValid": true,
+      "configurationErrors": [],
+      "publicConfiguration": {
+        "keys": [
+          "walletNumber"
+        ],
+        "recipientPresent": true
+      },
+      "isSupported": true,
+      "createdAt": "2026-10-16T22:38:22.186501Z",
+      "updatedAt": "2026-10-20T17:31:11.0388Z"
+    }
+  ],
+  "publicResult": {
+    "status": 200,
+    "headers": {
+      "cache-control": "private, no-store, no-cache, max-age=0, must-revalidate",
+      "connection": "close",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Tue, 20 Oct 2026 17:31:14 GMT",
+      "expires": "0",
+      "pragma": "no-cache",
+      "server": "Kestrel",
+      "surrogate-control": "no-store",
+      "transfer-encoding": "chunked",
+      "vary": "Origin",
+      "x-content-type-options": "nosniff",
+      "x-correlation-id": "a5a98f7f-a414-4e03-a298-050a8bf7ba6f",
+      "x-frame-options": "DENY",
+      "x-request-id": "a5a98f7f-a414-4e03-a298-050a8bf7ba6f"
+    },
+    "body": {
+      "status": "AVAILABLE",
+      "paymentMethods": [
+        {
+          "id": "5fd1c166-73cd-4235-a127-9efffad10b23",
+          "code": "COD",
+          "displayName": "Cash on Delivery",
+          "displayNameAr": "الدفع عند الاستلام",
+          "description": "Pay with cash when your order is delivered",
+          "descriptionAr": "ادفع نقداً عند استلام طلبك",
+          "supportsOnline": false,
+          "supportsOffline": true,
+          "icon": "cash",
+          "fee": 0,
+          "feeType": "fixed",
+          "sortOrder": 1,
+          "isAvailable": true
+        }
+      ],
+      "totalCount": 1,
+      "configuredCount": 2,
+      "enabledCount": 2,
+      "availableCount": 1
+    },
+    "tenant": {
+      "id": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+      "name": "AhramStore"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+    "originalApiProcessUntouched":  21300,
+    "actions":  [
+                    {
+                        "processId":  21932,
+                        "executable":  "C:\\Users\\fadya\\source\\repos\\PointOfSale\\PointOfSale.API\\bin\\Debug\\net9.0\\PointOfSale.API.exe",
+                        "startedUtc":  "2026-10-20T17:17:26.0860000Z",
+                        "action":  "Stop task-owned service only"
+                    },
+                    {
+                        "processId":  6348,
+                        "executable":  "C:\\Program Files\\nodejs\\node.exe",
+                        "startedUtc":  "2026-10-20T17:17:58.4590000Z",
+                        "action":  "Stop task-owned service only"
+                    },
+                    {
+                        "processId":  6256,
+                        "executable":  "C:\\Users\\fadya\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+                        "startedUtc":  "2026-10-20T17:16:20.2230000Z",
+                        "action":  "Stop task-owned service only"
+                    }
+                ],
+    "originalAdminProcessUntouched":  16656,
+    "originalStorefrontProcessUntouched":  16332,
+    "observedUtc":  "2026-10-20T17:23:22.3640428Z"
+}

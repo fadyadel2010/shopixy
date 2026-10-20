@@ -1,0 +1,72 @@
+{
+  "observedUtc": "2026-10-20T17:21:57.713Z",
+  "failed": false,
+  "results": [
+    {
+      "lang": "en",
+      "url": "http://ahramstore.localhost:5174/register?lang=en",
+      "controls": [
+        "displayName",
+        "email",
+        "password",
+        "confirmPassword"
+      ],
+      "noPhone": true,
+      "overflow": false,
+      "direction": "ltr",
+      "requiredMessage": "Email is required",
+      "requiredErrors": 4,
+      "registrationPosts": 0,
+      "modules": [
+        {
+          "path": "/src/auth/components/RegisterForm.tsx",
+          "status": 200,
+          "etag": "W/\"78b3-j39deGhNPQFkVbQVngOdFIi9H+8\"",
+          "identicalToTestedSource": true,
+          "noPhoneControl": true
+        },
+        {
+          "path": "/src/auth/api/authApi.ts",
+          "status": 200,
+          "etag": "W/\"bd6-WCihBbMyhYoiiFzd1RRACAgsvQY\"",
+          "identicalToTestedSource": true,
+          "noPhoneControl": true
+        }
+      ],
+      "pass": true
+    },
+    {
+      "lang": "ar",
+      "url": "http://ahramstore.localhost:5174/register?lang=ar",
+      "controls": [
+        "displayName",
+        "email",
+        "password",
+        "confirmPassword"
+      ],
+      "noPhone": true,
+      "overflow": false,
+      "direction": "rtl",
+      "requiredMessage": "البريد الإلكتروني مطلوب",
+      "requiredErrors": 4,
+      "registrationPosts": 0,
+      "modules": [
+        {
+          "path": "/src/auth/components/RegisterForm.tsx",
+          "status": 200,
+          "etag": "W/\"78b3-j39deGhNPQFkVbQVngOdFIi9H+8\"",
+          "identicalToTestedSource": true,
+          "noPhoneControl": true
+        },
+        {
+          "path": "/src/auth/api/authApi.ts",
+          "status": 200,
+          "etag": "W/\"bd6-WCihBbMyhYoiiFzd1RRACAgsvQY\"",
+          "identicalToTestedSource": true,
+          "noPhoneControl": true
+        }
+      ],
+      "pass": true
+    }
+  ]
+}

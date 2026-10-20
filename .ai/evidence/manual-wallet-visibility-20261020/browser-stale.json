@@ -1,0 +1,83 @@
+{
+  "checks": [
+    {
+      "name": "Stale candidate has real authoritative checkout context",
+      "passed": true
+    },
+    {
+      "name": "Admin disable persisted and unready",
+      "passed": true
+    },
+    {
+      "name": "Independent server checkout rejects disabled stale candidate",
+      "passed": true
+    },
+    {
+      "name": "Refreshed checkout hides disabled wallet, retains COD",
+      "passed": true
+    },
+    {
+      "name": "Re-enabled wallet appears again on refreshed checkout",
+      "passed": true
+    }
+  ],
+  "bodySummary": {
+    "cartId": "41e582f8-b649-4803-aab0-ffe0c0072ff8",
+    "checkoutSessionId": "79ab01e6-7d2a-4ee1-9c5a-255d7c4ba4d9",
+    "pricing": {
+      "taxRate": 0,
+      "taxSource": "tenant-setting",
+      "taxCountryCode": "EG",
+      "pricesRefreshed": false,
+      "promotionCalculationFailed": false,
+      "subtotal": 25,
+      "shipping": 10,
+      "tax": 0,
+      "discount": 0,
+      "total": 35,
+      "couponDiscount": 0,
+      "promotionDiscount": 0,
+      "cartPromotionDiscount": 0,
+      "paymentFee": 0,
+      "manualDiscount": 0,
+      "finalTotal": 35
+    },
+    "hasProof": true
+  },
+  "disabled": {
+    "version": 30,
+    "id": "8596894a-df67-44c5-8e0e-f64372bc1d74",
+    "code": "MANUALWALLET",
+    "displayName": "P5QA20261017-817 TEST ONLY Wallet",
+    "displayNameAr": "محفظة اختبار فقط",
+    "description": "Transfer to our wallet and upload proof of payment",
+    "descriptionAr": "حول لمحفظتنا وارفع صورة التحويل",
+    "isEnabled": false,
+    "sortOrder": 5,
+    "supportsOnline": false,
+    "supportsOffline": true,
+    "isSandbox": true,
+    "icon": "phone-portrait",
+    "fee": 0,
+    "feeType": "fixed",
+    "requiresConfiguration": true,
+    "isConfigurationValid": true,
+    "isAvailableForCheckout": false,
+    "checkoutUnavailableReasonCode": "TENANT_METHOD_DISABLED",
+    "configurationErrors": [],
+    "publicConfiguration": {
+      "walletNumber": "01000000000"
+    },
+    "isSupported": true,
+    "createdAt": "2026-10-16T22:38:22.186501Z",
+    "updatedAt": "2026-10-20T17:40:23.429945Z"
+  },
+  "staleSubmission": {
+    "status": 400,
+    "body": {
+      "code": "INVALID_PAYMENT_METHOD",
+      "message": "Payment method MANUALWALLET is invalid: Payment method is not available",
+      "traceId": "00-4ff0afc90d88209e6254eb57e4a69840-52dd6ce0ce1691b6-01"
+    }
+  }
+}
