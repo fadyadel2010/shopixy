@@ -1,4 +1,5 @@
 import React from 'react';
+import '@/components/media/media.css';
 import { OptimizedImage } from '@/components/media';
 import type { ProductMediaDto } from '@/types';
 import {
@@ -70,7 +71,7 @@ export const ProductMediaViewer: React.FC<ProductMediaViewerProps> = ({
         setIsZoomed(false);
     }, []);
 
-    const sharedClassName = `group relative block h-full w-full overflow-hidden ${aspectClassName}`;
+    const sharedClassName = `sf-media sf-media--product-detail group relative block ${aspectClassName}`;
     const label = getMediaLabel(media, productName, mediaIndex);
     const mediaProvider = (media?.provider || '').toLowerCase();
     const playbackUrl = media?.presentationUrl || (mediaProvider === 'youtube' ? null : media?.url);
@@ -89,7 +90,7 @@ export const ProductMediaViewer: React.FC<ProductMediaViewerProps> = ({
             alt={label}
             loading={loading}
             sizes="(max-width: 1024px) 100vw, 720px"
-            className="h-full w-full object-cover transition-transform duration-300 ease-out"
+            className="h-full w-full object-contain transition-transform duration-300 ease-out"
             style={{
                 transformOrigin,
                 transform: supportsHoverZoom && isZoomed ? 'scale(1.5)' : 'scale(1)',
@@ -126,6 +127,7 @@ export const ProductMediaViewer: React.FC<ProductMediaViewerProps> = ({
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
                 className={`${sharedClassName} cursor-zoom-in bg-muted/10 focus:outline-none focus:ring-2 focus:ring-primary/40`}
+                data-media-role="product-detail"
                 aria-label={`Open ${label} in fullscreen`}
             >
                 {content}

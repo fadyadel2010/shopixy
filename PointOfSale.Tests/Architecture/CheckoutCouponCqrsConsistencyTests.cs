@@ -177,7 +177,8 @@ public sealed class CheckoutCouponCqrsConsistencyTests
 
         Assert.Contains("RequireAuthenticatedCustomer(customerId)", authoritySource);
         Assert.Contains("GetCustomerConfirmedUsageCountAsync", authoritySource);
-        Assert.Contains("GetActiveCustomerReservationCountAsync", authoritySource);
+        Assert.Contains("GetActiveReservationCountsAsync", authoritySource);
+        Assert.Contains("group.Count(reservation => reservation.CustomerId == customerId)", authoritySource);
         Assert.Contains("CustomerHasCompletedOrdersAsync", authoritySource);
         Assert.Contains("ValidateScope(", authoritySource);
     }

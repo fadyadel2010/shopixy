@@ -19,4 +19,5 @@ public static class CouponErrorCodes
     public const string NotFound = "COUPON_NOT_FOUND";
     public const string DiscountMismatch = "COUPON_DISCOUNT_MISMATCH";
     public const string ReservationMissing = "COUPON_RESERVATION_MISSING";
+    public const string ReservationExists = "COUPON_RESERVATION_EXISTS";
 }

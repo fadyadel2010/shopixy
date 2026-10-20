@@ -25,7 +25,7 @@ export const ModernProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
             <ProductCardMedia
                 runtime={runtime}
                 className="relative aspect-square overflow-hidden bg-muted/5"
-                imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-105"
+                imageClassName="h-full w-full object-contain transition-transform duration-slow group-hover:scale-105"
                 sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 320px"
             />
 
@@ -57,7 +57,7 @@ export const MinimalProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
             <ProductCardMedia
                 runtime={runtime}
                 className="relative aspect-[5/6] overflow-hidden bg-muted/5"
-                imageClassName="h-full w-full object-cover transition-opacity duration-fast group-hover:opacity-90"
+                imageClassName="h-full w-full object-contain transition-opacity duration-fast group-hover:opacity-90"
                 sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 280px"
             />
 
@@ -89,14 +89,14 @@ export const MinimalProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
 export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
     <ThemeSurface
         themeId="fashion"
-        className="group relative h-full bg-white"
+        className="group relative h-full bg-background"
         data-product-card-theme="fashion"
         data-product-card-layout={runtime.layout}
     >
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
-                className="relative aspect-[4/5] overflow-hidden border border-slate-200 bg-slate-50"
+                className="relative aspect-square overflow-hidden border border-border bg-subtle"
                 imageClassName="h-full w-full object-contain p-4 transition-transform duration-slow group-hover:scale-[1.04]"
                 sizes="(max-width: 768px) 90vw, (max-width: 1280px) 40vw, 420px"
             />
@@ -136,14 +136,14 @@ export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
 export const SevenProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
     <ThemeSurface
         themeId="seven"
-        className="group relative h-full bg-white"
+        className="group relative h-full bg-background"
         data-product-card-theme="seven"
         data-product-card-layout={runtime.layout}
     >
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
-                className="relative aspect-[4/5] overflow-hidden bg-white"
+                className="relative aspect-square overflow-hidden bg-background"
                 imageClassName="h-full w-full object-contain p-4 transition-transform duration-slow group-hover:scale-[1.04]"
                 sizes="(max-width: 768px) 90vw, (max-width: 1280px) 40vw, 420px"
             />
@@ -197,7 +197,7 @@ export const PearlProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
             <ProductCardMedia
                 runtime={runtime}
                 className="relative aspect-[4/5] overflow-hidden bg-muted/5"
-                imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.03]"
+                imageClassName="h-full w-full object-contain transition-transform duration-slow group-hover:scale-[1.03]"
                 sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 360px"
             />
 
@@ -239,7 +239,7 @@ export const PhoenixProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
             <ProductCardMedia
                 runtime={runtime}
                 className="relative aspect-[3/4] overflow-hidden bg-muted/5"
-                imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.04]"
+                imageClassName="h-full w-full object-contain transition-transform duration-slow group-hover:scale-[1.04]"
                 sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 360px"
             />
 
@@ -359,7 +359,7 @@ export const SharpProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
             <ProductCardMedia
                 runtime={runtime}
                 className="relative aspect-square overflow-hidden bg-muted/5"
-                imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-105"
+                imageClassName="h-full w-full object-contain transition-transform duration-slow group-hover:scale-105"
                 sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 320px"
             />
 
@@ -393,7 +393,7 @@ export const SharpProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
 export const CosmeticsProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
     <ThemeSurface
         themeId="cosmetics"
-        className="group relative h-full border-r border-b border-black bg-white"
+        className="group relative h-full border-r border-b border-border bg-background"
         data-product-card-theme="cosmetics"
         data-product-card-layout={runtime.layout}
     >
@@ -402,7 +402,7 @@ export const CosmeticsProductCardRenderer: ProductCardRenderer = ({ runtime }) =
                 <ProductCardMedia
                     runtime={runtime}
                     className="relative aspect-square overflow-hidden bg-[#e6e6e6]"
-                    imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.04]"
+                    imageClassName="h-full w-full object-contain transition-transform duration-slow group-hover:scale-[1.04]"
                     sizes="(max-width: 768px) 82vw, (max-width: 1280px) 33vw, 360px"
                     showUnavailableOverlay={false}
                 />
@@ -423,10 +423,10 @@ export const CosmeticsProductCardRenderer: ProductCardRenderer = ({ runtime }) =
                 <ProductCardPrice
                     runtime={runtime}
                     className="justify-center"
-                    textClassName="text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)]"
-                    currentClassName="text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)]"
-                    saleClassName="text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)]"
-                    compareClassName="text-[10px] text-[rgba(3,3,2,0.5)] line-through"
+                    textClassName="text-xs font-normal leading-normal text-muted"
+                    currentClassName="text-xs font-normal leading-normal text-text"
+                    saleClassName="text-xs font-normal leading-normal text-primary-text"
+                    compareClassName="text-xs text-muted line-through"
                 />
             </div>
         </ProductCardLink>

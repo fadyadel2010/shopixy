@@ -2592,6 +2592,12 @@ public partial class PaymentLifecycleService : IPaymentLifecycleService
 
             var amount = ResolvePaymentAmount(order, paymentIntent, request);
 
+            if (request.Source == PaymentLifecycleSource.PaymentReviewApproval)
+            {
+                var settlementFailure = await ValidateManualWalletSettlementAsync(order, paymentIntent, amount, ct);
+                if (settlementFailure is not null) return settlementFailure;
+            }
+
             ValidateSuccessfulAmount(order, amount);
             UpdatePaymentIntentSucceeded(paymentIntent, request, now);
 
@@ -4952,6 +4958,35 @@ public partial class PaymentLifecycleService : IPaymentLifecycleService
             throw new InvalidOperationException(
                 $"Captured amount {amount} does not cover remaining item balance {remainingBalance} for order {order.OrderNumber}.");
         }
+    }
+
+    private async Task<PaymentTransitionResult?> ValidateManualWalletSettlementAsync(
+        Order order, PaymentIntent? paymentIntent, decimal amount, CancellationToken ct)
+    {
+        // Full settlement uses the accepted order total, including non-item charges.
+        // Item balances use the persisted net discount/tax allocation. Taking their
+        // maximum also fails closed on inconsistent legacy snapshots rather than
+        // forgiving an unrepresented discount or manufacturing a captured amount.
+        var accepted = await _db.PaymentIntents.AsNoTracking()
+            .Where(pi => pi.TenantId == order.TenantId && pi.OrderId == order.Id &&
+                pi.Id != (paymentIntent != null ? paymentIntent.Id : Guid.Empty) &&
+                pi.Status == PaymentIntentStatus.Paid && pi.Currency == order.Currency)
+            .SumAsync(pi => (decimal?)pi.Amount, ct) ?? 0m;
+        var recognized = Math.Max(accepted, order.TotalPaidAmount);
+        var remaining = Math.Max(order.Items.Sum(item => item.RemainingAmount), Math.Max(0m, order.Total - recognized));
+        var tolerance = CurrencyHelper.GetMonetaryTolerance(order.Currency);
+        if (amount <= 0m || amount + tolerance < remaining)
+        {
+            return PaymentTransitionResult.Failed(
+                $"Submitted amount {amount:F2} {order.Currency} does not cover remaining payable balance {remaining:F2} {order.Currency} for order {order.OrderNumber} (shortfall {Math.Max(0m, remaining - amount):F2}). Full settlement is required for Manual Wallet approval.",
+                "PAYMENT_INSUFFICIENT_AMOUNT");
+        }
+
+        return amount - tolerance > remaining
+            ? PaymentTransitionResult.Failed(
+                $"Submitted amount {amount:F2} {order.Currency} exceeds remaining payable balance {remaining:F2} {order.Currency} for order {order.OrderNumber}. Reconcile the excess before Manual Wallet approval.",
+                "PAYMENT_EXCESS_AMOUNT")
+            : null;
     }
 
     private static void ApplySuccessfulPaymentAllocation(Order order, decimal amount)

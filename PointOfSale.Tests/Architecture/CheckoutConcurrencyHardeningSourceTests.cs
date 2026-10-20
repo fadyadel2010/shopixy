@@ -192,7 +192,7 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
     }
 
     [Fact]
-    public void CheckoutService_MustRemoveRelationshipFixupPrincipals_BeforeSerializableRetry()
+    public void CheckoutService_MustIsolateRetryPublisherAndContext_AndReloadCommittedConcurrencyAuthority()
     {
         var source = ReadRepoFile(
             "PointOfSale.API",
@@ -200,22 +200,52 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
             "Checkout",
             "CheckoutService.cs");
 
-        var serializationFailureIndex = source.IndexOf(
-            "if (IsCheckoutTransactionSerializationFailure(originalException))",
-            StringComparison.Ordinal);
-        var clearIndex = source.IndexOf("_dbContext.ChangeTracker.Clear();", serializationFailureIndex, StringComparison.Ordinal);
-        var resetIndex = source.IndexOf("ResetOrderNavigationStateForRetry(order);", clearIndex, StringComparison.Ordinal);
-        var continueIndex = source.IndexOf("continue;", resetIndex, StringComparison.Ordinal);
-        var resetMethod = ExtractMethodBody(source, "ResetOrderNavigationStateForRetry");
+        var creation = ExtractMethodBody(source, "CreateOrderAsync");
+        var retryIndex = creation.IndexOf("CheckoutOrderCommitRetry.ExecuteAsync", StringComparison.Ordinal);
+        var scopeIndex = creation.IndexOf("_scopeFactory.CreateAsyncScope()", retryIndex, StringComparison.Ordinal);
+        var tenantIndex = creation.IndexOf("SetTenantId(tenantId)", scopeIndex, StringComparison.Ordinal);
+        var serviceIndex = creation.IndexOf("GetRequiredService<ICheckoutService>()", tenantIndex, StringComparison.Ordinal);
+        var attemptIndex = creation.IndexOf("service.CreateOrderAsync(", serviceIndex, StringComparison.Ordinal);
+        var committedIndex = source.IndexOf("orderCommitted = true;", StringComparison.Ordinal);
+        var reloadIndex = source.IndexOf("order = await _dbContext.Orders", committedIndex, StringComparison.Ordinal);
+        var tenantReloadIndex = source.IndexOf("item.Id == persistedOrderId && item.TenantId == tenantId && !item.IsDeleted", reloadIndex, StringComparison.Ordinal);
+        var dispatchIndex = source.IndexOf("await DispatchPersistedInventoryReservedOutboxAsync(", tenantReloadIndex, StringComparison.Ordinal);
 
-        Assert.True(clearIndex > serializationFailureIndex, "Serializable rollback must clear EF tracking before retrying.");
-        Assert.True(resetIndex > clearIndex, "Serializable retry must remove principal instances retained by relationship fixup after tracking is cleared.");
-        Assert.True(continueIndex > resetIndex, "The retained order graph must be reset before the next transaction attempt.");
-        Assert.Contains("order.Warehouse = null;", resetMethod, StringComparison.Ordinal);
-        Assert.Contains("orderItem.Product = null!;", resetMethod, StringComparison.Ordinal);
-        Assert.Contains("orderItem.Variant = null;", resetMethod, StringComparison.Ordinal);
-        Assert.Contains("orderItem.Unit = null;", resetMethod, StringComparison.Ordinal);
-        Assert.Contains("orderItem.Warehouse = null;", resetMethod, StringComparison.Ordinal);
+        Assert.True(retryIndex >= 0 && scopeIndex > retryIndex && tenantIndex > scopeIndex && serviceIndex > tenantIndex && attemptIndex > serviceIndex,
+            "Every retry must resolve a fresh SQL context and publisher after assigning its tenant.");
+        Assert.Contains("isolatedAttempt: true", creation, StringComparison.Ordinal);
+        Assert.True(reloadIndex > committedIndex && tenantReloadIndex > reloadIndex,
+            "The committed aggregate and its shadow concurrency token must be reloaded through tenant SQL authority.");
+        Assert.True(dispatchIndex > committedIndex, "A post-commit consistency failure must never be treated as a pre-commit rollback.");
+        Assert.DoesNotContain("continue;", creation, StringComparison.Ordinal);
+        Assert.DoesNotContain("_dbContext.Attach(order);", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CodCheckout_MustPersistReferenceAndPendingStateInsideOrderTransaction()
+    {
+        var source = ReadRepoFile("PointOfSale.API", "Services", "Checkout", "CheckoutService.cs");
+        var creation = ExtractMethodBody(source, "CreateOrderAsync");
+        var transactionIndex = creation.IndexOf("BeginTransactionAsync(", StringComparison.Ordinal);
+        var offlineIndex = creation.IndexOf("if (!PaymentMethodUsesProviderGateway(paymentMethod.Code))", transactionIndex, StringComparison.Ordinal);
+        var referenceIndex = creation.IndexOf("order.PaymentReference = GeneratePaymentReference(order.Id)", offlineIndex, StringComparison.Ordinal);
+        var stateIndex = creation.IndexOf("order.TransitionCheckoutState(CheckoutState.PaymentPending)", referenceIndex, StringComparison.Ordinal);
+        var eventIndex = creation.IndexOf("await EmitPaymentIntentCreatedEventAsync(", stateIndex, StringComparison.Ordinal);
+        var commitIndex = creation.IndexOf("await transaction.CommitAsync(cancellationToken)", eventIndex, StringComparison.Ordinal);
+        Assert.True(offlineIndex > transactionIndex && referenceIndex > offlineIndex && stateIndex > referenceIndex && eventIndex > stateIndex && commitIndex > eventIndex);
+    }
+
+    [Fact]
+    public void InterruptedCodReplay_MustLockAndResumeExistingOrderWithoutWalletOrExternalWork()
+    {
+        var source = ReadRepoFile("PointOfSale.API", "Services", "Checkout", "CheckoutService.cs");
+        var recovery = ExtractMethodBody(source, "ResumeOfflineCheckoutAsync");
+        Assert.Contains("OrderLockingHelper.LoadOrderWithLockAsync(_dbContext, tenantId, orderId", recovery);
+        Assert.Contains("EnsureStorefrontOrderReservationsActiveAsync", recovery);
+        Assert.Contains("order.PaymentReference ??= GeneratePaymentReference(order.Id)", recovery);
+        Assert.Contains("EmitPaymentIntentCreatedEventAsync", recovery);
+        Assert.DoesNotContain("Orders.Add", recovery);
+        Assert.DoesNotContain("CreateCheckoutPaymentSessionAsync", recovery);
     }
 
     [Fact]

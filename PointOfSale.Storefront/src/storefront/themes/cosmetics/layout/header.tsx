@@ -13,11 +13,11 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
     return (
         <>
             <HeaderAnnouncement model={{ ...model, announcement: model.announcement ?? { enabled: true, text: labels.announcement, textAr: '', link: '', backgroundColor: '', textColor: '' } }}
-                className={`${COSMETICS_FONT} relative z-40 bg-[#E7DFDB] text-[#D15F61] uppercase tracking-[0.12em]`} />
+                className={`${COSMETICS_FONT} relative z-40 bg-secondary text-on-secondary uppercase tracking-[0.12em]`} />
 
             <header
                 role="banner"
-                className={`${COSMETICS_FONT} sticky top-0 z-40 h-[52px] border-b border-black/10 bg-white text-[#D05D61] shadow-[0_4px_20px_rgba(13,13,18,0.06)] md:h-[58px]`}
+                className={`${COSMETICS_FONT} sticky top-0 z-40 h-[52px] border-b border-border bg-background text-primary-text shadow-[0_4px_20px_rgba(13,13,18,0.06)] md:h-[58px]`}
             >
                 <div className="grid h-full grid-cols-[1fr_auto_1fr] items-center px-4 md:px-10">
                     <div className="flex items-center gap-3">
@@ -43,7 +43,7 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
                         <NavigationSlot
                             className="hidden items-center gap-5 lg:flex"
                             ariaLabel={labels.mainNavigation}
-                            linkClassName={(link) => cosmeticsNavLinkClass(link.isActive).replace('text-white/90', 'text-[#D05D61]')}
+                            linkClassName={(link) => cosmeticsNavLinkClass(link.isActive)}
                         />
                     </div>
 
@@ -53,20 +53,20 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
 
                     <div className="flex items-center justify-end gap-2">
                         <div className="hidden md:block">
-                            <LanguageSlot variant="text" size="sm" className="text-[#D05D61]" />
+                            <LanguageSlot variant="text" size="sm" className="text-primary-text" />
                         </div>
                         <div className="hidden lg:block">
                             <AuthenticationSlot variant="desktop" />
                         </div>
                         <div className="hidden md:block">
-                            <WishlistSlot className="text-[#D05D61] hover:bg-[#E7DFDB]/60" />
+                            <WishlistSlot className="text-primary-text hover:bg-subtle" />
                         </div>
-                        <CartSlot className="text-[#D05D61] hover:bg-[#E7DFDB]/60" />
+                        <CartSlot className="text-primary-text hover:bg-subtle" />
                     </div>
                 </div>
 
                 {mobileOpen ? (
-                    <div className="absolute inset-x-0 top-full border-t border-[#D05D61]/15 bg-[#E7DFDB] px-5 py-5 text-[#D05D61] shadow-[0_18px_40px_rgba(13,13,18,0.10)] lg:hidden">
+                    <div className="absolute inset-x-0 top-full border-t border-border bg-background px-5 py-5 text-primary-text shadow-[0_18px_40px_rgba(13,13,18,0.10)] lg:hidden">
                         <div className="mb-5 flex items-center justify-between">
                             <AffiliateLink href="/" className="text-2xl font-light" onClick={() => setMobileOpen(false)}>
                                 {displayStoreName}
@@ -78,17 +78,17 @@ const CosmeticsHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) =>
                             </button>
                         </div>
                         <div className="mb-3 flex items-center gap-2">
-                            <LanguageSlot variant="text" size="sm" className="text-[#D05D61]" />
-                            <WishlistSlot className="text-[#D05D61] hover:bg-white/30" />
+                            <LanguageSlot variant="text" size="sm" className="text-primary-text" />
+                            <WishlistSlot className="text-primary-text hover:bg-subtle" />
                         </div>
                         <div className="space-y-1">
                             <NavigationSlot
                                 className="space-y-1"
                                 ariaLabel={labels.menu}
                                 onLinkClick={() => setMobileOpen(false)}
-                                linkClassName="block border-b border-[#D05D61]/15 py-3 text-sm uppercase tracking-[0.14em]"
+                                linkClassName="block border-b border-border py-3 text-sm uppercase tracking-[0.14em]"
                             />
-                            <SearchSlot onClick={() => setMobileOpen(false)} className="block w-full border-b border-[#D05D61]/15 py-3 text-left text-sm uppercase tracking-[0.14em]">
+                            <SearchSlot onClick={() => setMobileOpen(false)} className="block w-full border-b border-border py-3 text-left text-sm uppercase tracking-[0.14em]">
                                 {labels.search}
                             </SearchSlot>
                             <div className="pt-3">

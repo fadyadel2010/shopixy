@@ -1,4 +1,6 @@
 import React from 'react';
+import type { HeroBannerProps } from '@/components/sections/heroBannerTypes';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
@@ -14,7 +16,7 @@ const alignmentClasses: Record<string, string> = {
     right: 'items-end text-right',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -24,12 +26,12 @@ const HeroBanner: React.FC<any> = ({
     overlayOpacity,
     textColor,
     alignment,
-    height,
+    height = 'medium',
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 20), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.center;
+    const resolvedAlignmentClass = alignmentClasses[alignment || 'center'] || alignmentClasses.center;
     return (
         <section
             className="border-b border-slate-200 bg-white"
@@ -68,9 +70,9 @@ const HeroBanner: React.FC<any> = ({
                 </div>
 
                 <div className="mx-auto mt-14 w-full max-w-xl">
-                    <div className="relative aspect-[4/5] overflow-hidden border border-slate-200 bg-slate-50">
+                    <MediaFrame role="hero" aspectRatio="4 / 5" className="border border-border bg-subtle">
                         {backgroundImage ? (
-                            <img
+                            <OptimizedImage loading="eager"
                                 src={backgroundImage}
                                 alt={title || ''}
                                 className="h-full w-full object-cover"
@@ -81,7 +83,7 @@ const HeroBanner: React.FC<any> = ({
                             </div>
                         )}
                         <div className="absolute inset-0 bg-white" style={{ opacity: resolvedOverlayOpacity * 0.12 }} />
-                    </div>
+                    </MediaFrame>
                 </div>
             </div>
         </section>

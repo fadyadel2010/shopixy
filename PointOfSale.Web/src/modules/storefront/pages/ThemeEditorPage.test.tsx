@@ -175,6 +175,28 @@ describe('ThemeEditorPage Colors and Typography authority', () => {
         expect(updateThemeOverrides).not.toHaveBeenCalled()
     })
 
+    it('primary editing leaves every unrelated color role intact in the preview and save payload', async () => {
+        await renderEditor()
+        fireEvent.change(screen.getByLabelText('Primary Color'), { target: { value: '#ffd000' } })
+        expect(screen.getByLabelText('Secondary Color')).toHaveValue(colors.secondary)
+        expect(screen.getByLabelText('Background')).toHaveValue(colors.background)
+        expect(screen.getByLabelText('Text Color')).toHaveValue(colors.text)
+        expect(screen.getByLabelText('Muted Color')).toHaveValue(colors.muted)
+        expect(screen.getByRole('button', { name: 'Shop Now' })).toHaveStyle({ backgroundColor: '#ffd000', color: '#020617' })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }))
+        await waitFor(() => expect(updateThemeOverrides).toHaveBeenCalledWith(
+            expect.objectContaining({ colors: { ...colors, primary: '#ffd000' } }), { headers: { 'If-Match': '"7"' } }
+        ))
+    })
+
+    it('warns about unreadable text without replacing the merchant color or disabling save', async () => {
+        await renderEditor()
+        fireEvent.change(screen.getByLabelText('Text Color'), { target: { value: '#ffffff' } })
+        expect(screen.getByText('Palette contrast needs attention')).toBeInTheDocument()
+        expect(screen.getByLabelText('Text Color')).toHaveValue('#ffffff')
+        expect(screen.getByRole('button', { name: 'Save Draft' })).not.toBeDisabled()
+    })
+
     it('retains a newer edit made while Save Draft is in flight', async () => {
         let resolveSave!: (value: ReturnType<typeof config>) => void
         updateThemeOverrides.mockImplementation(() => new Promise((resolve) => { resolveSave = resolve }))

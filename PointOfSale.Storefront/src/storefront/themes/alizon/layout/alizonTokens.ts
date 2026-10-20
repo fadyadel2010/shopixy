@@ -44,7 +44,7 @@ export const ALIZON_EYEBROW = `${ALIZON_FONT_BODY} text-[12px] font-semibold upp
  */
 export const alizonNavLinkClass = (isActive: boolean): string => {
     const base = `${ALIZON_NAV_LINK} transition-colors`;
-    return isActive ? `${base} text-[#FF0000]` : `${base} text-[#FF0000]/70 hover:text-[#FF0000]`;
+    return isActive ? `${base} text-primary-text` : `${base} text-text hover:text-primary-text`;
 };
 
 /** Alizon accents (hardcoded brand colors per design report). */

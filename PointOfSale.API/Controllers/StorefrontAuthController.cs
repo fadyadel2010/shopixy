@@ -116,7 +116,10 @@ public class StorefrontAuthController : ControllerBase
             return BadRequest(new ApiErrorResponse(
                 result.Error ?? "REGISTRATION_FAILED",
                 result.Message ?? "Registration failed",
-                traceId));
+                traceId)
+            {
+                Details = result.Error == "INVALID_PHONE" ? new { field = "phone" } : null
+            });
         }
 
         return Ok(CreateBrowserAuthResponse(result.Response));

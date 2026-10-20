@@ -12,14 +12,14 @@ const CategoryGrid: React.FC<CategoryGridProps> = ({ categoryGridModel: model })
     }
 
     return (
-        <section className="bg-slate-950 py-12 text-white sm:py-16">
+        <section className="bg-background py-12 text-text sm:py-16">
             <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                 <ThemeSectionHeader
                     themeId="fashion"
                     eyebrow={model.labels.eyebrowCategories}
                     title={model.title}
                     subtitle={model.subtitle}
-                    className="text-white [&_h2]:text-white [&_p]:text-white/70"
+                    className="text-text"
                 />
 
                 {model.isLoading ? (

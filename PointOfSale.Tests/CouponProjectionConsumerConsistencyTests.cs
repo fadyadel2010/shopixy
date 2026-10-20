@@ -1,3 +1,5 @@
+using PointOfSale.Tests.Infrastructure;
+
 namespace PointOfSale.Tests;
 
 public sealed class CouponProjectionConsumerConsistencyTests
@@ -50,11 +52,7 @@ public sealed class CouponProjectionConsumerConsistencyTests
     {
         var pathParts = new List<string>
         {
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
+            TestConfiguration.GetSolutionRoot(),
             "PointOfSale.Infrastructure"
         };
 

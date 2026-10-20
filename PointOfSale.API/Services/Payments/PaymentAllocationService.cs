@@ -17,7 +17,7 @@ public interface IPaymentAllocationService
 {
     /// <summary>
     /// Allocates a payment amount across order items.
-    /// Distributes to items in order (by Id), filling each item's Subtotal before moving to next.
+    /// Distributes to items in order (by Id), filling each item's accepted net balance before moving to next.
     /// </summary>
     /// <param name="order">Order with Items loaded</param>
     /// <param name="paymentAmount">Amount to allocate</param>
@@ -114,7 +114,7 @@ public class PaymentAllocationService : IPaymentAllocationService
         {
             if (amountToApply <= 0) break;
 
-            var remaining = item.Subtotal - item.PaidAmount;
+            var remaining = item.RemainingAmount;
             if (remaining <= 0) continue;
 
             var applied = Math.Min(remaining, amountToApply);

@@ -1,504 +1,213 @@
-import { useEffect, useMemo, useState } from 'react'
+import { cloneElement, useId, useRef, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import { useTranslation } from 'react-i18next'
+import { useRTL } from '../hooks/useRTL'
 import SmartOfferPreview from './SmartOfferPreview'
 
 const STATUS_OPTIONS = ['Inactive', 'Active']
 const TRIGGER_OPTIONS = ['ExitIntent', 'TimeDelay', 'ScrollDepth', 'AddToCart', 'BeforeCheckout']
 const PAGE_SCOPE_OPTIONS = ['All', 'Home', 'Product', 'Category', 'Cart', 'Checkout']
 const COUPON_DISCOUNT_OPTIONS = ['Percentage', 'FixedAmount']
+const controlClass = 'input min-w-0 bg-white text-gray-900 placeholder:text-gray-400 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500'
 
 const defaultOffer = {
-    name: '',
-    status: 'Inactive',
-    priority: 0,
-    triggerType: 'ExitIntent',
-    pagesScope: 'All',
-    delaySeconds: '',
-    scrollPercent: '',
-    showOncePerSession: true,
-    maxDisplaysPerUser: '',
-    popupTitle: '',
-    popupDescription: '',
-    buttonText: '',
-    couponCode: '',
-    couponDiscountType: 'Percentage',
-    couponDiscountValue: '',
-    couponMinOrderAmount: '',
-    couponMaxDiscountAmount: '',
-    imageUrl: '',
-    backgroundColor: '#f97316',
+    name: '', status: 'Inactive', priority: 0, triggerType: 'ExitIntent', pagesScope: 'All',
+    delaySeconds: '', scrollPercent: '', showOncePerSession: true, maxDisplaysPerUser: '',
+    popupTitle: '', popupDescription: '', buttonText: '', couponCode: '', couponDiscountType: 'Percentage',
+    couponDiscountValue: '', couponMinOrderAmount: '', couponMaxDiscountAmount: '', imageUrl: '', backgroundColor: '#f97316',
 }
 
 function mapOfferToForm(offer) {
-    if (!offer) {
-        return defaultOffer
+    const form = Object.fromEntries(Object.entries(defaultOffer).map(([field, fallback]) => [field, offer?.[field] ?? fallback]))
+    // The admitted API contract supports both string and numeric enum representations.
+    for (const [field, options] of Object.entries({ status: STATUS_OPTIONS, triggerType: TRIGGER_OPTIONS, pagesScope: PAGE_SCOPE_OPTIONS, couponDiscountType: COUPON_DISCOUNT_OPTIONS })) {
+        if (typeof form[field] === 'number') form[field] = options[form[field]] ?? form[field]
     }
-
-    return {
-        name: offer.name ?? '',
-        status: offer.status ?? 'Inactive',
-        priority: offer.priority ?? 0,
-        triggerType: offer.triggerType ?? 'ExitIntent',
-        pagesScope: offer.pagesScope ?? 'All',
-        delaySeconds: offer.delaySeconds ?? '',
-        scrollPercent: offer.scrollPercent ?? '',
-        showOncePerSession: offer.showOncePerSession ?? true,
-        maxDisplaysPerUser: offer.maxDisplaysPerUser ?? '',
-        popupTitle: offer.popupTitle ?? '',
-        popupDescription: offer.popupDescription ?? '',
-        buttonText: offer.buttonText ?? '',
-        couponCode: offer.couponCode ?? '',
-        couponDiscountType: offer.couponDiscountType ?? 'Percentage',
-        couponDiscountValue: offer.couponDiscountValue ?? '',
-        couponMinOrderAmount: offer.couponMinOrderAmount ?? '',
-        couponMaxDiscountAmount: offer.couponMaxDiscountAmount ?? '',
-        imageUrl: offer.imageUrl ?? '',
-        backgroundColor: offer.backgroundColor ?? '#f97316',
-    }
+    return form
 }
 
-function toOptionalInt(value) {
-    if (value === '' || value === null || value === undefined) {
-        return null
-    }
-
-    const parsed = Number.parseInt(value, 10)
-    return Number.isNaN(parsed) ? null : parsed
+function optionalNumber(value) {
+    return value === '' || value == null ? null : Number(value)
 }
 
-function toOptionalDecimal(value) {
-    if (value === '' || value === null || value === undefined) {
-        return null
-    }
-
-    const parsed = Number.parseFloat(value)
-    return Number.isNaN(parsed) ? null : parsed
+export default function SmartOfferEditor({ open, offer, ...props }) {
+    // A draft belongs to one opening and one record. Refreshing the same DTO must
+    // not rehydrate user input, reset focus, or turn off its preview.
+    if (!open) return null
+    return <SmartOfferEditorSession key={offer?.id ?? offer?.Id ?? 'create'} offer={offer} {...props} />
 }
 
-export default function SmartOfferEditor({ open, offer, saving, error, onClose, onSave }) {
+function SmartOfferEditorSession({ offer, saving, error, onClose, onSave }) {
     const { t } = useTranslation()
-    const [formData, setFormData] = useState(defaultOffer)
-    const [showPreview, setShowPreview] = useState(false)
+    const { dir } = useRTL()
+    const [formData, setFormData] = useState(() => mapOfferToForm(offer))
+    const [showPreview, setShowPreview] = useState(true)
+    const nameRef = useRef(null)
+    const returnFocus = useRef(document.activeElement)
+    const formId = useId()
+    const hasCoupon = Boolean(formData.couponCode.trim())
+    const helperKey = { TimeDelay: 'timeDelay', ScrollDepth: 'scrollDepth', BeforeCheckout: 'beforeCheckout' }[formData.triggerType] || 'default'
+    const change = (field, value) => setFormData(current => ({ ...current, [field]: value }))
+    const label = field => t(`SmartOfferEditor.fields.${field}`)
+    const placeholder = field => t(`SmartOfferEditor.placeholders.${field}`)
 
-    useEffect(() => {
-        if (open) {
-            setFormData(mapOfferToForm(offer))
-            setShowPreview(false)
-        }
-    }, [offer, open])
-
-    const helperText = useMemo(() => {
-        if (formData.triggerType === 'TimeDelay') {
-            return t('SmartOfferEditor.helperText.timeDelay')
-        }
-
-        if (formData.triggerType === 'ScrollDepth') {
-            return t('SmartOfferEditor.helperText.scrollDepth')
-        }
-
-        if (formData.triggerType === 'BeforeCheckout') {
-            return t('SmartOfferEditor.helperText.beforeCheckout')
-        }
-
-        return t('SmartOfferEditor.helperText.default')
-    }, [formData.triggerType, t])
-
-    if (!open) {
-        return null
-    }
-
-    const handleChange = (field, value) => {
-        setFormData((current) => ({
-            ...current,
-            [field]: value,
-        }))
-    }
-
-    const handleSubmit = (event) => {
+    const handleSubmit = event => {
         event.preventDefault()
         if (saving) return
-
         onSave({
             ...formData,
-            priority: Number.parseInt(formData.priority, 10) || 0,
-            delaySeconds: toOptionalInt(formData.delaySeconds),
-            scrollPercent: toOptionalInt(formData.scrollPercent),
-            maxDisplaysPerUser: toOptionalInt(formData.maxDisplaysPerUser),
-            couponCode: formData.couponCode?.trim()?.toUpperCase() || null,
-            couponDiscountType: formData.couponCode?.trim() ? formData.couponDiscountType : null,
-            couponDiscountValue: formData.couponCode?.trim() ? toOptionalDecimal(formData.couponDiscountValue) : null,
-            couponMinOrderAmount: formData.couponCode?.trim() ? toOptionalDecimal(formData.couponMinOrderAmount) : null,
-            couponMaxDiscountAmount: formData.couponCode?.trim() ? toOptionalDecimal(formData.couponMaxDiscountAmount) : null,
-            popupDescription: formData.popupDescription?.trim() || null,
-            imageUrl: formData.imageUrl?.trim() || null,
-            backgroundColor: formData.backgroundColor?.trim() || null,
+            name: formData.name.trim(),
+            popupTitle: formData.popupTitle.trim(),
+            buttonText: formData.buttonText.trim(),
+            priority: formData.priority === '' ? 0 : Number(formData.priority),
+            delaySeconds: optionalNumber(formData.delaySeconds),
+            scrollPercent: optionalNumber(formData.scrollPercent),
+            maxDisplaysPerUser: optionalNumber(formData.maxDisplaysPerUser),
+            couponCode: hasCoupon ? formData.couponCode.trim().toUpperCase() : null,
+            couponDiscountType: hasCoupon ? formData.couponDiscountType : null,
+            couponDiscountValue: hasCoupon ? optionalNumber(formData.couponDiscountValue) : null,
+            couponMinOrderAmount: hasCoupon ? optionalNumber(formData.couponMinOrderAmount) : null,
+            couponMaxDiscountAmount: hasCoupon ? optionalNumber(formData.couponMaxDiscountAmount) : null,
+            popupDescription: formData.popupDescription.trim() || null,
+            imageUrl: formData.imageUrl.trim() || null,
+            backgroundColor: formData.backgroundColor.trim() || null,
         })
     }
 
+    const textField = (field, labelKey = field, extra = {}) => (
+        <Field label={label(labelKey)}>
+            <input name={field} value={formData[field]} onChange={event => change(field, event.target.value)}
+                className={controlClass} placeholder={placeholder(labelKey)} {...extra} />
+        </Field>
+    )
+    const numericField = (field, labelKey = field, extra = {}) => textField(field, labelKey, { type: 'number', dir: 'ltr', min: 0, step: 1, ...extra })
+    const selectField = (field, options, optionKey, extra = {}) => (
+        <Field label={label(field)}>
+            <select name={field} value={formData[field]} onChange={event => change(field, event.target.value)} className={controlClass} {...extra}>
+                {!options.includes(formData[field]) && <option value={formData[field]} disabled>{String(formData[field])}</option>}
+                {options.map(option => <option key={option} value={option}>{t(`SmartOfferEditor.options.${optionKey}.${option}`)}</option>)}
+            </select>
+        </Field>
+    )
+
     return (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-slate-950/60 px-4 py-8 backdrop-blur-sm">
-            <div className="mx-auto max-w-6xl">
-                <div className="rounded-[32px] border border-white/10 bg-slate-950 text-white shadow-2xl">
-                    <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
-                        <div>
-                            <p className="text-xs uppercase tracking-[0.35em] text-orange-300">{t('SmartOfferEditor.badge')}</p>
-                            <h2 className="mt-2 text-2xl font-semibold">
-                                {offer
-                                    ? t('SmartOfferEditor.titles.edit')
-                                    : t('SmartOfferEditor.titles.create')}
-                            </h2>
-                            <p className="mt-1 text-sm text-slate-300">
-                                {t('SmartOfferEditor.subtitle')}
-                            </p>
+        <Dialog.Root open onOpenChange={nextOpen => { if (!nextOpen && !saving) onClose() }}>
+            <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-[80] bg-black/50" />
+                <Dialog.Content dir={dir} className="fixed left-1/2 top-1/2 z-[81] flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-white text-gray-900 shadow-xl focus:outline-none"
+                    onOpenAutoFocus={event => { event.preventDefault(); nameRef.current?.focus() }}
+                    onCloseAutoFocus={event => { event.preventDefault(); if (returnFocus.current?.isConnected) returnFocus.current.focus() }}
+                    onEscapeKeyDown={event => { if (saving) event.preventDefault() }}
+                    onPointerDownOutside={event => { if (saving) event.preventDefault() }}>
+                    <header className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-200 px-4 py-4 sm:px-6">
+                        <div className="min-w-0">
+                            <Dialog.Title className="text-xl font-bold">{t(offer ? 'SmartOfferEditor.titles.edit' : 'SmartOfferEditor.titles.create')}</Dialog.Title>
+                            <Dialog.Description className="mt-1 text-sm text-gray-500">{t('SmartOfferEditor.subtitle')}</Dialog.Description>
                         </div>
-                        <div className="flex items-center gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setShowPreview((current) => !current)}
-                                className="rounded-2xl border border-white/20 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
-                            >
-                                {showPreview
-                                    ? t('SmartOfferEditor.actions.hidePreview')
-                                    : t('SmartOfferEditor.actions.preview')}
+                        <div className="flex shrink-0 items-center gap-2">
+                            <button type="button" onClick={() => setShowPreview(current => !current)} aria-expanded={showPreview}
+                                aria-controls={`${formId}-preview`} className="btn-secondary text-sm">
+                                {t(showPreview ? 'SmartOfferEditor.actions.hidePreview' : 'SmartOfferEditor.actions.preview')}
                             </button>
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="rounded-full border border-white/15 p-2 text-xl leading-none text-slate-300 transition hover:bg-white/10"
-                                aria-label={t('SmartOfferEditor.actions.closeEditor')}
-                            >
-                                ×
-                            </button>
+                            <button type="button" onClick={() => onClose()} disabled={saving} aria-label={t('SmartOfferEditor.actions.closeEditor')}
+                                className="rounded-lg px-2 py-1 text-xl text-gray-500 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 disabled:opacity-50">×</button>
                         </div>
-                    </div>
+                    </header>
 
-                    <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
-                        <form onSubmit={handleSubmit} className="space-y-8 px-6 py-6">
-                            <fieldset disabled={saving} className="space-y-8">
-                            <section className="space-y-5">
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <Field label={t('SmartOfferEditor.fields.name')}>
-                                        <input
-                                            value={formData.name}
-                                            onChange={(event) => handleChange('name', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.name')}
-                                            required
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.status')}>
-                                        <select
-                                            value={formData.status}
-                                            onChange={(event) => handleChange('status', event.target.value)}
-                                            className="input"
-                                        >
-                                            {STATUS_OPTIONS.map((option) => (
-                                                <option key={option} value={option}>
-                                                    {t(`SmartOfferEditor.options.status.${option}`)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </Field>
-                                </div>
+                    <form id={formId} onSubmit={handleSubmit} className="flex min-h-0 flex-col">
+                        <div className={`min-h-0 overflow-y-auto ${showPreview ? 'lg:grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]' : ''}`}>
+                            <fieldset disabled={saving} className="min-w-0 space-y-6 p-4 sm:p-6">
+                                <section className="space-y-4">
+                                    <h3 className="text-base font-semibold">{t('SmartOfferEditor.sections.configuration')}</h3>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        {textField('name', 'name', { required: true, ref: nameRef })}
+                                        {selectField('status', STATUS_OPTIONS, 'status')}
+                                    </div>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        {selectField('triggerType', TRIGGER_OPTIONS, 'trigger')}
+                                        {selectField('pagesScope', PAGE_SCOPE_OPTIONS, 'pagesScope')}
+                                    </div>
+                                    <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">{t(`SmartOfferEditor.helperText.${helperKey}`)}</p>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        {numericField('priority')}
+                                        {numericField('maxDisplaysPerUser', 'maxDisplaysPerUser', { min: 1, 'aria-describedby': `${formId}-frequency` })}
+                                        {numericField('delaySeconds', 'delaySeconds', { min: formData.triggerType === 'TimeDelay' ? 1 : 0, required: formData.triggerType === 'TimeDelay' })}
+                                        {numericField('scrollPercent', 'scrollPercent', { min: 1, max: 100, required: formData.triggerType === 'ScrollDepth' })}
+                                    </div>
+                                    <p id={`${formId}-frequency`} className="text-xs text-gray-500">{t('SmartOfferEditor.notes.frequency')}</p>
+                                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                                        <input name="showOncePerSession" type="checkbox" checked={formData.showOncePerSession}
+                                            onChange={event => change('showOncePerSession', event.target.checked)} className="h-4 w-4 accent-primary-600" />
+                                        {label('showOncePerSession')}
+                                    </label>
+                                </section>
 
-                                <div className="grid gap-4 md:grid-cols-3">
-                                    <Field label={t('SmartOfferEditor.fields.triggerType')}>
-                                        <select
-                                            value={formData.triggerType}
-                                            onChange={(event) => handleChange('triggerType', event.target.value)}
-                                            className="input"
-                                        >
-                                            {TRIGGER_OPTIONS.map((option) => (
-                                                <option key={option} value={option}>
-                                                    {t(`SmartOfferEditor.options.trigger.${option}`)}
-                                                </option>
-                                            ))}
-                                        </select>
+                                <section className="space-y-4 border-t border-gray-200 pt-6">
+                                    <h3 className="text-base font-semibold">{t('SmartOfferEditor.sections.popupContentTitle')}</h3>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        {textField('popupTitle', 'title', { required: true })}
+                                        {textField('buttonText', 'buttonText', { required: true })}
+                                    </div>
+                                    <Field label={label('description')}>
+                                        <textarea name="popupDescription" value={formData.popupDescription} onChange={event => change('popupDescription', event.target.value)}
+                                            className={`${controlClass} min-h-24 resize-y`} rows={3} placeholder={placeholder('description')} />
                                     </Field>
-                                    <Field label={t('SmartOfferEditor.fields.pagesScope')}>
-                                        <select
-                                            value={formData.pagesScope}
-                                            onChange={(event) => handleChange('pagesScope', event.target.value)}
-                                            className="input"
-                                        >
-                                            {PAGE_SCOPE_OPTIONS.map((option) => (
-                                                <option key={option} value={option}>
-                                                    {t(`SmartOfferEditor.options.pagesScope.${option}`)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.priority')}>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            value={formData.priority}
-                                            onChange={(event) => handleChange('priority', event.target.value)}
-                                            className="input"
-                                        />
-                                    </Field>
-                                </div>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        <Field label={label('backgroundColor')}>
+                                            <input name="backgroundColor" dir="ltr" value={formData.backgroundColor} onChange={event => change('backgroundColor', event.target.value)} className={controlClass} placeholder={placeholder('backgroundColor')} />
+                                        </Field>
+                                        <label className="flex items-center gap-3 self-end text-sm text-gray-700">
+                                            <input type="color" aria-label={t('SmartOfferEditor.fields.colorPicker')}
+                                                value={/^#[0-9a-f]{6}$/i.test(formData.backgroundColor) ? formData.backgroundColor : '#f97316'}
+                                                onChange={event => change('backgroundColor', event.target.value)} className="h-10 w-14 rounded-lg border border-gray-300 bg-white p-1" />
+                                            {t('SmartOfferEditor.fields.colorPicker')}
+                                        </label>
+                                    </div>
+                                    {textField('imageUrl', 'imageUrl', { dir: 'ltr' })}
+                                </section>
 
-                                <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
-                                    {helperText}
-                                </div>
-
-                                <div className="grid gap-4 md:grid-cols-3">
-                                    <Field label={t('SmartOfferEditor.fields.delaySeconds')}>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            value={formData.delaySeconds}
-                                            onChange={(event) => handleChange('delaySeconds', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.delaySeconds')}
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.scrollPercent')}>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            value={formData.scrollPercent}
-                                            onChange={(event) => handleChange('scrollPercent', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.scrollPercent')}
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.maxDisplaysPerUser')}>
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            value={formData.maxDisplaysPerUser}
-                                            onChange={(event) => handleChange('maxDisplaysPerUser', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.maxDisplaysPerUser')}
-                                        />
-                                    </Field>
-                                </div>
-
-                                <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
-                                    <input
-                                        type="checkbox"
-                                        checked={formData.showOncePerSession}
-                                        onChange={(event) => handleChange('showOncePerSession', event.target.checked)}
-                                        className="h-4 w-4 rounded border-white/20 bg-transparent text-orange-400 focus:ring-orange-400"
-                                    />
-                                    {t('SmartOfferEditor.fields.showOncePerSession')}
-                                </label>
-                            </section>
-
-                            <section className="space-y-5">
-                                <div>
-                                    <p className="text-xs uppercase tracking-[0.35em] text-slate-400">{t('SmartOfferEditor.sections.popupContentBadge')}</p>
-                                    <h3 className="mt-2 text-lg font-semibold text-white">{t('SmartOfferEditor.sections.popupContentTitle')}</h3>
-                                </div>
-
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <Field label={t('SmartOfferEditor.fields.title')}>
-                                        <input
-                                            value={formData.popupTitle}
-                                            onChange={(event) => handleChange('popupTitle', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.title')}
-                                            required
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.buttonText')}>
-                                        <input
-                                            value={formData.buttonText}
-                                            onChange={(event) => handleChange('buttonText', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.buttonText')}
-                                            required
-                                        />
-                                    </Field>
-                                </div>
-
-                                <Field label={t('SmartOfferEditor.fields.description')}>
-                                    <textarea
-                                        value={formData.popupDescription}
-                                        onChange={(event) => handleChange('popupDescription', event.target.value)}
-                                        className="input min-h-[120px] resize-y"
-                                        placeholder={t('SmartOfferEditor.placeholders.description')}
-                                    />
-                                </Field>
-
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <Field label={t('SmartOfferEditor.fields.couponCode')}>
-                                        <input
-                                            value={formData.couponCode}
-                                            onChange={(event) => handleChange('couponCode', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.couponCode')}
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.couponDiscountType')}>
-                                        <select
-                                            value={formData.couponDiscountType}
-                                            onChange={(event) => handleChange('couponDiscountType', event.target.value)}
-                                            className="input"
-                                            disabled={!formData.couponCode}
-                                        >
-                                            {COUPON_DISCOUNT_OPTIONS.map((option) => (
-                                                <option key={option} value={option}>
-                                                    {t(`SmartOfferEditor.options.couponDiscountType.${option}`)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </Field>
-                                </div>
-
-                                <div className="grid gap-4 md:grid-cols-3">
-                                    <Field label={t('SmartOfferEditor.fields.discountValue')}>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            value={formData.couponDiscountValue}
-                                            onChange={(event) => handleChange('couponDiscountValue', event.target.value)}
-                                            className="input"
-                                            placeholder={
-                                                formData.couponDiscountType === 'Percentage'
-                                                    ? t('SmartOfferEditor.placeholders.discountValuePercentage')
-                                                    : t('SmartOfferEditor.placeholders.discountValueFixed')
-                                            }
-                                            disabled={!formData.couponCode}
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.minOrderAmount')}>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            value={formData.couponMinOrderAmount}
-                                            onChange={(event) => handleChange('couponMinOrderAmount', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.minOrderAmount')}
-                                            disabled={!formData.couponCode}
-                                        />
-                                    </Field>
-                                    <Field label={t('SmartOfferEditor.fields.maxDiscountAmount')}>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            value={formData.couponMaxDiscountAmount}
-                                            onChange={(event) => handleChange('couponMaxDiscountAmount', event.target.value)}
-                                            className="input"
-                                            placeholder={t('SmartOfferEditor.placeholders.maxDiscountAmount')}
-                                            disabled={!formData.couponCode}
-                                        />
-                                    </Field>
-                                </div>
-
-                                <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
-                                    {t('SmartOfferEditor.notes.couponAutoCreate')}
-                                </div>
-
-                                <div className="grid gap-4 md:grid-cols-2">
-                                    <Field label={t('SmartOfferEditor.fields.backgroundColor')}>
-                                        <div className="flex items-center gap-3">
-                                            <input
-                                                type="color"
-                                                value={formData.backgroundColor || '#f97316'}
-                                                onChange={(event) => handleChange('backgroundColor', event.target.value)}
-                                                className="h-12 w-16 rounded-2xl border border-white/15 bg-transparent"
-                                            />
-                                            <input
-                                                value={formData.backgroundColor}
-                                                onChange={(event) => handleChange('backgroundColor', event.target.value)}
-                                                className="input"
-                                                placeholder={t('SmartOfferEditor.placeholders.backgroundColor')}
-                                            />
-                                        </div>
-                                    </Field>
-                                </div>
-
-                                <Field label={t('SmartOfferEditor.fields.imageUrl')}>
-                                    <input
-                                        value={formData.imageUrl}
-                                        onChange={(event) => handleChange('imageUrl', event.target.value)}
-                                        className="input"
-                                        placeholder={t('SmartOfferEditor.placeholders.imageUrl')}
-                                    />
-                                </Field>
-                            </section>
-
-                            {error ? (
-                                <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                                    {error}
-                                </div>
-                            ) : null}
-
-                            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-white/10 pt-6">
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="rounded-2xl border border-white/15 px-5 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-                                >
-                                    {t('SmartOfferEditor.actions.cancel')}
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="rounded-2xl bg-orange-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {saving
-                                        ? t('SmartOfferEditor.actions.saving')
-                                        : offer
-                                            ? t('SmartOfferEditor.actions.saveChanges')
-                                            : t('SmartOfferEditor.actions.createOffer')}
-                                </button>
-                            </div>
+                                <section className="space-y-4 border-t border-gray-200 pt-6">
+                                    <h3 className="text-base font-semibold">{t('SmartOfferEditor.sections.coupon')}</h3>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        {textField('couponCode', 'couponCode', { dir: 'ltr' })}
+                                        {selectField('couponDiscountType', COUPON_DISCOUNT_OPTIONS, 'couponDiscountType', { disabled: !hasCoupon })}
+                                        {numericField('couponDiscountValue', 'discountValue', { min: 0.01, step: '0.01', max: formData.couponDiscountType === 'Percentage' ? 100 : undefined,
+                                            required: hasCoupon, disabled: !hasCoupon, placeholder: placeholder(formData.couponDiscountType === 'Percentage' ? 'discountValuePercentage' : 'discountValueFixed') })}
+                                        {numericField('couponMinOrderAmount', 'minOrderAmount', { step: '0.01', disabled: !hasCoupon })}
+                                        {numericField('couponMaxDiscountAmount', 'maxDiscountAmount', { step: '0.01', disabled: !hasCoupon,
+                                            min: formData.couponDiscountType === 'FixedAmount' ? formData.couponDiscountValue || 0 : 0 })}
+                                    </div>
+                                    <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">{t('SmartOfferEditor.notes.couponAutoCreate')}</p>
+                                </section>
                             </fieldset>
-                        </form>
 
-                        <aside className="border-t border-white/10 bg-white/[0.03] px-6 py-6 lg:border-l lg:border-t-0">
-                            <div className="mb-5">
-                                <p className="text-xs uppercase tracking-[0.35em] text-slate-400">{t('SmartOfferEditor.sections.previewBadge')}</p>
-                                <h3 className="mt-2 text-lg font-semibold">{t('SmartOfferEditor.sections.previewTitle')}</h3>
+                            {showPreview && <aside id={`${formId}-preview`} className="min-w-0 border-t border-gray-200 bg-gray-50 p-4 sm:p-6 lg:sticky lg:top-0 lg:self-start lg:border-s lg:border-t-0">
+                                <h3 className="mb-3 text-base font-semibold">{t('SmartOfferEditor.sections.previewTitle')}</h3>
+                                <SmartOfferPreview offer={formData} dir={dir} />
+                                <p className="mt-3 text-xs leading-5 text-gray-500">{t('SmartOfferEditor.notes.preview')}</p>
+                            </aside>}
+                        </div>
+
+                        <footer className="shrink-0 space-y-3 border-t border-gray-200 bg-white px-4 py-4 sm:px-6">
+                            {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+                            <div className="flex flex-wrap justify-end gap-3">
+                                <button type="button" onClick={() => onClose()} disabled={saving} className="btn-secondary disabled:opacity-50">{t('SmartOfferEditor.actions.cancel')}</button>
+                                <button type="submit" disabled={saving} className="btn-primary disabled:cursor-not-allowed disabled:opacity-50">
+                                    {t(saving ? 'SmartOfferEditor.actions.saving' : offer ? 'SmartOfferEditor.actions.saveChanges' : 'SmartOfferEditor.actions.createOffer')}
+                                </button>
                             </div>
-                            {showPreview ? (
-                                <SmartOfferPreview offer={formData} dir={document.documentElement.dir || 'ltr'} />
-                            ) : (
-                                <div className="rounded-3xl border border-dashed border-white/15 bg-white/[0.03] px-5 py-12 text-center text-sm text-slate-400">
-                                    {t('SmartOfferEditor.previewEmpty')}
-                                </div>
-                            )}
-                        </aside>
-                    </div>
-                </div>
-            </div>
-
-            <style>{`
-                .input {
-                    width: 100%;
-                    border-radius: 1rem;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    background: rgba(15, 23, 42, 0.42);
-                    padding: 0.85rem 1rem;
-                    color: white;
-                    outline: none;
-                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-                }
-                .input:focus {
-                    border-color: rgba(251, 146, 60, 0.8);
-                    box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.18);
-                }
-                .input::placeholder {
-                    color: rgba(203, 213, 225, 0.55);
-                }
-            `}</style>
-        </div>
+                        </footer>
+                    </form>
+                </Dialog.Content>
+            </Dialog.Portal>
+        </Dialog.Root>
     )
 }
 
 function Field({ label, children }) {
-    return (
-        <label className="block space-y-2">
-            <span className="text-sm font-medium text-slate-200">{label}</span>
-            {children}
-        </label>
-    )
+    const id = useId()
+    return <div className="min-w-0">
+        <label htmlFor={id} className="label">{label}</label>
+        {cloneElement(children, { id })}
+    </div>
 }

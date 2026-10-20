@@ -1,4 +1,5 @@
 import React from 'react';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 
 interface ImageBlockProps {
     imageUrl?: string;
@@ -24,18 +25,18 @@ const ImageBlock: React.FC<ImageBlockProps> = ({
 }) => (
     <section className="px-4 py-12">
         <figure className={`mx-auto ${maxWidthClasses[maxWidth] || maxWidthClasses.default}`}>
-            <div
+            <MediaFrame role="content"
                 className="overflow-hidden rounded-xl bg-muted/20"
-                style={{ aspectRatio: aspectRatio.replace(':', '/') }}
+                aspectRatio={['1:1', '4:3', '16:9', '21:9'].includes(aspectRatio) ? aspectRatio.replace(':', '/') : '16/9'}
             >
                 {imageUrl ? (
-                    <img src={imageUrl} alt={altText || ''} className="h-full w-full object-cover" />
+                    <OptimizedImage src={imageUrl} alt={altText || ''} className="h-full w-full object-contain" />
                 ) : (
                     <div className="flex h-full min-h-[220px] items-center justify-center text-muted">
                         Image Placeholder
                     </div>
                 )}
-            </div>
+            </MediaFrame>
             {caption ? <figcaption className="mt-3 text-center text-sm text-muted">{caption}</figcaption> : null}
         </figure>
     </section>

@@ -167,7 +167,7 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
 
     return (
         <>
-            <div className="space-y-4" data-purchase-experience={profile.variant}>
+            <div className="min-w-0 space-y-4" data-purchase-experience={profile.variant}>
                 <div className={profile.galleryShellClassName}>
                     <div
                         className="group relative overflow-hidden border border-muted/20 bg-muted/10"
@@ -258,7 +258,7 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
                                                 alt={getMediaLabel(item, productName, index)}
                                                 sizes="96px"
                                                 loading="lazy"
-                                                className="h-full w-full object-cover"
+                                                 className="h-full w-full object-contain"
                                             />
                                         ) : thumbnailUrl ? (
                                             <OptimizedImage
@@ -266,7 +266,7 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
                                                 alt={getMediaLabel(item, productName, index)}
                                                 sizes="96px"
                                                 loading="lazy"
-                                                className="h-full w-full object-cover"
+                                                 className="h-full w-full object-contain"
                                             />
                                         ) : (
                                             <video

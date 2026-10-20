@@ -81,6 +81,22 @@ public sealed class StorefrontAuthenticationLifecycleTests
     }
 
     [Fact]
+    public async Task Register_InvalidPhone_ReturnsFieldSpecific400WithoutCookies()
+    {
+        var tenantId = Guid.NewGuid();
+        var auth = new Mock<IStorefrontAuthService>();
+        auth.Setup(s => s.RegisterAsync(tenantId, It.IsAny<StorefrontRegisterRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new StorefrontAuthResult { Error = "INVALID_PHONE", Message = "Enter a valid phone number." });
+        var cookies = new Mock<IStorefrontCookieHelper>(MockBehavior.Strict);
+        var controller = Controller(tenantId, auth.Object, Mock.Of<IStorefrontAuthRateLimiter>(), cookies.Object);
+        var result = Assert.IsType<BadRequestObjectResult>(await controller.Register(new StorefrontRegisterRequest(), CancellationToken.None));
+        var error = Assert.IsType<PointOfSale.API.DTOs.Storefront.ApiErrorResponse>(result.Value);
+        Assert.Equal("INVALID_PHONE", error.Code);
+        Assert.Contains("phone", System.Text.Json.JsonSerializer.Serialize(error.Details));
+        cookies.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task LoginFailure_ClearsOlderBrowserCookiesAndMapsInfrastructureFailureTo503()
     {
         var tenantId = Guid.NewGuid();

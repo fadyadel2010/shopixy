@@ -12,7 +12,7 @@ const CategoryGrid: React.FC<CategoryGridProps> = ({ categoryGridModel: model })
     }
 
     return (
-        <section className="bg-white py-14 sm:py-20">
+        <section className="bg-background py-14 sm:py-20">
             <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                 <ThemeSectionHeader
                     themeId="sharp"

@@ -51,12 +51,9 @@ public sealed partial class AdminOrderListPostgresTests
                 },
                 "admin-order-list-postgres");
 
-            Assert.Equal(1, result.TotalCount);
-            var storefrontOrder = Assert.Single(result.Items, item => item.OrderId == orderId);
-            Assert.Equal(tenantId, storefrontOrder.TenantId);
-            Assert.Equal($"ORD-TEST-{orderId:N}", storefrontOrder.OrderNumber);
-            Assert.Equal(PaymentStatus.AwaitingVerification, storefrontOrder.PaymentStatus);
-            Assert.False(storefrontOrder.IsMarketplaceOrder);
+            Assert.Equal(0, result.TotalCount);
+            Assert.Empty(result.Items);
+            Assert.NotNull(await service.GetOrderDetailsAsync(tenantId, orderId, "pending-wallet-audit"));
 
             Assert.DoesNotContain(result.Items, item => item.OrderId == subOrderId);
 
@@ -94,6 +91,7 @@ public sealed partial class AdminOrderListPostgresTests
             order.OrderNumber = $"ORD-AFFILIATE-{orderId:N}";
             order.Status = OrderStatus.Processing;
             order.PaymentStatus = PaymentStatus.Pending;
+            order.PaymentMethodCode = "COD"; // unpaid COD, unlike wallet, is actionable
             order.AffiliateAccountId = Guid.NewGuid();
             order.AffiliateReferralCode = "AFFILIATE-TEST";
 

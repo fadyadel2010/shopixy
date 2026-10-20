@@ -1,11 +1,13 @@
 import React from 'react';
+import type { HeroBannerProps } from '@/components/sections/heroBannerTypes';
+import { OptimizedImage } from '@/components/media';
 import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
 const heightClasses: Record<string, string> = {
-    small: 'min-h-[70vh]',
-    medium: 'min-h-[88vh]',
-    large: 'min-h-screen',
+    small: 'min-h-[min(480px,65svh)]',
+    medium: 'min-h-[min(640px,75svh)]',
+    large: 'min-h-[min(760px,85svh)]',
 };
 
 const alignmentClasses: Record<string, string> = {
@@ -14,7 +16,7 @@ const alignmentClasses: Record<string, string> = {
     right: 'items-end text-right',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -24,12 +26,12 @@ const HeroBanner: React.FC<any> = ({
     overlayOpacity,
     textColor,
     alignment,
-    height,
+    height = 'medium',
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 45), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.left;
+    const resolvedAlignmentClass = alignmentClasses[alignment || 'left'] || alignmentClasses.left;
     return (
         <section
             className={`relative isolate overflow-hidden ${resolvedHeightClass}`}
@@ -40,7 +42,7 @@ const HeroBanner: React.FC<any> = ({
         >
             <div className="absolute inset-0">
                 {backgroundImage ? (
-                    <img
+                    <OptimizedImage loading="eager"
                         src={backgroundImage}
                         alt={title || ''}
                         className="h-full w-full object-cover"

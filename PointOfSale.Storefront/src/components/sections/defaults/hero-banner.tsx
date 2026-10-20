@@ -1,6 +1,7 @@
 import React from 'react';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import { useTranslation } from '@/i18n';
+import type { HeroBannerProps } from '../heroBannerTypes';
 
 const heightClasses: Record<string, string> = {
     small: 'min-h-[360px]',
@@ -14,7 +15,7 @@ const alignmentClasses: Record<string, string> = {
     right: 'items-end text-right',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -28,8 +29,8 @@ const HeroBanner: React.FC<any> = ({
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 45), 0), 100) / 100;
-    const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.center;
+    const resolvedHeightClass = heightClasses[height || ''] || heightClasses.medium;
+    const resolvedAlignmentClass = alignmentClasses[alignment || ''] || alignmentClasses.center;
     return (
         <section
             className="relative isolate overflow-hidden px-6"
@@ -62,7 +63,7 @@ const HeroBanner: React.FC<any> = ({
                 {ctaText && (
                     <AffiliateLink
                         href={ctaLink || '/products'}
-                        className="inline-block rounded-full bg-primary px-8 py-3 font-semibold text-white transition-opacity hover:opacity-90"
+                        className="inline-block rounded-full bg-primary px-8 py-3 font-semibold text-on-primary transition-opacity hover:opacity-90"
                     >
                         {ctaText}
                     </AffiliateLink>

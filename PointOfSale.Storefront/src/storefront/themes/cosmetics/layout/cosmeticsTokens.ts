@@ -7,5 +7,5 @@ export const COSMETICS_NAV_LINK = `${COSMETICS_FONT} text-[13px] font-medium upp
 
 export function cosmeticsNavLinkClass(isActive: boolean): string {
     const base = `${COSMETICS_NAV_LINK} transition-opacity duration-200`;
-    return isActive ? `${base} text-[#D05D61]` : `${base} text-white/90 hover:opacity-70`;
+    return isActive ? `${base} text-primary-text underline underline-offset-4` : `${base} text-text hover:text-primary-text`;
 }

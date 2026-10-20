@@ -1,7 +1,11 @@
 import React from 'react';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 
-const BannerSection: React.FC<any> = ({
+const BannerSection: React.FC<{
+    title?: string; subtitle?: string; ctaText?: string; ctaLink?: string;
+    imageUrl?: string; backgroundImage?: string;
+}> = ({
     title,
     subtitle,
     ctaText,
@@ -39,9 +43,9 @@ const BannerSection: React.FC<any> = ({
                             ) : null}
                         </div>
 
-                        <div className="overflow-hidden rounded-[24px] border border-white/15 bg-white/10 lg:w-[20rem]">
+                        <MediaFrame role="banner" className="rounded-[24px] border border-white/15 bg-white/10 lg:w-[20rem]">
                             {artwork ? (
-                                <img
+                                <OptimizedImage
                                     src={artwork}
                                     alt={title || 'Banner artwork'}
                                     className="h-48 w-full object-cover"
@@ -51,7 +55,7 @@ const BannerSection: React.FC<any> = ({
                                     Campaign artwork
                                 </div>
                             )}
-                        </div>
+                        </MediaFrame>
                     </div>
                 </div>
             </div>

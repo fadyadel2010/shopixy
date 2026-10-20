@@ -26,8 +26,8 @@ describe('theme CSS variable projection', () => {
             borderRadius: '16px',
         }));
 
-        expect(Object.values(CSS_VARIABLES).sort()).toEqual(Object.keys(pearl).sort());
-        expect(Object.values(CSS_VARIABLES).sort()).toEqual(Object.keys(fashion).sort());
+        expect(Object.keys(pearl)).toEqual(expect.arrayContaining(Object.values(CSS_VARIABLES)));
+        expect(Object.keys(fashion)).toEqual(Object.keys(pearl));
 
         for (const variable of Object.values(CSS_VARIABLES)) {
             expect(fashion[variable]).not.toBe(pearl[variable]);

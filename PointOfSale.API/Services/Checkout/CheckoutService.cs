@@ -55,6 +55,7 @@ using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Discounts;
 using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Infrastructure.Services;
+using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Shipping;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -279,6 +280,7 @@ public class CheckoutService : ICheckoutService
     
     // Row-level locking requirement for promotion capacity
     private readonly bool _requireRowLevelLocking;
+    private readonly IServiceScopeFactory? _scopeFactory;
 
     // =============================================================================
     // CHECKOUT CONFIGURATION CONSTANTS
@@ -288,7 +290,6 @@ public class CheckoutService : ICheckoutService
     /// Inventory reservation TTL in minutes
     /// </summary>
     private const int InventoryReservationTtlMinutes = 10;
-    private const int CheckoutAuthorityCommitMaxRetries = 3;
 
     /// <summary>
     /// Price change threshold percentage for rejection
@@ -334,8 +335,10 @@ public class CheckoutService : ICheckoutService
         IStorefrontPhoneVerificationService? phoneVerificationService = null,
         CommerceReliabilityTelemetry? reliabilityTelemetry = null,
         IAddressAdmissionService? addressAdmissionService = null,
-        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
+        _scopeFactory = scopeFactory;
         // CRITICAL: Purpose string MUST match PaymentMethodsAdminController.DataProtectionPurpose
         _dataProtector = dataProtectionProvider.CreateProtector("PaymentMethodSecrets");
         _clientSecretProtector = clientSecretProtector;
@@ -1382,6 +1385,33 @@ public class CheckoutService : ICheckoutService
                 // CRITICAL: Order transaction is now committed. Set flag to prevent compensation.
                 orderCommitted = true;
 
+                // Reload in this unit of work: attaching a transferred aggregate
+                // loses PostgreSQL's shadow xmin token and makes its first update
+                // look like a concurrency conflict despite the successful commit.
+                order = await _dbContext.Orders
+                    .Include(item => item.Items)
+                    .Include(item => item.CheckoutFieldSnapshots)
+                    .SingleAsync(item => item.Id == persistedOrderId && item.TenantId == tenantId && !item.IsDeleted,
+                        cancellationToken);
+
+                if (orderCreationResult.InventoryReservation is { } committedReservation &&
+                    HasPhysicalInventoryReservation(committedReservation.ReservedItems))
+                {
+                    try
+                    {
+                        await DispatchPersistedInventoryReservedOutboxAsync(
+                            tenantId, order.Id, committedReservation.ReservationId,
+                            requestId, correlationId, cancellationToken);
+                    }
+                    catch (CheckoutPostCommitConsistencyException) { throw; }
+                    catch (Exception dispatchException)
+                    {
+                        _logger.LogError(dispatchException,
+                            "Committed inventory reservation remains queued for outbox dispatch | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
+                            order.Id, correlationId);
+                    }
+                }
+
                 steps.Add(new CheckoutStepResult
                 {
                     StepName = "OrderCreation",
@@ -1394,6 +1424,7 @@ public class CheckoutService : ICheckoutService
                     order.Id, order.OrderNumber, order.Total, correlationId);
 
             }
+            catch (CheckoutPostCommitConsistencyException) { throw; }
             catch (CheckoutTotalMismatchException)
             {
                 // CheckoutTotalMismatchException from EnsureExpectedPricingMatches must propagate
@@ -1448,6 +1479,11 @@ public class CheckoutService : ICheckoutService
                     request.CartId, correlationId);
 
                 // Preserve DomainGuardException for middleware to handle with structured error response
+                if (ex is CouponAuthorityException couponFailure)
+                {
+                    throw new CheckoutCouponException(couponFailure.ErrorCode, couponFailure.Message, couponFailure);
+                }
+
                 if (ex is DomainGuardException)
                 {
                     throw;
@@ -1642,23 +1678,9 @@ public class CheckoutService : ICheckoutService
             }
             else
             {
-                // Generic handling for other methods (e.g. COD)
-                paymentReference = GeneratePaymentReference(order.Id);
-
-                // Update order with payment reference
-                order.PaymentReference = paymentReference;
-                order.TransitionCheckoutState(CheckoutState.PaymentPending);
-
-                // Add outbox message BEFORE SaveChangesAsync to ensure atomic commit
-                await EmitPaymentIntentCreatedEventAsync(
-                    tenantId, order.Id, request.CartId, order.OrderNumber,
-                    paymentReference, paymentMethod.Code, order.Total, order.Currency,
-                    redirectUrl, context.PromotionCalculationFailed, requestId, correlationId,
-                    ProductEventVersionHelper.ToProductEventVersion(order.ProjectionMutationVersion + 1),
-                    cancellationToken);
-
-                // Persist state change and outbox message atomically
-                await _dbContext.SaveChangesAsync(cancellationToken);
+                // Offline checkout is already ready in the order transaction.
+                // No wallet admission, gateway call, or second COD save is needed.
+                paymentReference = order.PaymentReference;
             }
 
             if (order.CheckoutState == CheckoutState.PendingPaymentIntent)
@@ -3152,7 +3174,7 @@ public class CheckoutService : ICheckoutService
         // Non-terminal orders: proceed with payment intent operations
         var paymentIntent = await LoadLatestPaymentIntentAsync(tenantId, orderId, cancellationToken);
 
-        if (paymentIntent == null)
+        if (paymentIntent == null || IsIncompleteManualWalletIntent(paymentIntent))
         {
             paymentIntent = await EnsureReplayPaymentIntentAsync(
                 tenantId,
@@ -3389,7 +3411,8 @@ public class CheckoutService : ICheckoutService
         var paymentMethodCode = order.PaymentMethodCode?.Trim().ToUpperInvariant();
 
         // Ensure PaymentIntent exists if order is in PendingPaymentIntent state
-        if (paymentIntent == null && order.CheckoutState == CheckoutState.PendingPaymentIntent)
+        if ((paymentIntent == null || IsIncompleteManualWalletIntent(paymentIntent)) &&
+            order.CheckoutState == CheckoutState.PendingPaymentIntent)
         {
             paymentIntent = await EnsureReplayPaymentIntentAsync(
                 tenantId,
@@ -3650,6 +3673,9 @@ public class CheckoutService : ICheckoutService
         };
     }
 
+    private static bool IsIncompleteManualWalletIntent(PaymentIntent paymentIntent) =>
+        paymentIntent.Provider == PaymentProvider.ManualWallet && paymentIntent.Status == PaymentIntentStatus.Pending;
+
     private async Task<PaymentIntent?> EnsureReplayPaymentIntentAsync(
         Guid tenantId,
         Order order,
@@ -3708,6 +3734,22 @@ public class CheckoutService : ICheckoutService
                 // Replay must not initiate provider execution.
                 throw new CheckoutFawryFinancialAuthorityException(paymentMethodCode);
             case "MANUALWALLET":
+                var persistedManualIntent = await LoadLatestPaymentIntentAsync(tenantId, order.Id, cancellationToken);
+                if (persistedManualIntent != null && IsIncompleteManualWalletIntent(persistedManualIntent))
+                {
+                    // The committed intent already owns the admitted proof. Order
+                    // conversion may have cleared/replaced the checkout-session
+                    // draft; do not require re-upload or trust a new request proof.
+                    // PaymentService re-locks the order and admits durable evidence
+                    // for this exact tenant/order/intent/amount/currency/proof.
+                    await CreateCheckoutPaymentSessionAsync(
+                        tenantId, order, paymentMethodCode, null, customerId,
+                        order.PromotionCalculationFailed, checkoutId, correlationId,
+                        persistedManualIntent.WalletType, persistedManualIntent.WalletPhoneNumber,
+                        persistedManualIntent.ProofImageUrl, cancellationToken);
+                    return await LoadLatestPaymentIntentAsync(tenantId, order.Id, cancellationToken);
+                }
+
                 // Resolve wallet details first to check configuration before creating intent
                 var walletDetails = await ResolveManualWalletDetailsAsync(
                     tenantId,
@@ -3778,88 +3820,14 @@ public class CheckoutService : ICheckoutService
                 }
                 break;
             default:
-                // Generic payment methods (COD, etc.) - check if order is stuck in PendingPaymentIntent
-                // without corresponding outbox entry and recreate it for self-healing
-                if (order.CheckoutState == CheckoutState.PendingPaymentIntent && 
-                    !string.IsNullOrWhiteSpace(order.PaymentReference))
+                if (order.CheckoutState == CheckoutState.PendingPaymentIntent)
                 {
-                    // Check if outbox entry exists
-                    var outboxMessageId = CreateDeterministicOutboxMessageId(
-                        nameof(PaymentIntentCreatedEvent),
-                        tenantId,
-                        order.Id,
-                        order.PaymentReference,
-                        checkoutId);
-
-                    var outboxExists = await _dbContext.OutboxMessages
-                        .AsNoTracking()
-                        .AnyAsync(message => message.Id == outboxMessageId, cancellationToken);
-
-                    if (!outboxExists)
-                    {
-                        _logger.LogWarning(
-                            "Order stuck in PendingPaymentIntent without outbox entry, recreating | TenantId: {TenantId} | OrderId: {OrderId} | PaymentReference: {PaymentReference}",
-                            tenantId,
-                            order.Id,
-                            order.PaymentReference);
-
-                        // Recreate the outbox entry idempotently using EmitPaymentIntentCreatedEventAsync
-                        // Use CartId from order if available, otherwise use order.Id as fallback
-                        var cartId = order.CartId ?? order.Id;
-                        
-                        await EmitPaymentIntentCreatedEventAsync(
-                            tenantId,
-                            order.Id,
-                            cartId,
-                            order.OrderNumber,
-                            order.PaymentReference,
-                            order.PaymentMethodCode ?? "UNKNOWN",
-                            order.Total,
-                            order.Currency,
-                            redirectUrl: null, // Not available during replay
-                            promotionCalculationFailed: order.PromotionCalculationFailed, // Use persisted value
-                            checkoutId, // Use checkoutId as requestId for idempotency
-                            correlationId,
-                            ProductEventVersionHelper.ToProductEventVersion(Math.Max(1L, order.ProjectionMutationVersion)),
-                            cancellationToken);
-
-                        // Persist the outbox entry
-                        try
-                        {
-                            await _dbContext.SaveChangesAsync(cancellationToken);
-                        }
-                        catch (DbUpdateException ex) when (IsDuplicateOutboxMessageUniqueViolation(ex))
-                        {
-                            // Race condition: another thread created the outbox entry
-                            _logger.LogInformation(
-                                "Outbox entry already created by concurrent request | TenantId: {TenantId} | OrderId: {OrderId} | OutboxMessageId: {OutboxMessageId}",
-                                tenantId,
-                                order.Id,
-                                outboxMessageId);
-                        }
-
-                        // Verify outbox entry exists after save
-                        var outboxCreated = await _dbContext.OutboxMessages
-                            .AsNoTracking()
-                            .AnyAsync(message => message.Id == outboxMessageId, cancellationToken);
-
-                        if (outboxCreated)
-                        {
-                            _logger.LogInformation(
-                                "Successfully recreated PaymentIntentCreatedEvent outbox entry | TenantId: {TenantId} | OrderId: {OrderId} | OutboxMessageId: {OutboxMessageId}",
-                                tenantId,
-                                order.Id,
-                                outboxMessageId);
-                        }
-                        else
-                        {
-                            _logger.LogError(
-                                "Failed to create outbox entry after save | TenantId: {TenantId} | OrderId: {OrderId} | OutboxMessageId: {OutboxMessageId}",
-                                tenantId,
-                                order.Id,
-                                outboxMessageId);
-                        }
-                    }
+                    // Resume the existing order even when the interrupted request
+                    // never saved a reference. Do not create another order/intent.
+                    var recovered = await ResumeOfflineCheckoutAsync(
+                        tenantId, order.Id, order.CartId ?? request.CartId, checkoutId, correlationId, cancellationToken);
+                    order.PaymentReference = recovered.PaymentReference;
+                    order.TransitionCheckoutState(recovered.CheckoutState);
                 }
                 return null;
         }
@@ -4046,6 +4014,55 @@ public class CheckoutService : ICheckoutService
         return ex is CheckoutManualWalletNotConfiguredException
             or PaymentManualWalletNotConfiguredException
             or PaymentProviderNotSupportedException;
+    }
+
+    private async Task<(string? PaymentReference, CheckoutState CheckoutState)> ResumeOfflineCheckoutAsync(
+        Guid tenantId, Guid orderId, Guid cartId, string checkoutId, string correlationId,
+        CancellationToken cancellationToken, bool isolatedAttempt = false)
+    {
+        if (!isolatedAttempt && _scopeFactory != null)
+        {
+            return await CheckoutOrderCommitRetry.ExecuteAsync(async () =>
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                scope.ServiceProvider.GetRequiredService<TenantContext>().SetTenantId(tenantId);
+                var service = (CheckoutService)scope.ServiceProvider.GetRequiredService<ICheckoutService>();
+                return await service.ResumeOfflineCheckoutAsync(tenantId, orderId, cartId,
+                    checkoutId, correlationId, cancellationToken, isolatedAttempt: true);
+            }, (exception, number) => _logger.LogWarning(exception,
+                "Retrying local offline checkout recovery | OrderId: {OrderId} | Attempt: {Attempt}", orderId, number),
+                cartId, correlationId, cancellationToken);
+        }
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var order = await OrderLockingHelper.LoadOrderWithLockAsync(_dbContext, tenantId, orderId, cancellationToken)
+                ?? throw new PaymentOrderNotFoundException(orderId);
+            if (PaymentMethodUsesProviderGateway(order.PaymentMethodCode))
+                throw new PaymentMismatchException("PaymentMethod", "offline", order.PaymentMethodCode ?? "missing");
+
+            if (order.CheckoutState == CheckoutState.PendingPaymentIntent)
+            {
+                if (order.Status != OrderStatus.Pending || order.PaymentStatus != PaymentStatus.Pending)
+                    throw new PaymentOrderInvalidStateException(orderId, order.Status.ToString(), "Pending", "PAYMENT_ALREADY_FINALIZED");
+                await CheckoutInventoryAuthorityGuard.EnsureStorefrontOrderReservationsActiveAsync(_dbContext, order, cancellationToken);
+                order.PaymentReference ??= GeneratePaymentReference(order.Id);
+                order.TransitionCheckoutState(CheckoutState.PaymentPending);
+                await EmitPaymentIntentCreatedEventAsync(tenantId, order.Id, cartId, order.OrderNumber,
+                    order.PaymentReference, order.PaymentMethodCode!, order.Total, order.Currency,
+                    null, order.PromotionCalculationFailed, checkoutId, correlationId,
+                    ProductEventVersionHelper.ToProductEventVersion(order.ProjectionMutationVersion + 1), cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+            await transaction.CommitAsync(cancellationToken);
+            return (order.PaymentReference, order.CheckoutState);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     private static bool IsPostCommitPaymentRecoveryResponseSafe(CheckoutResponseDto response)
@@ -4772,38 +4789,7 @@ public class CheckoutService : ICheckoutService
     }
 
     private static bool IsCheckoutTransactionSerializationFailure(Exception exception)
-    {
-        var current = exception;
-        while (current != null)
-        {
-            if (current is PostgresException postgresException)
-            {
-                return postgresException.SqlState is PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.DeadlockDetected;
-            }
-
-            if (current.GetType().FullName == "Microsoft.Data.SqlClient.SqlException" &&
-                current.GetType().GetProperty("Number")?.GetValue(current) is int sqlNumber)
-            {
-                return sqlNumber == 1205;
-            }
-
-            if (current is DbUpdateException dbUpdateException && dbUpdateException.InnerException != null)
-            {
-                if (IsCheckoutTransactionSerializationFailure(dbUpdateException.InnerException))
-                {
-                    return true;
-                }
-            }
-
-            current = current.InnerException;
-        }
-
-        var message = exception.InnerException?.Message ?? exception.Message;
-        return message.Contains("40001", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("serialization failure", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("40P01", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("deadlock", StringComparison.OrdinalIgnoreCase);
-    }
+        => CheckoutOrderCommitRetry.IsRetryable(exception);
 
     private static void ApplyPersistedCouponState(CartDto cart, StorefrontCartCouponState? persistedState)
     {
@@ -5559,8 +5545,8 @@ public class CheckoutService : ICheckoutService
                         cancellationToken);
                 }
 
-                throw new CheckoutCartInvalidException(
-                    cartId,
+                throw new CheckoutCouponException(
+                    couponValidation.ErrorCode ?? PointOfSale.Core.Discounts.CouponErrorCodes.Invalid,
                     couponValidation.ErrorMessage ?? "Applied coupon is invalid.");
             }
 
@@ -6559,8 +6545,30 @@ public class CheckoutService : ICheckoutService
         CancellationToken cancellationToken,
         ICollection<CheckoutStepResult>? steps = null,
         Stopwatch? stopwatch = null,
-        Action<string>? activeStepTracker = null)
+        Action<string>? activeStepTracker = null,
+        bool isolatedAttempt = false)
     {
+        if (!isolatedAttempt && _scopeFactory != null)
+        {
+            // EF Clear() does not reset MassTransit's scoped bus-outbox identity.
+            // Both the initial commit and each rolled-back retry need fresh scoped
+            // dependencies. No provider execution or post-commit work runs here.
+            return await CheckoutOrderCommitRetry.ExecuteAsync(async () =>
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                scope.ServiceProvider.GetRequiredService<TenantContext>().SetTenantId(tenantId);
+                var service = (CheckoutService)scope.ServiceProvider.GetRequiredService<ICheckoutService>();
+                return await service.CreateOrderAsync(
+                    orderId, tenantId, customerId, ownerId, ownerType, sessionId,
+                    snapshot, request, shippingMethod, paymentMethod, admittedGeography,
+                    manualWalletProofFileKey, promotionCalculationFailed, idempotencyRecord,
+                    requestId, correlationId, cancellationToken, steps, stopwatch,
+                    activeStepTracker, isolatedAttempt: true);
+            }, (exception, number) => _logger.LogWarning(exception,
+                "Retrying isolated checkout order commit | TenantId: {TenantId} | CartId: {CartId} | Attempt: {Attempt} | CorrelationId: {CorrelationId}",
+                tenantId, request.CartId, number, correlationId), request.CartId, correlationId, cancellationToken);
+        }
+
         var pricing = await _storefrontPricingService.CalculateCheckoutAsync(
             tenantId,
             snapshot,
@@ -6929,11 +6937,6 @@ public class CheckoutService : ICheckoutService
             order.Items.Add(orderItem);
         }
 
-        for (var attempt = 1; attempt <= CheckoutAuthorityCommitMaxRetries; attempt++)
-        {
-        couponReservationDecision = CouponReservationDecision.None();
-        offerReservationCreated = false;
-
         // Save to database inside the checkout transaction
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
@@ -7096,6 +7099,18 @@ public class CheckoutService : ICheckoutService
                 manualWalletProofFileKey,
                 correlationId,
                 cancellationToken);
+
+            if (!PaymentMethodUsesProviderGateway(paymentMethod.Code))
+            {
+                order.PaymentReference = GeneratePaymentReference(order.Id);
+                order.TransitionCheckoutState(CheckoutState.PaymentPending);
+                await EmitPaymentIntentCreatedEventAsync(
+                    tenantId, order.Id, request.CartId, order.OrderNumber,
+                    order.PaymentReference, paymentMethod.Code, order.Total, order.Currency,
+                    redirectUrl: null, promotionCalculationFailed, requestId, correlationId,
+                    ProductEventVersionHelper.ToProductEventVersion(order.ProjectionMutationVersion + 1),
+                    cancellationToken);
+            }
 
             // ═══════════════════════════════════════════════════════════════════
             // AF-11: CREATE ATTRIBUTION INLINE (same transaction as order)
@@ -7291,33 +7306,13 @@ public class CheckoutService : ICheckoutService
                 }
             }
 
-            if (IsCheckoutTransactionSerializationFailure(originalException))
+            if (!isolatedAttempt && IsCheckoutTransactionSerializationFailure(originalException))
             {
+                // Directly constructed hosts without a scope factory fail closed;
+                // never reuse their publisher after rolling back a transaction.
                 _dbContext.ChangeTracker.Clear();
-
-                if (attempt < CheckoutAuthorityCommitMaxRetries)
-                {
-                    ResetOrderNavigationStateForRetry(order);
-
-                    _logger.LogWarning(
-                        originalException,
-                        "Retrying storefront checkout authority commit after serializable race | TenantId: {TenantId} | CartId: {CartId} | OrderId: {OrderId} | Attempt: {Attempt}/{MaxAttempts} | CorrelationId: {CorrelationId}",
-                        tenantId,
-                        request.CartId,
-                        order.Id,
-                        attempt,
-                        CheckoutAuthorityCommitMaxRetries,
-                        correlationId);
-
-                    await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
-                    continue;
-                }
-
                 throw new CheckoutConcurrencyConflictException(
-                    request.CartId,
-                    correlationId,
-                    attempt,
-                    originalException);
+                    request.CartId, correlationId, 1, originalException);
             }
 
             throw;
@@ -7329,34 +7324,6 @@ public class CheckoutService : ICheckoutService
         // idempotency state or trigger rollback logic if they fail.
         // ═══════════════════════════════════════════════════════════════════
         
-        // External side effects stay post-commit. InventoryReservedEvent is already durably queued in the outbox.
-        if (inventoryReservation != null && HasPhysicalInventoryReservation(inventoryReservation.ReservedItems))
-        {
-            try
-            {
-                await DispatchPersistedInventoryReservedOutboxAsync(
-                    tenantId,
-                    order.Id,
-                    inventoryReservation.ReservationId,
-                    requestId,
-                    correlationId,
-                    cancellationToken);
-            }
-            catch (CheckoutPostCommitConsistencyException)
-            {
-                // Rethrow consistency exceptions - these indicate critical issues like missing outbox rows
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "Failed to dispatch persisted InventoryReservedEvent post-commit (non-fatal) | OrderId: {OrderId} | ReservationId: {ReservationId} | CorrelationId: {CorrelationId}",
-                    order.Id, inventoryReservation.ReservationId, correlationId);
-                // Don't rethrow - order is already committed, and this is a best-effort operation
-            }
-
-        }
-
         _logger.LogInformation(
             "Order created; shipment orchestration deferred until authoritative confirmation/payment | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
             order.Id,
@@ -7385,34 +7352,7 @@ public class CheckoutService : ICheckoutService
                 correlationId);
         }
 
-            return new OrderCreationResult(order, inventoryReservation);
-        }
-
-        throw new CheckoutConcurrencyConflictException(
-            request.CartId,
-            correlationId,
-            CheckoutAuthorityCommitMaxRetries);
-    }
-
-    private static void ResetOrderNavigationStateForRetry(Order order)
-    {
-        // Clear can detach EF's identity map while leaving relationship-fixup references
-        // on this retained aggregate. A retry must reload those principals as new authority.
-        order.Customer = null;
-        order.OnlineCustomer = null;
-        order.ShippingMethod = null;
-        order.Coupon = null;
-        order.AppliedPromotion = null;
-        order.Warehouse = null;
-
-        foreach (var orderItem in order.Items)
-        {
-            orderItem.Order = order;
-            orderItem.Product = null!;
-            orderItem.Variant = null;
-            orderItem.Unit = null;
-            orderItem.Warehouse = null;
-        }
+        return new OrderCreationResult(order, inventoryReservation);
     }
 
     private static IReadOnlyList<decimal> AllocateAmountsByLineSubtotal(

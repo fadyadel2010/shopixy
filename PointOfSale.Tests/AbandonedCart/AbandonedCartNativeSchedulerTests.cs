@@ -18,20 +18,16 @@ namespace PointOfSale.Tests.AbandonedCart;
 
 public sealed class AbandonedCartNativeSchedulerTests
 {
-    private static readonly DateTime NowUtc = new(2026, 9, 30, 10, 0, 0, DateTimeKind.Utc);
+    // A controlled clock predating merchant schedules prevents the global worker
+    // query from admitting existing application rows. The fixture also checks it.
+    private static readonly DateTime NowUtc = new(2001, 1, 1, 10, 0, 0, DateTimeKind.Utc);
 
-    [Fact]
+    [NativeSchedulerConfiguredFact]
     public async Task ScheduleAsync_WhenDiscoveryIsReplayed_PersistsOneDeterministicSchedule()
     {
-        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||
-            databaseScope is null ||
-            tenantContext is null)
-        {
-            return;
-        }
-
-        await using var scope = databaseScope;
-        await using var context = scope.CreateDbContext(tenantContext);
+        await using var scope = await NativeSchedulerConfiguredScope.OpenAsync(NowUtc);
+        var context = scope.Context;
+        var tenantId = scope.TenantId;
         var cart = await SeedCartAsync(context, tenantId, AbandonedCartRecoveryStatus.Abandoned);
         var harness = new SchedulerHarness(context, tenantId);
         var message = new TriggerRecoveryEvent
@@ -46,7 +42,7 @@ public sealed class AbandonedCartNativeSchedulerTests
 
         var schedule = Assert.Single(await context.AbandonedCartRecoveryLogs
             .IgnoreQueryFilters()
-            .AsNoTracking()
+            .AsNoTracking().Where(item => item.TenantId == tenantId)
             .ToListAsync());
         Assert.Equal($"native-recovery:{tenantId:N}:{cart.CartId:N}", schedule.IdempotencyKey);
         Assert.Equal(NowUtc, schedule.FirstMessageDueAtUtc);
@@ -55,18 +51,12 @@ public sealed class AbandonedCartNativeSchedulerTests
         Assert.Equal("UTC", schedule.TimeZoneId);
     }
 
-    [Fact]
+    [NativeSchedulerConfiguredFact]
     public async Task DispatchDueAsync_WhenExpiredLeaseReachesRetryLimit_FailsScheduleAndCartRetry()
     {
-        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||
-            databaseScope is null ||
-            tenantContext is null)
-        {
-            return;
-        }
-
-        await using var scope = databaseScope;
-        await using var context = scope.CreateDbContext(tenantContext);
+        await using var scope = await NativeSchedulerConfiguredScope.OpenAsync(NowUtc);
+        var context = scope.Context;
+        var tenantId = scope.TenantId;
         var cart = await SeedCartAsync(context, tenantId, AbandonedCartRecoveryStatus.Abandoned);
         var schedule = await SeedScheduleAsync(
             context,
@@ -105,18 +95,12 @@ public sealed class AbandonedCartNativeSchedulerTests
             Times.Once);
     }
 
-    [Fact]
+    [NativeSchedulerConfiguredFact]
     public async Task DispatchDueAsync_WhenFirstMessageIsSent_ConfirmsCartAndSchedulesFollowUp()
     {
-        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||
-            databaseScope is null ||
-            tenantContext is null)
-        {
-            return;
-        }
-
-        await using var scope = databaseScope;
-        await using var context = scope.CreateDbContext(tenantContext);
+        await using var scope = await NativeSchedulerConfiguredScope.OpenAsync(NowUtc);
+        var context = scope.Context;
+        var tenantId = scope.TenantId;
         var cart = await SeedCartAsync(context, tenantId, AbandonedCartRecoveryStatus.Abandoned);
         var schedule = await SeedScheduleAsync(context, cart, AbandonedCartMessageStatus.Scheduled);
         var harness = new SchedulerHarness(context, tenantId);
@@ -170,18 +154,12 @@ public sealed class AbandonedCartNativeSchedulerTests
             Times.Once);
     }
 
-    [Fact]
+    [NativeSchedulerConfiguredFact]
     public async Task RecordTriggerFailureAsync_WhenCartIsAbandoned_MakesRetryExhaustionTerminal()
     {
-        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||
-            databaseScope is null ||
-            tenantContext is null)
-        {
-            return;
-        }
-
-        await using var scope = databaseScope;
-        await using var context = scope.CreateDbContext(tenantContext);
+        await using var scope = await NativeSchedulerConfiguredScope.OpenAsync(NowUtc);
+        var context = scope.Context;
+        var tenantId = scope.TenantId;
         var cart = await SeedCartAsync(context, tenantId, AbandonedCartRecoveryStatus.Abandoned);
         var service = new AbandonedCartService(
             context,

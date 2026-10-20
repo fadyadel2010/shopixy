@@ -254,12 +254,17 @@ const createHttpClient = (): AxiosInstance => {
                 // During bootstrap, only tenant might not be set yet
                 // The bootstrap flow handles this case
                 if (import.meta.env.DEV) {
-                    console.warn('[HTTP] Could not attach headers:', error);
+                    console.warn('[HTTP] Could not attach request context', {
+                        isTransportError: axios.isAxiosError(error),
+                    });
                 }
             }
 
             if (import.meta.env.DEV) {
-                console.log(`[HTTP] ${config.method?.toUpperCase()} ${config.url}`, {
+                // Recovery URLs, auth query strings and provider text may carry
+                // credentials. Diagnostics must not serialize them or config.
+                console.log('[HTTP] Request', {
+                    method: config.method?.toUpperCase(),
                     tenantId: config.headers['X-Tenant-Id']?.toString().substring(0, 8) + '...',
                     sessionId: config.headers['X-Session-Id']?.toString().substring(0, 8) + '...',
                     customerId: config.headers['X-Customer-Id']
@@ -271,7 +276,7 @@ const createHttpClient = (): AxiosInstance => {
             return config;
         },
         (error) => {
-            console.error('[HTTP] Request error:', error);
+            console.error('[HTTP] Request rejected', { isTransportError: axios.isAxiosError(error) });
             return Promise.reject(error);
         }
     );
@@ -280,7 +285,7 @@ const createHttpClient = (): AxiosInstance => {
     client.interceptors.response.use(
         (response) => {
             if (import.meta.env.DEV) {
-                console.log(`[HTTP] Response ${response.status} from ${response.config.url}`);
+                console.log('[HTTP] Response', { status: response.status });
             }
             return response;
         },
@@ -292,8 +297,6 @@ const createHttpClient = (): AxiosInstance => {
                 console.error('[HTTP] Response error:', {
                     status: normalized.status,
                     code: normalized.code,
-                    message: normalized.message,
-                    url: error.config?.url,
                     isNetworkError: normalized.isNetworkError,
                     isAuthError: normalized.isAuthError,
                     retryable: normalized.retryable,
@@ -316,7 +319,7 @@ const createHttpClient = (): AxiosInstance => {
                     if (refreshResult === 'authenticated') {
                         // Retry the original request
                         if (import.meta.env.DEV) {
-                            console.log('[HTTP] Retrying request after token refresh:', originalRequest.url);
+                            console.log('[HTTP] Retrying request after token refresh');
                         }
                         return client(originalRequest);
                     }

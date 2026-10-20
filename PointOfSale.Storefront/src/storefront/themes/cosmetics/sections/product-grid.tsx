@@ -17,7 +17,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
     const isCarousel = model.layout === 'carousel';
 
     return (
-        <section className={`${COSMETICS_FONT} bg-white`}>
+        <section className={`${COSMETICS_FONT} bg-background`}>
             <ThemeSectionHeader
                 themeId="cosmetics"
                 eyebrow={model.labels.eyebrowProducts}

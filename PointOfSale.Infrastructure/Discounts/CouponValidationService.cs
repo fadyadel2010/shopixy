@@ -266,8 +266,8 @@ public sealed class CouponValidationService : ICouponValidationService
             if (IsDuplicateReservationCustomerException(ex))
             {
                 throw new CouponAuthorityException(
-                    CouponErrorCodes.FirstOrderOnly,
-                    "This coupon is already reserved by another pending order.",
+                    CouponErrorCodes.ReservationExists,
+                    "This coupon is already reserved by another pending order. Complete or cancel that order, or remove the coupon to continue.",
                     ex);
             }
 
@@ -492,6 +492,10 @@ public sealed class CouponValidationService : ICouponValidationService
         EnsureTransactionalMutation("Coupon release");
 
         var reservation = await _dbContext.CouponReservations
+            // Expiration runs in a tenant-agnostic worker. The explicit tenant
+            // predicate below is authority; an ambient tenant filter must not
+            // silently hide the reservation and strand coupon capacity.
+            .IgnoreQueryFilters()
             .Include(entity => entity.Coupon)
             .FirstOrDefaultAsync(
                 entity => entity.TenantId == tenantId &&
@@ -505,6 +509,7 @@ public sealed class CouponValidationService : ICouponValidationService
         }
 
         var hadConfirmedUsage = await _dbContext.CouponUsages
+            .IgnoreQueryFilters()
             .AnyAsync(
                 usage => usage.TenantId == tenantId &&
                          usage.OrderId == orderId &&
@@ -651,7 +656,8 @@ public sealed class CouponValidationService : ICouponValidationService
         }
 
         var confirmedUsageCount = await GetTotalConfirmedUsageCountAsync(coupon.TenantId, coupon.Id, cancellationToken);
-        var activeReservationCount = await GetActiveReservationCountAsync(coupon.TenantId, coupon.Id, excludeOrderId, cancellationToken);
+        var (activeReservationCount, activeCustomerReservationCount) = await GetActiveReservationCountsAsync(
+            coupon.TenantId, coupon.Id, customerId, excludeOrderId, cancellationToken);
         if (coupon.MaxUsage.HasValue &&
             confirmedUsageCount + activeReservationCount >= coupon.MaxUsage.Value)
         {
@@ -664,9 +670,9 @@ public sealed class CouponValidationService : ICouponValidationService
         var customerConfirmedUsageCount = coupon.MaxUsagePerCustomer.HasValue
             ? await GetCustomerConfirmedUsageCountAsync(coupon.TenantId, coupon.Id, customerId, cancellationToken)
             : 0;
-        var activeCustomerReservationCount = coupon.MaxUsagePerCustomer.HasValue
-            ? await GetActiveCustomerReservationCountAsync(coupon.TenantId, coupon.Id, customerId, excludeOrderId, cancellationToken)
-            : 0;
+        // SQL permits one active reservation per tenant/coupon/customer, including
+        // unlimited and non-first-order coupons. Preview must not promise a quote
+        // that the final locked reservation is guaranteed to reject.
 
         if (coupon.MaxUsagePerCustomer.HasValue &&
             customerConfirmedUsageCount + activeCustomerReservationCount >= coupon.MaxUsagePerCustomer.Value)
@@ -675,6 +681,13 @@ public sealed class CouponValidationService : ICouponValidationService
             return CouponValidationDecision.Failure(
                 CouponErrorCodes.CustomerMaxExceeded,
                 "You have already used this coupon the maximum number of times");
+        }
+
+        if (activeCustomerReservationCount > 0)
+        {
+            return CouponValidationDecision.Failure(
+                CouponErrorCodes.ReservationExists,
+                "This coupon is already reserved by another pending order. Complete or cancel that order, or remove the coupon to continue.");
         }
 
         if (coupon.FirstOrderOnly)
@@ -755,38 +768,23 @@ public sealed class CouponValidationService : ICouponValidationService
         };
     }
 
-    private async Task<int> GetActiveReservationCountAsync(
-        Guid tenantId,
-        Guid couponId,
-        Guid? excludeOrderId,
-        CancellationToken cancellationToken)
-    {
-        return await _dbContext.CouponReservations
-            .CountAsync(
-                reservation => reservation.TenantId == tenantId &&
-                               reservation.CouponId == couponId &&
-                               reservation.Status == CouponReservationStatus.Reserved &&
-                               !reservation.IsDeleted &&
-                               (!excludeOrderId.HasValue || reservation.OrderId != excludeOrderId.Value),
-                cancellationToken);
-    }
-
-    private async Task<int> GetActiveCustomerReservationCountAsync(
+    private async Task<(int Total, int Customer)> GetActiveReservationCountsAsync(
         Guid tenantId,
         Guid couponId,
         Guid customerId,
         Guid? excludeOrderId,
         CancellationToken cancellationToken)
     {
-        return await _dbContext.CouponReservations
-            .CountAsync(
-                reservation => reservation.TenantId == tenantId &&
-                               reservation.CouponId == couponId &&
-                               reservation.CustomerId == customerId &&
-                               reservation.Status == CouponReservationStatus.Reserved &&
-                               !reservation.IsDeleted &&
-                               (!excludeOrderId.HasValue || reservation.OrderId != excludeOrderId.Value),
-                cancellationToken);
+        var counts = await _dbContext.CouponReservations
+            .Where(reservation => reservation.TenantId == tenantId &&
+                                reservation.CouponId == couponId &&
+                                reservation.Status == CouponReservationStatus.Reserved &&
+                                !reservation.IsDeleted &&
+                                (!excludeOrderId.HasValue || reservation.OrderId != excludeOrderId.Value))
+            .GroupBy(_ => 1)
+            .Select(group => new { Total = group.Count(), Customer = group.Count(reservation => reservation.CustomerId == customerId) })
+            .FirstOrDefaultAsync(cancellationToken);
+        return (counts?.Total ?? 0, counts?.Customer ?? 0);
     }
 
     private async Task<bool> HasActiveFirstOrderReservationAsync(

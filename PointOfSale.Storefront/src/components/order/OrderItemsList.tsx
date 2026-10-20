@@ -62,7 +62,7 @@ const ProductImage: React.FC<ProductImageProps> = ({ src, alt }) => {
         <img
             src={src}
             alt={alt}
-            className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
+            className="w-16 h-16 object-contain rounded-lg flex-shrink-0"
             onError={() => setImageError(true)}
             loading="lazy"
         />

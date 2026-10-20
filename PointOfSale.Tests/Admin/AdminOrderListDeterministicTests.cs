@@ -16,6 +16,29 @@ namespace PointOfSale.Tests.Admin;
 
 public sealed class AdminOrderListDeterministicTests
 {
+    [Theory]
+    [InlineData(OrderStatus.Pending, PaymentStatus.AwaitingVerification, false)]
+    [InlineData(OrderStatus.Pending, PaymentStatus.Rejected, false)]
+    [InlineData(OrderStatus.Confirmed, PaymentStatus.AwaitingVerification, false)]
+    [InlineData(OrderStatus.Pending, PaymentStatus.Collected, false)]
+    [InlineData(OrderStatus.Confirmed, PaymentStatus.Collected, true)]
+    [InlineData(OrderStatus.Confirmed, PaymentStatus.Settled, true)]
+    [InlineData(OrderStatus.Refunded, PaymentStatus.Refunded, true)]
+    public async Task ManualWallet_OrdinaryOrdersRequireAcceptedFinancialAndOrderTransition(OrderStatus status, PaymentStatus payment, bool visible)
+    {
+        var tenant = Guid.NewGuid();
+        await using var db = CreateContext(tenant);
+        var order = NewOrder(Guid.NewGuid(), tenant, "MW-LIST", DateTime.UtcNow);
+        order.PaymentMethodCode = "MANUALWALLET";
+        order.Status = status;
+        order.PaymentStatus = payment;
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
+        var result = await CreateService(db).ListOrdersAsync(tenant, new AdminOrderListQuery { Search = "MW-LIST" }, "mw-qa");
+        Assert.Equal(visible ? 1 : 0, result.TotalCount);
+        Assert.Equal(visible ? 1 : 0, result.Items.Count);
+        Assert.NotNull(await CreateService(db).GetOrderDetailsAsync(tenant, order.Id, "mw-audit"));
+    }
     [Fact]
     public async Task ListOrders_ClampsOutOfRangePageAndUsesOrderIdTieBreaker()
     {

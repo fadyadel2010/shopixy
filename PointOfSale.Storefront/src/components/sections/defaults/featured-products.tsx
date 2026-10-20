@@ -54,11 +54,10 @@ const FeaturedProducts: React.FC<FeaturedProductsProps> = ({
                     {model.products.map((product, index) => (
                         <div
                             key={product.id}
-                            className="relative"
-                            style={{ minWidth: isCarousel ? 240 : undefined }}
+                            className={isCarousel ? 'relative w-60 shrink-0' : 'relative min-w-0'}
                         >
                             {showBadge !== false && badgeText && index < Math.min(4, model.products.length) ? (
-                                <span className="pointer-events-none absolute right-3 top-3 z-20 rounded-full bg-primary/90 px-2.5 py-1 text-xs font-medium text-white">
+                                <span className="pointer-events-none absolute right-3 top-3 z-20 rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-on-primary">
                                     {badgeText}
                                 </span>
                             ) : null}

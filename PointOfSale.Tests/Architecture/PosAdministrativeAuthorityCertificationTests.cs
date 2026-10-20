@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.Security;
+using PointOfSale.Core.Security;
 
 namespace PointOfSale.Tests.Architecture;
 
@@ -29,7 +30,7 @@ public sealed class PosAdministrativeAuthorityCertificationTests
     public void PosRuntime_MustNotExposeRoleAssignmentOrSelfPromotionEndpoint()
     {
         var apiAssembly = typeof(AuthController).Assembly;
-        var failures = apiAssembly.GetTypes()
+        var roleMutations = apiAssembly.GetTypes()
             .Where(type => type.IsClass && type.Name.EndsWith("Controller", StringComparison.Ordinal))
             .SelectMany(type => type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
             .Where(method => method.GetCustomAttributes<HttpMethodAttribute>(inherit: true).Any())
@@ -38,10 +39,20 @@ public sealed class PosAdministrativeAuthorityCertificationTests
                 method.Name.Contains("ChangeRole", StringComparison.OrdinalIgnoreCase) ||
                 method.Name.Contains("PromoteUser", StringComparison.OrdinalIgnoreCase) ||
                 method.Name.Contains("UpdateUserRole", StringComparison.OrdinalIgnoreCase))
-            .Select(method => $"{method.DeclaringType?.Name}.{method.Name}")
             .ToArray();
 
-        Assert.Empty(failures);
+        // Tenant user administration now has one deliberate role-management
+        // endpoint. It is not a self-promotion/bootstrap endpoint. Keep denying
+        // every other role-assignment surface and require its current policy.
+        var mutation = Assert.Single(roleMutations);
+        Assert.Equal(typeof(AdminUsersController), mutation.DeclaringType);
+        Assert.Equal(nameof(AdminUsersController.ChangeRole), mutation.Name);
+        Assert.Equal(PosPermissions.UsersRoleManage,
+            Assert.Single(mutation.GetCustomAttributes<AuthorizeAttribute>()).Policy);
+        Assert.Equal("{userId:guid}/role",
+            Assert.Single(mutation.GetCustomAttributes<HttpPutAttribute>()).Template);
+        Assert.Contains(mutation.GetParameters(), parameter =>
+            parameter.GetCustomAttribute<FromHeaderAttribute>()?.Name == "If-Match");
     }
 
     [Fact]

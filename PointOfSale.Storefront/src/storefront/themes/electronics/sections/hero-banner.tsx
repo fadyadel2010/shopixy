@@ -1,4 +1,6 @@
 import React from 'react';
+import type { HeroBannerProps } from '@/components/sections/heroBannerTypes';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
@@ -14,7 +16,7 @@ const alignmentClasses: Record<string, string> = {
     right: 'items-end text-right',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -24,12 +26,12 @@ const HeroBanner: React.FC<any> = ({
     overlayOpacity,
     textColor,
     alignment,
-    height,
+    height = 'medium',
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 18), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.left;
+    const resolvedAlignmentClass = alignmentClasses[alignment || 'left'] || alignmentClasses.left;
     return (
         <section
             className={`relative isolate overflow-hidden bg-slate-950 ${resolvedHeightClass}`}
@@ -80,9 +82,9 @@ const HeroBanner: React.FC<any> = ({
                 <div className="relative">
                     <div className="absolute -right-3 -top-3 hidden h-full w-full border border-cyan-300/20 lg:block" />
                     <div className="relative overflow-hidden rounded-md border border-slate-700 bg-slate-900 shadow-2xl shadow-cyan-950/50">
-                        <div className="relative aspect-[4/3]">
+                        <MediaFrame role="hero" aspectRatio="4 / 3">
                             {backgroundImage ? (
-                                <img
+                                <OptimizedImage loading="eager"
                                     src={backgroundImage}
                                     alt={title || ''}
                                     className="h-full w-full object-contain p-8"
@@ -93,7 +95,7 @@ const HeroBanner: React.FC<any> = ({
                                 </div>
                             )}
                             <div className="absolute inset-0 bg-slate-950" style={{ opacity: resolvedOverlayOpacity * 0.12 }} />
-                        </div>
+                        </MediaFrame>
 
                         <div className="grid border-t border-slate-700 bg-slate-950/90 font-mono text-[11px] uppercase tracking-[0.08em] text-slate-300 sm:grid-cols-3">
                             <div className="border-b border-slate-800 px-4 py-3 sm:border-b-0 sm:border-r">stock: live</div>

@@ -34,7 +34,7 @@ const PearlFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                     </div>
 
                     <div>
-                        <p className={`${PEARL_EYEBROW} text-[#C9A863]/60`}>{labels.quickLinks}</p>
+                        <p className={`${PEARL_EYEBROW} text-[#C9A863]`}>{labels.quickLinks}</p>
                         <div className="mt-4 space-y-3">
                             {navigation.links.map((link) => (
                                 <AffiliateLink
@@ -52,14 +52,14 @@ const PearlFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                             <div className="mt-6 space-y-6 border-t border-[#C9A863]/10 pt-5">
                                 {sections.map((section) => (
                                     <section key={section.key} className="min-w-0 space-y-3">
-                                        <h3 className={`${PEARL_EYEBROW} text-[#C9A863]/45`}>{section.title}</h3>
+                                        <h3 className={`${PEARL_EYEBROW} text-[#C9A863]`}>{section.title}</h3>
                                         {section.links.map((link) => (
                                             <AffiliateLink
                                                 key={link.key}
                                                 href={link.href}
                                                 target={link.openInNewTab ? '_blank' : undefined}
                                                 rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                                className="block min-w-0 break-words text-sm uppercase tracking-[0.18em] text-[#C9A863]/60 transition-colors hover:text-[#C9A863]"
+                                                className="block min-w-0 break-words text-sm uppercase tracking-[0.18em] text-[#C9A863] hover:underline"
                                             >
                                                 {link.label}
                                             </AffiliateLink>
@@ -72,7 +72,7 @@ const PearlFooter: React.FC<FooterPresentationProps> = ({ model }) => {
 
                     {/* Social */}
                     <div>
-                        <p className={`${PEARL_EYEBROW} text-[#C9A863]/60`}>{labels.followUs}</p>
+                        <p className={`${PEARL_EYEBROW} text-[#C9A863]`}>{labels.followUs}</p>
                         {socialLinks.length > 0 ? (
                             <div className="mt-4 flex flex-wrap gap-3">
                                 {socialLinks.map((link) => (
@@ -89,7 +89,7 @@ const PearlFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                 ))}
                             </div>
                         ) : (
-                            <p className="mt-4 text-sm text-[#C9A863]/60">{labels.followUs}</p>
+                            <p className="mt-4 text-sm text-[#C9A863]">{labels.followUs}</p>
                         )}
                     </div>
                 </div>

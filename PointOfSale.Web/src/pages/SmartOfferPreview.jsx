@@ -1,77 +1,24 @@
-const popupBaseStyle = {
-    backgroundImage: 'linear-gradient(145deg, rgba(255,255,255,0.94), rgba(255,255,255,0.78))',
-}
+import { useTranslation } from 'react-i18next'
 
 export default function SmartOfferPreview({ offer, dir = 'ltr' }) {
-    const backgroundColor = offer.backgroundColor?.trim() || '#f97316'
-
+    const { t } = useTranslation()
+    // Preview only the public display DTO. Coupon codes are private; Storefront
+    // claims a server-verified token instead of displaying the configured code.
     return (
-        <div
-            className="rounded-3xl border border-slate-200 bg-white/80 p-5 shadow-2xl backdrop-blur"
-            dir={dir}
-        >
-            <div
-                className="overflow-hidden rounded-[28px] border border-white/60 shadow-xl"
-                style={{
-                    ...popupBaseStyle,
-                    backgroundColor,
-                }}
-            >
-                <div className="grid gap-0 md:grid-cols-[1.1fr_0.9fr]">
-                    <div className="flex flex-col justify-between p-6 text-slate-900">
-                        <div className="space-y-3">
-                            <div className="inline-flex w-fit items-center rounded-full bg-white/75 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-slate-600">
-                                Smart Offer Preview
-                            </div>
-                            <div className="space-y-2">
-                                <h3 className="text-2xl font-bold leading-tight">
-                                    {offer.popupTitle || 'Give shoppers a reason to stay'}
-                                </h3>
-                                <p className="text-sm leading-6 text-slate-700">
-                                    {offer.popupDescription || 'Use this space for a short conversion-focused message.'}
-                                </p>
-                            </div>
-                            {offer.couponCode ? (
-                                <div className="inline-flex w-fit items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">
-                                    <span>Coupon</span>
-                                    <span className="rounded-full bg-white/15 px-3 py-1 font-mono tracking-[0.2em]">
-                                        {offer.couponCode}
-                                    </span>
-                                </div>
-                            ) : null}
-                        </div>
-
-                        <div className="mt-6 flex items-center justify-between gap-4">
-                            <button
-                                type="button"
-                                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:translate-y-[-1px]"
-                            >
-                                {offer.buttonText || 'Claim offer'}
-                            </button>
-                            <button
-                                type="button"
-                                className="h-11 w-11 rounded-full border border-slate-300 bg-white/80 text-lg text-slate-500"
-                            >
-                                ×
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="relative min-h-[220px] bg-slate-950/10">
-                        {offer.imageUrl ? (
-                            <img
-                                src={offer.imageUrl}
-                                alt={offer.popupTitle || 'Offer'}
-                                className="h-full w-full object-cover"
-                            />
-                        ) : (
-                            <div className="flex h-full items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.75),_rgba(15,23,42,0.08))] p-8 text-center text-sm font-medium text-slate-600">
-                                Optional product or campaign artwork appears here.
-                            </div>
-                        )}
+        <div dir={dir} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="relative px-5 py-6" style={{ background: `radial-gradient(circle at top, rgba(255,255,255,0.68), rgba(255,255,255,0.14)), ${offer.backgroundColor.trim() || '#f97316'}` }}>
+                <div className="space-y-4 break-words text-slate-950 [overflow-wrap:anywhere]">
+                    <span className="inline-flex rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">{t('SmartOfferPreview.badge')}</span>
+                    <h3 className="text-2xl font-semibold leading-tight">{offer.popupTitle.trim() || t('SmartOfferPreview.emptyTitle')}</h3>
+                    {offer.popupDescription.trim() && <p className="whitespace-pre-wrap text-sm leading-7 text-slate-800">{offer.popupDescription.trim()}</p>}
+                    <span className="inline-flex rounded-xl bg-white/80 px-3 py-2 text-xs font-semibold text-slate-600">{t('SmartOfferPreview.verified')}</span>
+                    <div className="flex flex-wrap gap-2">
+                        <span className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">{offer.buttonText.trim() || t('SmartOfferPreview.emptyButton')}</span>
+                        <span className="rounded-xl border border-slate-300 bg-white/70 px-4 py-2 text-sm text-slate-700">{t('common.close')}</span>
                     </div>
                 </div>
             </div>
+            {offer.imageUrl.trim() && <img key={offer.imageUrl.trim()} src={offer.imageUrl.trim()} alt={offer.popupTitle.trim()} className="max-h-52 w-full object-cover" />}
         </div>
     )
 }

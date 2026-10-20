@@ -234,7 +234,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         try {
             const response = await authApi.register(request);
             if (operationRevision !== authRevision) {
-                return response;
+                throw new DOMException('Registration was superseded', 'AbortError');
             }
             resetAuthRecoveryState();
             clearAuthenticatedContext();

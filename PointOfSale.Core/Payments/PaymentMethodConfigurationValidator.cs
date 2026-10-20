@@ -49,6 +49,11 @@ public static class PaymentMethodConfigurationValidator
 
             case "MANUALWALLET":
                 Require(normalizedConfiguration, "walletNumber", "Manual wallet number is required.", validationErrors);
+                if (normalizedConfiguration.TryGetValue("walletNumber", out var walletNumber) &&
+                    !IsValidManualWalletNumber(walletNumber))
+                {
+                    validationErrors.Add("Manual wallet number must contain 8 to 20 digits and only phone-number characters (+, spaces, hyphens or parentheses).");
+                }
                 break;
 
             default:
@@ -135,6 +140,12 @@ public static class PaymentMethodConfigurationValidator
         var normalizedCode = NormalizeCode(code);
         return normalizedCode is "STRIPE" or "PAYMOB" or "FAWRY" or "MANUALWALLET";
     }
+
+    // Same provider-neutral phone contract already used by Manual Wallet checkout.
+    // Do not impose a country prefix or a specific mobile operator.
+    public static bool IsValidManualWalletNumber(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        System.Text.RegularExpressions.Regex.IsMatch(value.Trim(), @"^(?=(?:\D*\d){8,20}\D*$)[\d\s\-+()]+$");
 
     private static string NormalizeCode(string? code) =>
         code?.Trim().ToUpperInvariant() ?? string.Empty;

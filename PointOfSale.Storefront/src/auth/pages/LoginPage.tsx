@@ -50,13 +50,13 @@ export const LoginPage: React.FC = () => {
     // Show loading state
     if (isLoading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50" dir={direction}>
+            <div className="min-h-screen flex items-center justify-center bg-background" dir={direction}>
                 <div className="flex flex-col items-center gap-4">
                     <svg className="w-8 h-8 animate-spin text-[var(--color-primary)]" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    <p className="text-gray-500">{t('common.loading')}</p>
+                    <p className="text-muted">{t('common.loading')}</p>
                 </div>
             </div>
         );
@@ -68,13 +68,13 @@ export const LoginPage: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen flex flex-col bg-gray-50" dir={direction}>
+        <div className="min-h-screen flex flex-col bg-background text-text" dir={direction}>
             {/* Header */}
             <header className="py-6 px-4 sm:px-6 lg:px-8">
                 <div className="max-w-7xl mx-auto">
                     <Link
                         to="/"
-                        className="inline-flex items-center gap-2 text-xl font-bold text-gray-900 hover:text-[var(--color-primary)] transition-colors"
+                        className="inline-flex items-center gap-2 text-xl font-bold text-text hover:text-primary-text transition-colors"
                     >
                         <svg className="w-8 h-8 text-[var(--color-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -89,7 +89,7 @@ export const LoginPage: React.FC = () => {
             <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8 py-12">
                 <div className="w-full max-w-md">
                     {/* Card */}
-                    <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-10">
+                    <div className="bg-background border border-border rounded-2xl shadow-xl p-8 sm:p-10">
                         <LoginForm
                             onSuccess={handleSuccess}
                             onRegisterClick={handleRegisterClick}
@@ -100,7 +100,7 @@ export const LoginPage: React.FC = () => {
             </main>
 
             {/* Footer */}
-            <footer className="py-6 px-4 text-center text-sm text-gray-500">
+            <footer className="py-6 px-4 text-center text-sm text-muted">
                 <p>
                     © {new Date().getFullYear()} {storeName || t('common.store', { defaultValue: 'Store' })}.
                     {' '}{t('footer.copyright', { year: '', storeName: '' }).replace('©', '').trim()}

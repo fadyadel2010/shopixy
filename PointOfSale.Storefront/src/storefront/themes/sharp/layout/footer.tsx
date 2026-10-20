@@ -52,7 +52,7 @@ const SharpFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                             <div className="mt-6 space-y-6 border-t border-white/10 pt-5">
                                 {sections.map((section) => (
                                     <section key={section.key} className="min-w-0 space-y-3">
-                                        <h3 className={`${SHARP_EYEBROW} text-white/45`}>{section.title}</h3>
+                                        <h3 className={`${SHARP_EYEBROW} text-white/80`}>{section.title}</h3>
                                         {section.links.map((link) => (
                                             <AffiliateLink
                                                 key={link.key}

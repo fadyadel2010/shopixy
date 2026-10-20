@@ -100,6 +100,7 @@ export type AuthErrorCode =
     | 'WEAK_PASSWORD'
     | 'INVALID_REQUEST'
     | 'INVALID_EMAIL'
+    | 'INVALID_PHONE'
     | 'INVALID_TENANT'
     | 'INVALID_TOKEN'
     | 'TOKEN_EXPIRED'

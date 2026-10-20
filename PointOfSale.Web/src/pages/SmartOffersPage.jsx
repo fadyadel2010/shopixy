@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useEffect, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import {
     archiveAdminSmartOffer,
@@ -21,12 +22,6 @@ const initialFilter = {
     sortDirection: 'desc',
     page: 1,
     pageSize: 100,
-}
-
-const emptyState = {
-    totalOffers: 0,
-    activeOffers: 0,
-    exitIntentOffers: 0,
 }
 
 function formatOfferStatus(status, t) {
@@ -55,9 +50,11 @@ export default function SmartOffersPage() {
     const { busy, beginRead, beginMutation } = useOfferOperations(user)
     const { dir } = useRTL()
     const [offers, setOffers] = useState([])
-    const [stats, setStats] = useState(emptyState)
+    const [stats, setStats] = useState(null)
+    const [statsError, setStatsError] = useState(false)
     const [filter, setFilter] = useState(initialFilter)
     const [loading, setLoading] = useState(true)
+    const [listError, setListError] = useState(false)
     const [detailsLoading, setDetailsLoading] = useState(false)
     const [saving, setSaving] = useState(false)
     const [editorOpen, setEditorOpen] = useState(false)
@@ -76,13 +73,14 @@ export default function SmartOffersPage() {
         const current = beginRead('list')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
             setOffers([])
-            setStats(emptyState)
+            setStats(null)
             setLoading(false)
             return
         }
 
         try {
             setLoading(true)
+            setListError(false)
             setError('')
             const admittedOffers = await listAdminSmartOffers(filter, user)
             if (!current()) return false
@@ -91,6 +89,7 @@ export default function SmartOffersPage() {
         } catch (requestError) {
             if (!current()) return false
             setOffers([])
+            setListError(true)
             setError(requestError.response?.data?.message || t('SmartOffersPage.messages.loadError'))
             return false
         } finally {
@@ -101,11 +100,12 @@ export default function SmartOffersPage() {
     const loadStats = async () => {
         const current = beginRead('stats')
         if (!user?.tenantId || !(user?.id || user?.userId)) {
-            setStats(emptyState)
+            setStats(null)
             return
         }
 
         try {
+            setStatsError(false)
             const admittedStats = await getAdminSmartOfferStats(user)
             if (!current()) return
             setStats({
@@ -114,7 +114,7 @@ export default function SmartOffersPage() {
                 exitIntentOffers: admittedStats.exitIntentOffers ?? admittedStats.ExitIntentOffers ?? 0,
             })
         } catch {
-            if (current()) setStats(null)
+            if (current()) { setStats(null); setStatsError(true) }
         }
     }
 
@@ -253,42 +253,44 @@ export default function SmartOffersPage() {
     }
 
     return (
-        <div dir={dir} className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(249,115,22,0.18),_transparent_35%),linear-gradient(180deg,_#fff7ed_0%,_#ffffff_45%,_#f8fafc_100%)] px-4 py-8 sm:px-6 lg:px-8">
-            <div className="mx-auto max-w-7xl space-y-8">
-                <section className="rounded-[32px] bg-slate-950 px-6 py-8 text-white shadow-[0_25px_80px_rgba(15,23,42,0.24)]">
-                    <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+        <div dir={dir} className="space-y-6">
+            <div className="mx-auto max-w-7xl space-y-6">
+                <section>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                         <div className="max-w-2xl">
-                            <p className="text-xs uppercase tracking-[0.35em] text-orange-300">{t('SmartOffersPage.hero.badge')}</p>
-                            <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">{t('SmartOffersPage.hero.title')}</h1>
-                            <p className="mt-3 text-sm leading-7 text-slate-300 sm:text-base">{t('SmartOffersPage.hero.description')}</p>
+                            <h1 className="text-2xl font-bold text-gray-900">{t('SmartOffersPage.hero.title')}</h1>
+                            <p className="mt-1 text-sm leading-6 text-gray-500">{t('SmartOffersPage.hero.description')}</p>
                         </div>
                         <button
                             type="button"
                             disabled={busy} onClick={openCreate}
-                            className="rounded-2xl bg-orange-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400"
+                            className="btn-primary shrink-0 disabled:opacity-50"
                         >{t('SmartOffersPage.actions.createOffer')}</button>
                     </div>
                 </section>
 
-                {stats && <section className="grid gap-4 md:grid-cols-3">
-                    <StatCard label={t('SmartOffersPage.stats.totalOffers')} value={stats.totalOffers} accent="from-slate-950 to-slate-700" />
-                    <StatCard label={t('SmartOffersPage.stats.activeOffers')} value={stats.activeOffers} accent="from-emerald-500 to-teal-400" />
-                    <StatCard label={t('SmartOffersPage.stats.exitIntent')} value={stats.exitIntentOffers} accent="from-orange-500 to-amber-300" />
-                </section>}
+                <section className="grid gap-4 sm:grid-cols-3">
+                    <StatCard label={t('SmartOffersPage.stats.totalOffers')} value={stats?.totalOffers} />
+                    <StatCard label={t('SmartOffersPage.stats.activeOffers')} value={stats?.activeOffers} />
+                    <StatCard label={t('SmartOffersPage.stats.exitIntent')} value={stats?.exitIntentOffers} />
+                </section>
+                {statsError && <p role="status" className="text-sm text-red-700">{t('SmartOffersPage.messages.statsError')}</p>}
 
-                <section className="rounded-[32px] border border-slate-200 bg-white/90 p-6 shadow-xl backdrop-blur">
+                <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                         <div className="grid gap-4 sm:grid-cols-2">
                             <input
                                 value={filter.search}
+                                aria-label={t('SmartOffersPage.filters.searchPlaceholder')}
                                 onChange={(event) => setFilter((current) => ({ ...current, search: event.target.value, page: 1 }))}
-                                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                className="input bg-white text-gray-900"
                                 placeholder={t('SmartOffersPage.filters.searchPlaceholder')}
                             />
                             <select
                                 value={filter.status}
+                                aria-label={t('SmartOffersPage.table.status')}
                                 onChange={(event) => setFilter((current) => ({ ...current, status: event.target.value, page: 1 }))}
-                                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                                className="input bg-white text-gray-900"
                             >
                                 <option value="All">{t('SmartOffersPage.filters.allStatuses')}</option>
                                 <option value="Active">{t('SmartOffersPage.status.active')}</option>
@@ -298,29 +300,31 @@ export default function SmartOffersPage() {
                         <button
                             type="button"
                             onClick={() => { loadOffers(); loadStats() }}
-                            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                            className="btn-secondary"
                         >{t('SmartOffersPage.actions.refresh')}</button>
                     </div>
 
                     {banner ? (
-                        <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                        <div role="status" className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                             {banner}
                         </div>
                     ) : null}
 
                     {error ? (
-                        <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        <div role="alert" className="mt-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                             {error}
                         </div>
                     ) : null}
 
-                    <div className="mt-6 overflow-hidden rounded-[28px] border border-slate-200">
+                    <div className="mt-6 overflow-hidden rounded-lg border border-slate-200" aria-busy={loading}>
                         {loading ? (
                             <div className="grid gap-3 bg-slate-50 p-6">
                                 {Array.from({ length: 4 }).map((_, index) => (
                                     <div key={index} className="h-16 animate-pulse rounded-2xl bg-slate-200" />
                                 ))}
                             </div>
+                        ) : listError ? (
+                            <div className="p-6 text-center"><button type="button" onClick={() => { loadOffers(); loadStats() }} className="btn-secondary">{t('common.retry')}</button></div>
                         ) : offers.length === 0 ? (
                             <div className="bg-slate-50 px-6 py-16 text-center">
                                 <h3 className="text-lg font-semibold text-slate-900">{t('SmartOffersPage.emptyState.title')}</h3>
@@ -330,7 +334,7 @@ export default function SmartOffersPage() {
                             <div className="overflow-x-auto">
                                 <table className="min-w-full divide-y divide-slate-200">
                                     <thead className="bg-slate-50">
-                                        <tr className="text-start text-xs uppercase tracking-[0.2em] text-slate-500">
+                                        <tr className="text-start text-xs text-slate-500">
                                             <th className="px-5 py-4">
                                                 <button type="button" onClick={() => handleSort('name')}>
                                                     {t('SmartOffersPage.offer')}
@@ -345,7 +349,7 @@ export default function SmartOffersPage() {
                                             </th>
                                             <th className="px-5 py-4">{t('SmartOffersPage.table.frequency')}</th>
                                             <th className="px-5 py-4">{t('SmartOffersPage.table.status')}</th>
-                                            <th className="px-5 py-4 text-right">{t('SmartOffersPage.table.actions')}</th>
+                                            <th className="px-5 py-4 text-end">{t('SmartOffersPage.table.actions')}</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 bg-white">
@@ -391,12 +395,12 @@ export default function SmartOffersPage() {
                                                         <button
                                                             type="button"
                                                             onClick={() => openDetails(offer)}
-                                                            className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                                                        >Details</button>
+                                                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                                        >{t('SmartOffersPage.actions.details')}</button>
                                                         <button
                                                             type="button"
                                                             disabled={busy} onClick={() => handleToggleStatus(offer)}
-                                                            className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                                         >
                                                             {offer.status === 'Active'
                                                                 ? t('SmartOffersPage.actions.disable')
@@ -405,12 +409,12 @@ export default function SmartOffersPage() {
                                                         <button
                                                             type="button"
                                                             disabled={busy} onClick={() => openEdit(offer)}
-                                                            className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                                                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                                         >{t('SmartOffersPage.actions.edit')}</button>
                                                         <button
                                                             type="button"
                                                             disabled={busy} onClick={() => handleDelete(offer)}
-                                                            className="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
+                                                            className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
                                                         >{t('SmartOffersPage.actions.delete')}</button>
                                                     </div>
                                                 </td>
@@ -422,9 +426,9 @@ export default function SmartOffersPage() {
                         )}
                     </div>
                     <div className="mt-4 flex items-center justify-between">
-                        <button type="button" disabled={loading || filter.page <= 1} onClick={() => setFilter(current => ({ ...current, page: current.page - 1 }))}>{t('common.previous')}</button>
+                        <button type="button" className="btn-secondary disabled:opacity-50" disabled={loading || filter.page <= 1} onClick={() => setFilter(current => ({ ...current, page: current.page - 1 }))}>{t('common.previous')}</button>
                         <span>{filter.page}</span>
-                        <button type="button" disabled={loading || offers.length < filter.pageSize} onClick={() => setFilter(current => ({ ...current, page: current.page + 1 }))}>{t('common.next')}</button>
+                        <button type="button" className="btn-secondary disabled:opacity-50" disabled={loading || offers.length < filter.pageSize} onClick={() => setFilter(current => ({ ...current, page: current.page + 1 }))}>{t('common.next')}</button>
                     </div>
                 </section>
             </div>
@@ -447,36 +451,39 @@ export default function SmartOffersPage() {
     )
 }
 
-function StatCard({ label, value, accent }) {
+function StatCard({ label, value }) {
     return (
-        <div className={`rounded-[28px] bg-gradient-to-br ${accent} p-[1px] shadow-lg`}>
-            <div className="rounded-[27px] bg-white/90 px-5 py-5 backdrop-blur">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+            <div>
                 <p className="text-sm text-slate-500">{label}</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{value}</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">{value ?? '—'}</p>
             </div>
         </div>
     )
 }
 
 function SmartOfferDetailsModal({ offer, loading, onClose }) {
+    const { t } = useTranslation()
+    const { dir } = useRTL()
     if (!offer && !loading) {
         return null
     }
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4">
-            <div className="w-full max-w-3xl rounded-[28px] bg-white p-6 shadow-2xl">
+        <Dialog.Root open onOpenChange={open => { if (!open) onClose() }}>
+            <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-[80] bg-black/50" />
+            <Dialog.Content dir={dir} aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[81] max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <p className="text-xs uppercase tracking-[0.28em] text-orange-600">Smart Offer</p>
-                        <h2 className="mt-2 text-2xl font-semibold text-slate-950">{offer?.name || 'Loading'}</h2>
+                        <Dialog.Title className="text-xl font-bold text-gray-900">{loading ? t('common.loading') : offer?.name}</Dialog.Title>
                     </div>
                     <button
                         type="button"
                         onClick={onClose}
-                        className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                        className="btn-secondary"
                     >
-                        Close
+                        {t('common.close')}
                     </button>
                 </div>
 
@@ -488,30 +495,31 @@ function SmartOfferDetailsModal({ offer, loading, onClose }) {
                     </div>
                 ) : (
                     <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                        <DetailItem label="Status" value={offer.status} />
-                        <DetailItem label="Priority" value={offer.priority} />
-                        <DetailItem label="Offer Type" value={offer.triggerType} />
-                        <DetailItem label="Offer Scope" value={offer.pagesScope} />
-                        <DetailItem label="Currency" value={offer.currency} />
-                        <DetailItem label="Discount Type" value={offer.couponDiscountType || 'None'} />
-                        <DetailItem label="Discount Value" value={offer.couponDiscountValue ?? 'None'} />
-                        <DetailItem label="Usage" value={`${offer.usageCount ?? 0} / ${offer.usageLimit ?? 'Unlimited'}`} />
-                        <DetailItem label="Usage Limit Per Customer" value={offer.usageLimitPerCustomer ?? 'None'} />
-                        <DetailItem label="Eligibility" value={offer.eligibilitySummary} />
-                        <DetailItem label="Created" value={offer.createdAt ? new Date(offer.createdAt).toLocaleString() : 'None'} />
-                        <DetailItem label="Updated" value={offer.updatedAt ? new Date(offer.updatedAt).toLocaleString() : 'None'} />
+                        <DetailItem label={t('SmartOfferEditor.fields.status')} value={formatOfferStatus(offer.status, t)} />
+                        <DetailItem label={t('SmartOfferEditor.fields.priority')} value={offer.priority} />
+                        <DetailItem label={t('SmartOfferEditor.fields.triggerType')} value={formatTriggerLabel(offer.triggerType, t)} />
+                        <DetailItem label={t('SmartOfferEditor.fields.pagesScope')} value={formatPageScopeLabel(offer.pagesScope, t)} />
+                        <DetailItem label={t('SmartOffersPage.details.currency')} value={offer.currency} />
+                        <DetailItem label={t('SmartOfferEditor.fields.couponDiscountType')} value={offer.couponDiscountType ? t(`SmartOfferEditor.options.couponDiscountType.${offer.couponDiscountType}`) : null} />
+                        <DetailItem label={t('SmartOfferEditor.fields.discountValue')} value={offer.couponDiscountValue} />
+                        <DetailItem label={t('SmartOffersPage.details.usage')} value={`${offer.usageCount ?? 0} / ${offer.usageLimit ?? t('SmartOffersPage.frequency.unlimited')}`} />
+                        <DetailItem label={t('SmartOffersPage.details.customerLimit')} value={offer.usageLimitPerCustomer} />
+                        <DetailItem label={t('SmartOffersPage.details.eligibility')} value={offer.eligibilitySummary} />
+                        <DetailItem label={t('SmartOffersPage.details.created')} value={offer.createdAt ? new Date(offer.createdAt).toLocaleString() : null} />
+                        <DetailItem label={t('SmartOffersPage.details.updated')} value={offer.updatedAt ? new Date(offer.updatedAt).toLocaleString() : null} />
                     </div>
                 )}
-            </div>
-        </div>
+            </Dialog.Content>
+            </Dialog.Portal>
+        </Dialog.Root>
     )
 }
 
 function DetailItem({ label, value }) {
     return (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
-            <p className="mt-2 break-words text-sm font-semibold text-slate-900">{String(value ?? 'None')}</p>
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <p className="text-xs text-gray-500">{label}</p>
+            <p className="mt-2 break-words text-sm font-semibold text-gray-900">{String(value ?? '—')}</p>
         </div>
     )
 }

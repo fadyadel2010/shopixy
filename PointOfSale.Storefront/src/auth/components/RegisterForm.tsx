@@ -5,7 +5,7 @@
  * Customer registration form with validation.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '../hooks/useAuth';
 import { AuthErrorRenderer } from './AuthErrorRenderer';
@@ -55,6 +55,17 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     const [formErrors, setFormErrors] = useState<FormErrors>({});
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const submitting = useRef(false);
+    const mounted = useRef(true);
+    useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
+    }, []);
+    const phoneError = formErrors.phone || (error?.code === 'INVALID_PHONE'
+        ? t('auth.validation.phoneInvalid', {
+            defaultValue: 'Enter a valid phone number, including the country code for international numbers.',
+        })
+        : undefined);
 
     // Validate form
     const validateForm = useCallback((): boolean => {
@@ -132,8 +143,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
     const handleSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
 
+        if (submitting.current || isLoading) return;
         if (!validateForm()) return;
 
+        submitting.current = true;
         try {
             const result = await register({
                 displayName: formData.displayName.trim(),
@@ -141,11 +154,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 password: formData.password,
                 phone: formData.phone.trim() || undefined,
             });
-            onSuccess?.(result);
+            if (mounted.current) onSuccess?.(result);
         } catch {
             // Error is handled by useAuth
+        } finally {
+            submitting.current = false;
         }
-    }, [formData, validateForm, register, onSuccess]);
+    }, [formData, validateForm, register, onSuccess, isLoading]);
 
     // Handle social login success
     const handleSocialSuccess = useCallback(() => {
@@ -156,10 +171,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         <div className={`w-full max-w-md ${className}`}>
             {/* Header */}
             <div className="text-center mb-8">
-                <h1 className="text-2xl font-bold text-gray-900">
+                <h1 className="text-2xl font-bold text-text">
                     {t('auth.register.title', { defaultValue: 'Create an account' })}
                 </h1>
-                <p className="text-gray-600 mt-2">
+                <p className="text-muted mt-2">
                     {t('auth.register.subtitle', {
                         defaultValue: 'Join us and start shopping today'
                     })}
@@ -167,7 +182,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
             </div>
 
             {/* Error display */}
-            {error && (
+            {error && error.code !== 'INVALID_PHONE' && (
                 <AuthErrorRenderer
                     error={error}
                     onDismiss={clearError}
@@ -181,7 +196,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 <div>
                     <label
                         htmlFor="register-name"
-                        className="block text-sm font-medium text-gray-700 mb-1.5"
+                        className="block text-sm font-medium text-text mb-1.5"
                     >
                         {t('auth.fields.displayName', { defaultValue: 'Full Name' })}
                     </label>
@@ -195,13 +210,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                         disabled={isLoading}
                         className={`
                             w-full px-4 py-3 rounded-lg border
-                            text-gray-900 placeholder-gray-400
+                            bg-background text-text placeholder:text-muted
                             transition-all duration-200
                             focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                            disabled:bg-gray-50 disabled:text-gray-500
+                            disabled:bg-subtle disabled:text-muted
                             ${formErrors.displayName
                                 ? 'border-red-300 focus:ring-red-500'
-                                : 'border-gray-200 hover:border-gray-300'
+                                : 'border-border hover:border-text'
                             }
                         `}
                         placeholder={t('auth.fields.namePlaceholder', {
@@ -221,7 +236,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 <div>
                     <label
                         htmlFor="register-email"
-                        className="block text-sm font-medium text-gray-700 mb-1.5"
+                        className="block text-sm font-medium text-text mb-1.5"
                     >
                         {t('auth.fields.email', { defaultValue: 'Email' })}
                     </label>
@@ -235,13 +250,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                         disabled={isLoading}
                         className={`
                             w-full px-4 py-3 rounded-lg border
-                            text-gray-900 placeholder-gray-400
+                            bg-background text-text placeholder:text-muted
                             transition-all duration-200
                             focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                            disabled:bg-gray-50 disabled:text-gray-500
+                            disabled:bg-subtle disabled:text-muted
                             ${formErrors.email
                                 ? 'border-red-300 focus:ring-red-500'
-                                : 'border-gray-200 hover:border-gray-300'
+                                : 'border-border hover:border-text'
                             }
                         `}
                         placeholder={t('auth.fields.emailPlaceholder', {
@@ -261,10 +276,10 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 <div>
                     <label
                         htmlFor="register-phone"
-                        className="block text-sm font-medium text-gray-700 mb-1.5"
+                        className="block text-sm font-medium text-text mb-1.5"
                     >
                         {t('auth.fields.phone', { defaultValue: 'Phone' })}
-                        <span className="text-gray-400 font-normal ms-1">
+                        <span className="text-muted font-normal ms-1">
                             ({t('common.optional', { defaultValue: 'Optional' })})
                         </span>
                     </label>
@@ -278,22 +293,22 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                         disabled={isLoading}
                         className={`
                             w-full px-4 py-3 rounded-lg border
-                            text-gray-900 placeholder-gray-400
+                            bg-background text-text placeholder:text-muted
                             transition-all duration-200
                             focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                            disabled:bg-gray-50 disabled:text-gray-500
-                            ${formErrors.phone
+                            disabled:bg-subtle disabled:text-muted
+                            ${phoneError
                                 ? 'border-red-300 focus:ring-red-500'
-                                : 'border-gray-200 hover:border-gray-300'
+                                : 'border-border hover:border-text'
                             }
                         `}
                         placeholder="+1234567890"
-                        aria-invalid={!!formErrors.phone}
-                        aria-describedby={formErrors.phone ? 'register-phone-error' : undefined}
+                        aria-invalid={!!phoneError}
+                        aria-describedby={phoneError ? 'register-phone-error' : undefined}
                     />
-                    {formErrors.phone && (
-                        <p id="register-phone-error" className="mt-1.5 text-sm text-red-600">
-                            {formErrors.phone}
+                    {phoneError && (
+                        <p id="register-phone-error" role="alert" className="mt-1.5 text-sm text-red-600">
+                            {phoneError}
                         </p>
                     )}
                 </div>
@@ -302,7 +317,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 <div>
                     <label
                         htmlFor="register-password"
-                        className="block text-sm font-medium text-gray-700 mb-1.5"
+                        className="block text-sm font-medium text-text mb-1.5"
                     >
                         {t('auth.fields.password', { defaultValue: 'Password' })}
                     </label>
@@ -317,13 +332,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                             disabled={isLoading}
                             className={`
                                 w-full px-4 py-3 pe-12 rounded-lg border
-                                text-gray-900 placeholder-gray-400
+                                bg-background text-text placeholder:text-muted
                                 transition-all duration-200
                                 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                                disabled:bg-gray-50 disabled:text-gray-500
+                                disabled:bg-subtle disabled:text-muted
                                 ${formErrors.password
                                     ? 'border-red-300 focus:ring-red-500'
-                                    : 'border-gray-200 hover:border-gray-300'
+                                    : 'border-border hover:border-text'
                                 }
                             `}
                             placeholder="••••••••"
@@ -333,7 +348,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                         <button
                             type="button"
                             onClick={() => setShowPassword(!showPassword)}
-                            className="absolute inset-y-0 end-0 px-3 flex items-center text-gray-400 hover:text-gray-600"
+                            className="absolute inset-y-0 end-0 px-3 flex items-center text-muted hover:text-text"
                             aria-label={showPassword
                                 ? t('auth.fields.hidePassword', { defaultValue: 'Hide password' })
                                 : t('auth.fields.showPassword', { defaultValue: 'Show password' })
@@ -359,7 +374,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                             {formErrors.password}
                         </p>
                     )}
-                    <p className="mt-1.5 text-xs text-gray-500">
+                    <p className="mt-1.5 text-xs text-muted">
                         {t('auth.register.passwordHint', {
                             defaultValue: 'At least 8 characters with uppercase, lowercase, and a number'
                         })}
@@ -370,7 +385,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                 <div>
                     <label
                         htmlFor="register-confirm-password"
-                        className="block text-sm font-medium text-gray-700 mb-1.5"
+                        className="block text-sm font-medium text-text mb-1.5"
                     >
                         {t('auth.fields.confirmPassword', { defaultValue: 'Confirm Password' })}
                     </label>
@@ -385,13 +400,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                             disabled={isLoading}
                             className={`
                                 w-full px-4 py-3 pe-12 rounded-lg border
-                                text-gray-900 placeholder-gray-400
+                                bg-background text-text placeholder:text-muted
                                 transition-all duration-200
                                 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                                disabled:bg-gray-50 disabled:text-gray-500
+                                disabled:bg-subtle disabled:text-muted
                                 ${formErrors.confirmPassword
                                     ? 'border-red-300 focus:ring-red-500'
-                                    : 'border-gray-200 hover:border-gray-300'
+                                    : 'border-border hover:border-text'
                                 }
                             `}
                             placeholder="••••••••"
@@ -401,7 +416,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                         <button
                             type="button"
                             onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                            className="absolute inset-y-0 end-0 px-3 flex items-center text-gray-400 hover:text-gray-600"
+                            className="absolute inset-y-0 end-0 px-3 flex items-center text-muted hover:text-text"
                             aria-label={showConfirmPassword
                                 ? t('auth.fields.hidePassword', { defaultValue: 'Hide password' })
                                 : t('auth.fields.showPassword', { defaultValue: 'Show password' })
@@ -435,7 +450,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
                     disabled={isLoading}
                     className={`
                         w-full px-4 py-3 rounded-lg
-                        bg-[var(--color-primary)] text-white font-medium
+                        bg-primary text-on-primary font-medium
                         transition-all duration-200
                         ${isLoading
                             ? 'opacity-70 cursor-not-allowed'
@@ -467,7 +482,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
 
             {/* Login link */}
             {onLoginClick && (
-                <p className="text-center text-sm text-gray-600 mt-8">
+                <p className="text-center text-sm text-muted mt-8">
                     {t('auth.register.hasAccount', { defaultValue: 'Already have an account?' })}{' '}
                     <button
                         type="button"

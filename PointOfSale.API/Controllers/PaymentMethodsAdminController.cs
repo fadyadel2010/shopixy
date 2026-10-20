@@ -732,6 +732,7 @@ public class PaymentMethodsAdminController : ControllerBase
             RequiresConfiguration = configuration.RequiresConfiguration,
             IsConfigurationValid = configuration.IsConfigurationValid,
             ConfigurationErrors = configuration.ValidationErrors.ToList(),
+            PublicConfiguration = new Dictionary<string, string>(configuration.PublicConfiguration, StringComparer.OrdinalIgnoreCase),
             // T-09: existing Fawry tenant rows render as unsupported regardless
             // of stored IsEnabled or credential validity. Rows are never rewritten.
             IsSupported = !isFawry,
@@ -910,12 +911,33 @@ public class PaymentMethodsAdminController : ControllerBase
 
         if (request.Configuration == null)
         {
+            if (method.Code == "MANUALWALLET" && method.IsEnabled && !EvaluateConfiguration(method).IsConfigurationValid)
+            {
+                return ConfigurationMutationResult.Fail(BuildConfigurationValidationErrorResult(
+                    method.Code, EvaluateConfiguration(method).ValidationErrors,
+                    "Enabled Manual Wallet requires a valid persisted recipient. Configure it or reset and disable it."));
+            }
             return ConfigurationMutationResult.CreateSuccess(configurationUpdated: false);
+        }
+
+        if (method.Code == "MANUALWALLET" && request.Configuration.Any(pair =>
+                string.Equals(pair.Key?.Trim(), "walletNumber", StringComparison.OrdinalIgnoreCase) &&
+                !PaymentMethodConfigurationValidator.IsValidManualWalletNumber(pair.Value)))
+        {
+            return ConfigurationMutationResult.Fail(BuildConfigurationValidationErrorResult(
+                method.Code, new[] { "A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method." },
+                "Manual Wallet recipient cannot be cleared or invalidated."));
         }
 
         var normalizedIncomingConfiguration = PaymentMethodConfigurationValidator.NormalizeConfiguration(method.Code, request.Configuration);
         if (normalizedIncomingConfiguration.Count == 0)
         {
+            if (method.Code == "MANUALWALLET" && method.IsEnabled && !EvaluateConfiguration(method).IsConfigurationValid)
+            {
+                return ConfigurationMutationResult.Fail(BuildConfigurationValidationErrorResult(
+                    method.Code, EvaluateConfiguration(method).ValidationErrors,
+                    "Enabled Manual Wallet requires a valid persisted recipient. Configure it or reset and disable it."));
+            }
             if (rejectEmptyConfigurationPayload)
             {
                 _reliabilityTelemetry.RecordPaymentConfigInvalid(method.Code, operation, "empty_payload");
@@ -1207,6 +1229,8 @@ public class PaymentMethodResponseDto
     public bool RequiresConfiguration { get; set; }
     public bool IsConfigurationValid { get; set; }
     public List<string> ConfigurationErrors { get; set; } = new();
+    // Allow-listed customer-facing recipient only; never gateway credentials.
+    public Dictionary<string, string> PublicConfiguration { get; set; } = new();
     /// <summary>
     /// T-09: false for Fawry, which has no certified financial settlement authority.
     /// </summary>

@@ -41,9 +41,9 @@ describe('Alizon layout — tokens (global layout rhythm)', () => {
         expect(ALIZON_FONT_DISPLAY).toContain('Newsreader');
     });
 
-    it('nav link class reflects active state (red both states)', () => {
-        expect(alizonNavLinkClass(true)).toContain('#FF0000');
-        expect(alizonNavLinkClass(false)).toContain('#FF0000');
+    it('nav link class reflects active state through authoritative appearance roles', () => {
+        expect(alizonNavLinkClass(true)).toContain('text-primary-text');
+        expect(alizonNavLinkClass(false)).toContain('hover:text-primary-text');
         expect(alizonNavLinkClass(true)).not.toBe(alizonNavLinkClass(false));
     });
 });
@@ -97,11 +97,11 @@ describe('Alizon layout — Header rendering contract', () => {
         expect(headerSrc).toContain('AnnouncementMarquee');
     });
 
-    it('is a white sticky bar (reference site header) with red nav', () => {
+    it('keeps the sticky reference layout but consumes merchant canvas and accent', () => {
         expect(headerSrc).toContain('sticky top-0');
-        expect(headerSrc).toContain('bg-white');
-        // Brand red (#FF0000) is the nav/logo color.
-        expect(headerSrc).toContain('#FF0000');
+        expect(headerSrc).toContain('bg-background');
+        expect(headerSrc).toContain('text-primary-text');
+        expect(headerSrc).not.toContain('text-[#FF0000]');
     });
 
     it('applies Jost nav typography (red, medium)', () => {

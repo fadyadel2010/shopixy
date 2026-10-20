@@ -1,4 +1,5 @@
 import { AffiliateLink } from '@/components/common/AffiliateLink';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 import { ThemeBadge, ThemeEmptyState } from '@/components/theme-components';
 import type { ThemeComponentTheme } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
@@ -183,10 +184,10 @@ export const commercePageStyles: Record<ThemeComponentTheme, {
         pagination: 'mt-14 border-t border-muted/25 pt-8',
     },
     cosmetics: {
-        page: 'bg-white',
+        page: 'bg-background',
         container: 'mx-auto w-full px-0 py-0',
         breadcrumb: 'mx-auto mb-5 max-w-7xl px-4 pt-6 text-sm',
-        header: 'mx-auto mb-7 flex max-w-7xl items-center justify-between px-3 pt-3',
+        header: 'mx-auto mb-7 flex max-w-7xl flex-wrap items-center justify-between gap-3 px-3 pt-3',
         eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-primary',
         title: 'text-2xl font-bold uppercase leading-tight text-text md:text-4xl',
         subtitle: 'mt-2 max-w-2xl text-sm leading-6 text-muted',
@@ -355,9 +356,9 @@ export function CommerceMerchandisingBlock({
                     </p>
                 </div>
                 <AffiliateLink href={promotedProduct.slug ? `/products/${promotedProduct.slug}` : `/products/${promotedProduct.id}`} className="group block">
-                    <div className="aspect-[3/4] overflow-hidden bg-muted/10">
-                        <img src={imageSrc} alt="" className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" loading="lazy" />
-                    </div>
+                    <MediaFrame role="product-card" className="bg-muted/10">
+                        <OptimizedImage src={imageSrc} alt={promotedProduct.name} className="h-full w-full object-contain transition-transform duration-700 group-hover:scale-105" loading="lazy" />
+                    </MediaFrame>
                 </AffiliateLink>
             </section>
         );

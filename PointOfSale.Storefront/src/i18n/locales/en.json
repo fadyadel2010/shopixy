@@ -797,6 +797,7 @@
         "validation": {
             "emailRequired": "Email is required",
             "emailInvalid": "Please enter a valid email",
+            "phoneInvalid": "Enter a valid phone number, including the country code for international numbers.",
             "passwordRequired": "Password is required",
             "passwordTooShort": "Password must be at least 8 characters",
             "passwordWeak": "Password must include uppercase, lowercase, and a number",

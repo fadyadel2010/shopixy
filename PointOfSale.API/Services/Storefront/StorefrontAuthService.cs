@@ -214,22 +214,6 @@ public class StorefrontAuthService : IStorefrontAuthService
             };
         }
 
-        if (await IsBlockedPhoneAsync(tenantId, request.Phone, cancellationToken))
-        {
-            _logger.LogWarning(
-                "[StorefrontAuth] {Action} blocked - phone is blocked | TenantId: {TenantId} | TraceId: {TraceId}",
-                "REGISTRATION",
-                tenantId,
-                traceId);
-
-            return new StorefrontAuthResult
-            {
-                Success = false,
-                Error = "PHONE_BLOCKED",
-                Message = "Registration is unavailable for this phone number."
-            };
-        }
-
         _logger.LogInformation(
             "[StorefrontAuth] {Action} request | TenantId: {TenantId} | Email: {Email} | TraceId: {TraceId}",
             "REGISTRATION",
@@ -239,6 +223,46 @@ public class StorefrontAuthService : IStorefrontAuthService
 
         try
         {
+            // Optional blanks have one representation. Use the same tenant-aware
+            // identity rules for risk checks and persistence, never the raw spelling.
+            string? normalizedPhone = null;
+            if (!string.IsNullOrWhiteSpace(request.Phone))
+            {
+                try
+                {
+                    normalizedPhone = await _phoneRiskProfileService.NormalizePhoneAsync(
+                        tenantId, request.Phone, cancellationToken);
+                }
+                catch (ArgumentException ex) when (
+                    ex.ParamName == "phoneNumber" &&
+                    ex.InnerException is not PhoneNumberNormalizationException
+                    {
+                        Reason: PhoneNormalizationFailureReason.MissingCountryCode or
+                            PhoneNormalizationFailureReason.InvalidCountryCode
+                    })
+                {
+                    return new StorefrontAuthResult
+                    {
+                        Success = false,
+                        Error = "INVALID_PHONE",
+                        Message = "Enter a valid phone number, including the country code for international numbers."
+                    };
+                }
+            }
+
+            if (await IsBlockedPhoneAsync(tenantId, normalizedPhone, cancellationToken))
+            {
+                _logger.LogWarning(
+                    "[StorefrontAuth] REGISTRATION blocked - phone is blocked | TenantId: {TenantId} | TraceId: {TraceId}",
+                    tenantId, traceId);
+                return new StorefrontAuthResult
+                {
+                    Success = false,
+                    Error = "PHONE_BLOCKED",
+                    Message = "Registration is unavailable for this phone number."
+                };
+            }
+
             // Check if email already exists for this tenant
             // Must bypass global query filter temporarily to check cross-tenant uniqueness within same tenant
             var existingCustomer = await _dbContext.OnlineCustomers
@@ -270,7 +294,7 @@ public class StorefrontAuthService : IStorefrontAuthService
                 NormalizedEmail = normalizedEmail, // Required for case-insensitive lookups
                 Provider = AuthProvider.Local,
                 DisplayName = request.DisplayName?.Trim(),
-                Phone = request.Phone?.Trim(),
+                Phone = normalizedPhone,
                 IsActive = true,
                 EmailVerified = false,
                 CreatedAtUtc = DateTime.UtcNow

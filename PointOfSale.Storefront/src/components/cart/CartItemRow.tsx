@@ -109,7 +109,7 @@ export const CartItemRow: React.FC<CartItemRowProps> = ({
                             src={imageSrc}
                             alt={item.productName}
                             sizes="80px"
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-contain"
                         />
                     </div>
                 </a>

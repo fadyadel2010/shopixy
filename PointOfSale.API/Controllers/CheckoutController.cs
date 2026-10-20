@@ -261,6 +261,10 @@ public class CheckoutController : ControllerBase
                 ex.CartId, traceId);
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (CheckoutCouponException ex)
+        {
+            return CouponRejection(ex, traceId);
+        }
         catch (CheckoutDynamicFieldValidationException ex)
         {
             _logger.LogWarning(
@@ -549,6 +553,10 @@ public class CheckoutController : ControllerBase
         catch (CheckoutCartInvalidException ex)
         {
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (CheckoutCouponException ex)
+        {
+            return CouponRejection(ex, traceId);
         }
         catch (CheckoutShippingMethodException ex)
         {
@@ -1351,6 +1359,12 @@ public class CheckoutController : ControllerBase
         "OTP_REQUEST_IN_PROGRESS" or "OTP_VERIFICATION_IN_PROGRESS" => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status400BadRequest
     };
+
+    private ObjectResult CouponRejection(CheckoutCouponException exception, string traceId) =>
+        StatusCode(exception.ErrorCode == PointOfSale.Core.Discounts.CouponErrorCodes.ReservationExists
+                ? StatusCodes.Status409Conflict
+                : StatusCodes.Status400BadRequest,
+            new ApiErrorResponse(exception.ErrorCode, exception.Message, traceId));
 
     private static int ResolveCheckoutExceptionStatusCode(string errorCode) => errorCode switch
     {

@@ -21,7 +21,7 @@
 .variant-label {
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--text-color, #1a1a2e);
+    color: var(--color-text);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -30,7 +30,7 @@
     font-weight: 400;
     text-transform: none;
     letter-spacing: normal;
-    color: var(--muted-color, #6b7280);
+    color: var(--color-muted);
 }
 
 .variant-options {
@@ -45,9 +45,9 @@
     padding: 0.625rem 1rem;
     font-size: 0.875rem;
     font-weight: 500;
-    color: var(--text-color, #1a1a2e);
-    background-color: var(--surface-color, #ffffff);
-    border: 2px solid var(--border-color, #e5e7eb);
+    color: var(--color-text);
+    background-color: var(--color-background);
+    border: 2px solid var(--color-border);
     border-radius: 0.5rem;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -55,29 +55,30 @@
 }
 
 .variant-option:hover:not(:disabled) {
-    border-color: var(--primary-color, #6366f1);
-    background-color: var(--primary-color-light, #eef2ff);
+    border-color: var(--color-primary-text);
+    background-color: var(--color-surface);
 }
 
 .variant-option:focus-visible {
-    box-shadow: 0 0 0 3px var(--primary-color-alpha, rgba(99, 102, 241, 0.2));
+    outline: 2px solid var(--color-primary-text);
+    outline-offset: 2px;
 }
 
 .variant-option.selected {
-    border-color: var(--primary-color, #6366f1);
-    background-color: var(--primary-color, #6366f1);
-    color: white;
+    border-color: var(--color-primary);
+    background-color: var(--color-primary);
+    color: var(--color-on-primary);
 }
 
 .variant-option.selected:hover {
-    background-color: var(--primary-color-dark, #4f46e5);
-    border-color: var(--primary-color-dark, #4f46e5);
+    background-color: var(--color-primary);
+    border-color: var(--color-primary-text);
 }
 
 .variant-option.unavailable {
-    color: var(--muted-color, #9ca3af);
-    background-color: var(--disabled-bg, #f3f4f6);
-    border-color: var(--disabled-border, #e5e7eb);
+    color: var(--color-muted);
+    background-color: var(--color-subtle);
+    border-color: var(--color-border);
     cursor: not-allowed;
     opacity: 0.6;
 }
@@ -90,7 +91,7 @@
     left: 0;
     right: 0;
     height: 1px;
-    background-color: var(--muted-color, #9ca3af);
+    background-color: var(--color-muted);
     transform: rotate(-15deg);
 }
 
@@ -111,7 +112,7 @@
 }
 
 .variant-option[data-type="color"].selected {
-    box-shadow: 0 0 0 2px white, 0 0 0 4px var(--primary-color, #6366f1);
+    box-shadow: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-primary-text);
 }
 
 /* Stock indicator badge */
@@ -158,7 +159,7 @@
 .variant-selector[data-purchase-experience="minimal"] .variant-label {
     font-size: 0.75rem;
     letter-spacing: 0.12em;
-    color: #475569;
+    color: var(--color-muted);
 }
 
 .variant-selector[data-purchase-experience="minimal"] .variant-option {
@@ -168,56 +169,56 @@
 }
 
 .variant-selector[data-purchase-experience="minimal"] .variant-option.selected {
-    background: #0f172a;
-    border-color: #0f172a;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
 }
 
 .variant-selector[data-purchase-experience="fashion"] .variant-label {
-    color: #44403c;
+    color: var(--color-text);
     letter-spacing: 0.14em;
 }
 
 .variant-selector[data-purchase-experience="fashion"] .variant-option {
     border-width: 1px;
-    border-color: #d6d3d1;
+    border-color: var(--color-border);
     border-radius: 0;
-    background: #fffaf5;
-    color: #1c1917;
+    background: var(--color-background);
+    color: var(--color-text);
 }
 
 .variant-selector[data-purchase-experience="fashion"] .variant-option:hover:not(:disabled) {
-    border-color: #1c1917;
-    background: #ffffff;
+    border-color: var(--color-primary-text);
+    background: var(--color-surface);
 }
 
 .variant-selector[data-purchase-experience="fashion"] .variant-option.selected {
-    background: #1c1917;
-    border-color: #1c1917;
-    color: #ffffff;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on-primary);
 }
 
 .variant-selector[data-purchase-experience="pearl"] .variant-label {
-    color: #4f3d20;
+    color: var(--color-text);
     letter-spacing: 0.12em;
 }
 
 .variant-selector[data-purchase-experience="pearl"] .variant-option {
     border-width: 1px;
-    border-color: #d8c7a3;
+    border-color: var(--color-border);
     border-radius: 0;
-    background: #fffefa;
-    color: #241d16;
+    background: var(--color-background);
+    color: var(--color-text);
 }
 
 .variant-selector[data-purchase-experience="pearl"] .variant-option:hover:not(:disabled) {
-    border-color: #b99a5f;
-    background: #f4efe2;
+    border-color: var(--color-primary-text);
+    background: var(--color-surface);
 }
 
 .variant-selector[data-purchase-experience="pearl"] .variant-option.selected {
-    background: #241d16;
-    border-color: #241d16;
-    color: #ffffff;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on-primary);
 }
 
 .variant-selector[data-purchase-experience="electronics"] .variant-label {

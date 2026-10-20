@@ -184,7 +184,8 @@ describe('storefront runtime section contract certification', () => {
         expect(gridMarkup).toContain('grid grid-cols-2 md:grid-cols-4 gap-6');
         expect(gridMarkup).not.toContain('overflow-x-auto pb-2');
         expect(carouselMarkup).toContain('flex gap-6 overflow-x-auto pb-2');
-        expect(carouselMarkup).toContain('min-width:240px');
+        expect(carouselMarkup).toContain('w-60 shrink-0');
+        expect(carouselMarkup).not.toContain('min-width:240px');
     });
 
     it('maps every editorial media contract field to visible presentation', () => {

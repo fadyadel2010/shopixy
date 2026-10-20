@@ -14,7 +14,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
     }
 
     return (
-        <section className="bg-white py-12 sm:py-16">
+        <section className="bg-background py-12 sm:py-16">
             <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
                 <ThemeSectionHeader
                     themeId="seven"

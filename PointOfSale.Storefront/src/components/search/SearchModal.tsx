@@ -224,7 +224,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose }) => 
                                             <img
                                                 src={imageSrc}
                                                 alt=""
-                                                className="w-12 h-12 object-cover rounded-lg flex-shrink-0"
+                                                className="w-12 h-12 object-contain rounded-lg flex-shrink-0"
                                                 loading="lazy"
                                             />
 

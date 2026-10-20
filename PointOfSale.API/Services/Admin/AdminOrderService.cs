@@ -94,6 +94,16 @@ public class AdminOrderService : IAdminOrderService
                 o.Source == OrderSource.Ecommerce)
             .AsNoTracking();
 
+        // Manual review submissions are not fulfillment orders. Read SQL financial
+        // truth (not a projected/browser status), while preserving their detail/audit
+        // routes and the ordinary COD/online workflows. Retain approved refund history.
+        standardOrdersQuery = standardOrdersQuery.Where(o =>
+            (o.PaymentMethodCode != "MANUALWALLET" &&
+             !_context.PaymentIntents.Any(pi => pi.TenantId == tenantId && pi.OrderId == o.Id && pi.Provider == PaymentProvider.ManualWallet)) ||
+            (o.Status != OrderStatus.Pending &&
+             (o.PaymentStatus == PaymentStatus.Collected || o.PaymentStatus == PaymentStatus.Settled ||
+              o.PaymentStatus == PaymentStatus.PartiallyRefunded || o.PaymentStatus == PaymentStatus.Refunded)));
+
         if (query.Source == OrderSource.Marketplace)
         {
             standardOrdersQuery = standardOrdersQuery.Where(_ => false);

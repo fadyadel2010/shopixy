@@ -8,6 +8,7 @@ import {
     Sparkles,
 } from 'lucide-react'
 import { storeConfigService } from '../services'
+import { AppearancePreview } from '../components/AppearancePreview'
 import { useToast } from '../../../components/Toast'
 import { useAuthStore } from '../../../store/authStore'
 import { deriveCurrentStoreIdentityPresentation } from '../../../auth/commerceHubVendorIdentityAuthority'
@@ -34,64 +35,6 @@ const DEFAULT_THEME = {
     font: 'Inter',
     baseSize: '16px',
     borderRadius: 8,
-}
-
-/**
- * Apply alpha transparency to a color value.
- * Supports hex (#rgb, #rrggbb), rgb(), rgba(), and CSS variables.
- * @param {string} color - The color value
- * @param {number} alpha - Alpha value between 0 and 1
- * @returns {string} Color with alpha applied
- */
-const applyAlpha = (color, alpha) => {
-    if (!color || typeof color !== 'string') {
-        return color
-    }
-
-    const trimmed = color.trim()
-
-    // Handle CSS variables - return as-is (can't apply alpha to variables)
-    if (trimmed.startsWith('var(')) {
-        return trimmed
-    }
-
-    // Handle rgb/rgba
-    const rgbMatch = trimmed.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)$/)
-    if (rgbMatch) {
-        return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`
-    }
-
-    // Handle hex colors
-    if (trimmed.startsWith('#')) {
-        const hex = trimmed.slice(1)
-        
-        // 3-digit hex (#rgb)
-        if (hex.length === 3) {
-            // Validate hex characters
-            if (!/^[0-9a-fA-F]{3}$/.test(hex)) {
-                return trimmed // Fallback for invalid hex
-            }
-            const r = Number.parseInt(hex[0] + hex[0], 16)
-            const g = Number.parseInt(hex[1] + hex[1], 16)
-            const b = Number.parseInt(hex[2] + hex[2], 16)
-            return `rgba(${r}, ${g}, ${b}, ${alpha})`
-        }
-        
-        // 6-digit hex (#rrggbb)
-        if (hex.length === 6) {
-            // Validate hex characters
-            if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
-                return trimmed // Fallback for invalid hex
-            }
-            const r = Number.parseInt(hex.slice(0, 2), 16)
-            const g = Number.parseInt(hex.slice(2, 4), 16)
-            const b = Number.parseInt(hex.slice(4, 6), 16)
-            return `rgba(${r}, ${g}, ${b}, ${alpha})`
-        }
-    }
-
-    // Fallback: return original color
-    return trimmed
 }
 
 const PRESET_ICONS = {
@@ -284,6 +227,16 @@ export function ThemeEditorPage() {
     const [, setPublishedState] = useState(DEFAULT_THEME)
     const [acceptedDraftState, setAcceptedDraftState] = useState(DEFAULT_THEME)
     const [acceptedRowVersion, setAcceptedRowVersion] = useState('')
+    const [runtimePreviewConfig, setRuntimePreviewConfig] = useState(null)
+
+    useEffect(() => {
+        let active = true
+        // Read-only, authenticated preview authority; failure must not reset the local draft.
+        storeConfigService.getPreviewConfig?.().then(config => {
+            if (active) setRuntimePreviewConfig(config)
+        }).catch(() => {})
+        return () => { active = false }
+    }, [])
 
     useEffect(() => {
         mountedRef.current = true
@@ -762,96 +715,8 @@ export function ThemeEditorPage() {
                         <h2 className="text-lg font-semibold text-gray-900 mb-4">
                             {isRTL ? 'معاينة حية' : 'Live Preview'}
                         </h2>
-                        <div
-                            className="rounded-xl overflow-hidden border border-gray-200 shadow-lg"
-                            style={{
-                                backgroundColor: colors.background,
-                                fontFamily: font,
-                                fontSize: baseSize,
-                            }}
-                        >
-                            <div
-                                className="p-4"
-                                style={{ backgroundColor: colors.primary }}
-                            >
-                                <div className="flex items-center justify-between">
-                                    <span className="text-white font-bold">Store Name</span>
-                                    <div className="flex gap-2">
-                                        <div className="w-6 h-6 bg-white/20 rounded" />
-                                        <div className="w-6 h-6 bg-white/20 rounded" />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="p-4 space-y-4">
-                                <div
-                                    className="p-4 text-center"
-                                    style={{
-                                        backgroundColor: applyAlpha(colors.primary, 0.08),
-                                        borderRadius,
-                                    }}
-                                >
-                                    <h3
-                                        className="text-lg font-bold mb-2"
-                                        style={{ color: colors.text }}
-                                    >
-                                        Welcome
-                                    </h3>
-                                    <button
-                                        className="px-4 py-2 text-white text-sm font-medium"
-                                        style={{
-                                            backgroundColor: colors.primary,
-                                            borderRadius,
-                                        }}
-                                    >
-                                        Shop Now
-                                    </button>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    {[1, 2].map((itemIndex) => (
-                                        <div
-                                            key={itemIndex}
-                                            className="border p-3"
-                                            style={{
-                                                borderColor: applyAlpha(colors.muted, 0.2),
-                                                borderRadius,
-                                            }}
-                                        >
-                                            <div
-                                                className="aspect-square mb-2"
-                                                style={{
-                                                    backgroundColor: applyAlpha(colors.muted, 0.13),
-                                                    borderRadius,
-                                                }}
-                                            />
-                                            <p
-                                                className="text-sm font-medium"
-                                                style={{ color: colors.text }}
-                                            >
-                                                Product {itemIndex}
-                                            </p>
-                                            <p
-                                                className="text-sm font-bold"
-                                                style={{ color: colors.secondary }}
-                                            >
-                                                $99.99
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div
-                                className="p-3 text-center text-xs"
-                                style={{
-                                    backgroundColor: applyAlpha(colors.muted, 0.13),
-                                    color: applyAlpha(colors.text, 0.7),
-                                }}
-                            >
-                                © 2026 Your Store
-                            </div>
-                        </div>
+                        <AppearancePreview colors={colors} font={font} baseSize={baseSize} borderRadius={borderRadius}
+                            config={runtimePreviewConfig} tenantId={user?.tenantId} language={isRTL ? 'ar' : 'en'} />
                     </div>
                 </div>
             </div>

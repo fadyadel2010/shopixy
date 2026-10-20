@@ -18,6 +18,35 @@ namespace PointOfSale.Tests.Admin;
 
 public sealed class PaymentMethodsAdminSafetyTests
 {
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public async Task ManualWallet_MetadataUpdateCannotPersistLegacyEnabledInvalidConfiguration(bool emptyObject)
+    {
+        var tenant=Guid.NewGuid();await using var db=CreateDbContext(tenant);
+        db.TenantPaymentMethods.Add(new TenantPaymentMethod {Id=Guid.NewGuid(),TenantId=tenant,Code="MANUALWALLET",DisplayName="Legacy invalid wallet",IsEnabled=true,ConfigEncrypted=null,FeeType="fixed"});
+        await db.SaveChangesAsync();
+        var controller=CreateController(db,tenant,new EphemeralDataProtectionProvider());
+        Assert.IsType<BadRequestObjectResult>(await controller.UpsertPaymentMethod("MANUALWALLET",new(){Configuration=emptyObject?new():null},default));
+    }
+    [Theory]
+    [InlineData("", false)] [InlineData("   ", false)] [InlineData("bad-wallet", false)]
+    [InlineData("", true)] [InlineData("   ", true)] [InlineData("bad-wallet", true)]
+    public async Task ManualWallet_UnsafeRecipientMutationRejectedAndSavedPublicRecipientRemainsTruthful(string value, bool upsert)
+    {
+        var tenant=Guid.NewGuid(); var protector=new EphemeralDataProtectionProvider();
+        await using var db=CreateDbContext(tenant);
+        var encrypted=ProtectConfiguration(protector,new Dictionary<string,string> { ["walletNumber"]="01000000000" });
+        db.TenantPaymentMethods.Add(new TenantPaymentMethod {Id=Guid.NewGuid(),TenantId=tenant,Code="MANUALWALLET",DisplayName="Wallet",IsEnabled=true,IsSandbox=true,ConfigEncrypted=encrypted,FeeType="fixed"});
+        await db.SaveChangesAsync();
+        var controller=CreateController(db,tenant,protector);
+        var request=new UpsertPaymentMethodDto {Configuration=new Dictionary<string,string>{["walletNumber"]=value}};
+        var result=upsert?await controller.UpsertPaymentMethod("MANUALWALLET",request,CancellationToken.None):await controller.UpdateConfiguration("MANUALWALLET",request,CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+        db.ChangeTracker.Clear();
+        var stored=await db.TenantPaymentMethods.SingleAsync();Assert.True(stored.IsEnabled);Assert.Equal(encrypted,stored.ConfigEncrypted);
+        var read=Assert.IsType<PaymentMethodResponseDto>(Assert.IsType<OkObjectResult>(await controller.GetPaymentMethod("MANUALWALLET",CancellationToken.None)).Value);
+        Assert.True(read.IsConfigurationValid); Assert.Equal("01000000000",read.PublicConfiguration["walletNumber"]);
+    }
     [Fact]
     public async Task GetProviderCatalog_WhenTenantHasNoPaymentMethods_ReturnsSupportedProvidersWithoutSeedingRows()
     {

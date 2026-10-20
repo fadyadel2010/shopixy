@@ -1,4 +1,6 @@
 import React from 'react';
+import type { HeroBannerProps } from '@/components/sections/heroBannerTypes';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
@@ -14,7 +16,7 @@ const alignmentClasses: Record<string, string> = {
     right: 'items-end text-right',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -24,13 +26,13 @@ const HeroBanner: React.FC<any> = ({
     overlayOpacity,
     textColor,
     alignment,
-    height,
+    height = 'medium',
     highlights,
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 50), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.left;
+    const resolvedAlignmentClass = alignmentClasses[alignment || 'left'] || alignmentClasses.left;
     return (
         <section
             className="relative isolate overflow-hidden border-b border-slate-200 bg-slate-50"
@@ -81,9 +83,9 @@ const HeroBanner: React.FC<any> = ({
                 <div className="relative">
                     <div className="absolute -left-6 top-8 hidden h-24 w-24 border border-primary/25 bg-primary/10 lg:block" />
                     <div className="relative overflow-hidden rounded-md bg-slate-950 shadow-2xl shadow-slate-300/60">
-                        <div className="relative aspect-[5/4]">
+                        <MediaFrame role="hero" aspectRatio="5 / 4">
                             {backgroundImage ? (
-                                <img
+                                <OptimizedImage loading="eager"
                                     src={backgroundImage}
                                     alt={title || ''}
                                     className="h-full w-full object-cover"
@@ -92,7 +94,7 @@ const HeroBanner: React.FC<any> = ({
                                 <div className="h-full w-full bg-[linear-gradient(135deg,#0f172a_0%,#2563eb_48%,#f97316_100%)]" />
                             )}
                             <div className="absolute inset-0 bg-slate-950" style={{ opacity: resolvedOverlayOpacity * 0.28 }} />
-                        </div>
+                        </MediaFrame>
                     </div>
                 </div>
             </div>

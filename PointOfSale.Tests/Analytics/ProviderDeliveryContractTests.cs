@@ -8,6 +8,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Infrastructure.Analytics.Delivery;
 using PointOfSale.Infrastructure.Analytics.Dispatchers;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Analytics;
 
@@ -402,16 +403,14 @@ public sealed class ProviderDeliveryContractTests
 
     private static string ReadGoldenPayload(string fileName)
     {
-        var path = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
+        // Outputs may be isolated for regression runs. Fixed bin-depth traversal
+        // resolved outside the repository under an otherwise valid test build.
+        var path = Path.Combine(
+            TestConfiguration.GetSolutionRoot(),
             "PointOfSale.Tests",
             "Analytics",
             "GoldenPayloads",
-            fileName));
+            fileName);
 
         return File.ReadAllText(path);
     }

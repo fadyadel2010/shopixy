@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     login: vi.fn(),
+    register: vi.fn(),
     getMe: vi.fn(),
     refreshToken: vi.fn(),
     normalizeAuthError: vi.fn((error: unknown) => error),
@@ -17,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../api/authApi', () => ({
     login: mocks.login,
-    register: vi.fn(),
+    register: mocks.register,
     logout: vi.fn(),
     getMe: mocks.getMe,
     refreshToken: mocks.refreshToken,
@@ -87,6 +88,38 @@ function deferred<T>() {
 }
 
 describe('storefront auth operation ordering', () => {
+    it('keeps registration unauthenticated and returns verification dispatch evidence', async () => {
+        const response = { customer: loginCustomer, expiresAt: '2099-01-01T00:00:00Z', verificationEmailSent: false };
+        mocks.register.mockResolvedValueOnce(response);
+        expect(await useAuthStore.getState().register({ email: loginCustomer.email, displayName: 'QA', password: 'Synthetic1!' })).toEqual(response);
+        expect(useAuthStore.getState().status).toBe('unauthenticated');
+        expect(useAuthStore.getState().customer).toBeNull();
+    });
+
+    it('does not report a stale successful registration after a newer auth transition', async () => {
+        const pending = deferred<AuthResponse>();
+        mocks.register.mockReturnValueOnce(pending.promise);
+        const registration = useAuthStore.getState().register({ email: loginCustomer.email, displayName: 'QA', password: 'Synthetic1!' });
+        const rejected = expect(registration).rejects.toMatchObject({ name: 'AbortError' });
+        useAuthStore.getState().setUnauthenticated();
+        pending.resolve({ customer: loginCustomer, expiresAt: '2099-01-01T00:00:00Z' });
+        await rejected;
+        expect(useAuthStore.getState().error).toBeNull();
+        expect(useAuthStore.getState().status).toBe('unauthenticated');
+    });
+
+    it('does not let an old registration failure overwrite a newer identity', async () => {
+        const pending = deferred<AuthResponse>();
+        mocks.register.mockReturnValueOnce(pending.promise);
+        const registration = useAuthStore.getState().register({ email: loginCustomer.email, displayName: 'QA', password: 'Synthetic1!' });
+        const rejected = expect(registration).rejects.toThrow('Synthetic old failure');
+        mocks.login.mockResolvedValueOnce({ customer: originalCustomer, expiresAt: '2099-01-01T00:00:00Z' });
+        await useAuthStore.getState().login({ email: originalCustomer.email, password: 'Synthetic1!' });
+        pending.reject(new Error('Synthetic old failure'));
+        await rejected;
+        expect(useAuthStore.getState().customer?.id).toBe(originalCustomer.id);
+        expect(useAuthStore.getState().error).toBeNull();
+    });
     it('rejects a late old provider read after a newer authoritative read', async () => {
         const first = deferred<{ google: boolean; facebook: boolean }>();
         mocks.getProviders.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ google: false, facebook: false });

@@ -131,7 +131,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                                 src={imageSrc}
                                 alt={productName}
                                 sizes="80px"
-                                className="w-12 h-12 object-cover rounded-lg bg-muted/10"
+                                className="w-12 h-12 shrink-0 object-contain rounded-lg bg-muted/10"
                             />
 
                             {/* Details */}

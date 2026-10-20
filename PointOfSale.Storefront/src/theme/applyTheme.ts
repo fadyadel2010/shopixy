@@ -20,9 +20,8 @@ export const applyTheme = (theme: ThemeConfig): void => {
         root.style.setProperty(property, value);
     });
 
-    // Apply background and text color to body
-    document.body.style.backgroundColor = `var(--color-background)`;
-    document.body.style.color = `var(--color-text)`;
+    // The stylesheet consumes these roles. Reproject the complete owned token set
+    // on every application so a previous theme cannot leave stale derived values.
 
     if (import.meta.env.DEV) {
         console.log('[Theme] Applied CSS variables:', cssVariables);

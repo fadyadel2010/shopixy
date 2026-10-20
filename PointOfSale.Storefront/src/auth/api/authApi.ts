@@ -75,7 +75,7 @@ export async function login(request: LoginRequest): Promise<AuthResponse> {
 export async function register(request: RegisterRequest): Promise<AuthResponse> {
     const response = await httpClient.post<AuthResponse>(
         `${AUTH_BASE}/register`,
-        request,
+        { ...request, phone: request.phone?.trim() || undefined },
         { withCredentials: true }
     );
     return response.data;

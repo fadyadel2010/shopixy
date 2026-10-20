@@ -4,6 +4,25 @@ namespace PointOfSale.Tests.Payments;
 
 public sealed class PaymentMethodConfigurationValidatorTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-a-wallet")]
+    [InlineData("1234567")]
+    [InlineData("123456789012345678901")]
+    public void ManualWallet_RejectsInvalidRecipient(string value)
+    {
+        Assert.False(PaymentMethodConfigurationValidator.Validate("MANUALWALLET", new Dictionary<string, string> { ["walletNumber"] = value }).IsConfigurationValid);
+    }
+
+    [Theory]
+    [InlineData("+20 (10) 0000-0000")]
+    [InlineData("12345678")]
+    [InlineData("12345678901234567890")]
+    public void ManualWallet_AcceptsExistingProviderNeutralPhoneContract(string value)
+    {
+        Assert.True(PaymentMethodConfigurationValidator.Validate("MANUALWALLET", new Dictionary<string, string> { ["walletNumber"] = value }).IsConfigurationValid);
+    }
     [Fact]
     public void Cod_DoesNotRequireCredentialConfiguration()
     {

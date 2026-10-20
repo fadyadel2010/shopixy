@@ -9,13 +9,13 @@ const CosmeticsFooter: React.FC<FooterPresentationProps> = ({ model }) => {
     const displayStoreName = storeName?.trim() ?? '';
 
     return (
-        <footer className={`${COSMETICS_FONT} mt-auto bg-[#E7DFDB] px-6 py-12 text-[#D15F61] md:px-[90px] md:py-[72px]`}>
+        <footer className={`${COSMETICS_FONT} mt-auto bg-secondary px-6 py-12 text-on-secondary md:px-[90px] md:py-[72px]`}>
             <div className="grid gap-10 md:grid-cols-[1.1fr_repeat(3,minmax(0,1fr))]">
                 <div>
                     {displayStoreName ? (
                         <>
                             <h2 className="text-3xl font-light tracking-[-0.03em]">{displayStoreName}</h2>
-                            <p className="mt-4 max-w-sm text-sm leading-7 text-[#D15F61]/80">
+                            <p className="mt-4 max-w-sm text-sm leading-7 text-on-secondary">
                                 {copyright}
                             </p>
                         </>
@@ -27,7 +27,7 @@ const CosmeticsFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                 href={link.href}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex h-10 w-10 items-center justify-center border border-[#D15F61]/30"
+                                className="inline-flex h-10 w-10 items-center justify-center border border-current"
                                 aria-label={link.platform}
                             >
                                 <FooterSocialIcon platform={link.icon || link.platform} className="h-4 w-4" />
@@ -46,7 +46,7 @@ const CosmeticsFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                     href={link.href}
                                     target={link.openInNewTab ? '_blank' : undefined}
                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className="block min-w-0 break-words text-sm text-[#D15F61]/85 transition-opacity hover:opacity-70"
+                                    className="block min-w-0 break-words text-sm text-on-secondary hover:underline"
                                 >
                                     {link.label}
                                 </AffiliateLink>
@@ -65,7 +65,7 @@ const CosmeticsFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                     href={link.href}
                                     target={link.openInNewTab ? '_blank' : undefined}
                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className="block min-w-0 break-words text-sm text-[#D15F61]/85 transition-opacity hover:opacity-70"
+                                    className="block min-w-0 break-words text-sm text-on-secondary hover:underline"
                                 >
                                     {link.label}
                                 </AffiliateLink>

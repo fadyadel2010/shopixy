@@ -38,37 +38,37 @@ const HypeHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
                 role="banner"
                 className={`sticky top-0 z-30 w-full transition-colors duration-300 ${
                     isScrolled
-                        ? 'bg-white shadow-[0_4px_20px_rgba(0,0,0,0.08)]'
-                        : 'bg-white'
-                } ${HYPE_FONT_BODY} text-[#F06736]`}
+                        ? 'bg-background shadow-[0_4px_20px_rgba(0,0,0,0.08)]'
+                        : 'bg-background'
+                } ${HYPE_FONT_BODY} text-primary-text`}
             >
                 <div className={`${HYPE_CONTAINER} py-3 sm:py-4`}>
                     {/* Brand row with side actions */}
                     <div className="flex items-center justify-between gap-4">
                         <div className="hidden flex-1 items-center gap-2 md:flex">
-                            <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[#F06736]/70 hover:bg-[#F06736]/10 hover:text-[#F06736]" />
-                            <WishlistSlot className="text-[#F06736]/70 hover:bg-[#F06736]/10 hover:text-[#F06736]" />
-                            <CartSlot className="text-[#F06736]/70 hover:bg-[#F06736]/10 hover:text-[#F06736]" />
+                            <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-primary-text hover:bg-primary/10" />
+                            <WishlistSlot className="text-primary-text hover:bg-primary/10" />
+                            <CartSlot className="text-primary-text hover:bg-primary/10" />
                         </div>
 
                         <AffiliateLink
                             href="/"
-                            className={`min-w-0 flex-1 truncate text-center text-2xl font-medium uppercase tracking-[0.16em] text-[#F06736] md:text-3xl lg:tracking-[0.22em] ${HYPE_FONT_BODY}`}
+                            className={`min-w-0 flex-1 truncate text-center text-2xl font-medium uppercase tracking-[0.16em] text-primary-text md:text-3xl lg:tracking-[0.22em] ${HYPE_FONT_BODY}`}
                         >
                             {storeName}
                         </AffiliateLink>
 
                         <div className="hidden flex-1 items-center justify-end gap-3 md:flex">
-                            <LanguageSlot variant="text" size="sm" className="text-[#F06736]/60 hover:text-[#F06736]" />
-                            <div className="border-l border-[#F06736]/15 pl-3">
-                                <AuthenticationSlot variant="desktop" className="!text-[#F06736]/80" />
+                            <LanguageSlot variant="text" size="sm" className="text-primary-text" />
+                            <div className="border-l border-border pl-3">
+                                <AuthenticationSlot variant="desktop" className="text-primary-text" />
                             </div>
                         </div>
 
                         <button
                             type="button"
                             onClick={() => setMobileOpen((value) => !value)}
-                            className="flex h-10 w-10 items-center justify-center rounded-full border border-[#F06736]/20 text-[#F06736] md:hidden"
+                            className="flex h-10 w-10 items-center justify-center rounded-full border border-border text-primary-text md:hidden"
                             aria-label={labels.menu}
                             aria-expanded={mobileOpen}
                         >
@@ -80,7 +80,7 @@ const HypeHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
                     {/* Primary navigation */}
                     <NavigationSlot
-                        className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-[#F06736]/10 pt-3 md:flex"
+                        className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-border pt-3 md:flex"
                         ariaLabel={labels.mainNavigation}
                         linkClassName={(link) => hypeNavLinkClass(link.isActive)}
                     />
@@ -88,14 +88,14 @@ const HypeHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
 
                 {/* Mobile drawer */}
                 {mobileOpen ? (
-                    <div className="border-t border-[#F06736]/10 bg-white px-4 py-4 md:hidden">
+                    <div className="border-t border-border bg-background px-4 py-4 md:hidden">
                         <div className="mb-4 flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                                <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[#F06736]/70 hover:bg-[#F06736]/10 hover:text-[#F06736]" />
-                                <WishlistSlot className="text-[#F06736]/70 hover:bg-[#F06736]/10 hover:text-[#F06736]" />
-                                <CartSlot className="text-[#F06736]/70 hover:bg-[#F06736]/10 hover:text-[#F06736]" />
+                                <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-primary-text hover:bg-primary/10" />
+                                <WishlistSlot className="text-primary-text hover:bg-primary/10" />
+                                <CartSlot className="text-primary-text hover:bg-primary/10" />
                             </div>
-                            <LanguageSlot variant="text" size="sm" className="text-[#F06736]/60 hover:text-[#F06736]" />
+                            <LanguageSlot variant="text" size="sm" className="text-primary-text" />
                         </div>
                         <div className="space-y-2">
                             <NavigationSlot
@@ -103,7 +103,7 @@ const HypeHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
                                 ariaLabel={labels.menu}
                                 onLinkClick={() => setMobileOpen(false)}
                                 linkClassName={(link) => `block rounded-md px-4 py-3 ${HYPE_NAV_LINK} ${
-                                    link.isActive ? 'bg-[#F06736] text-white' : 'bg-[#F06736]/5 text-[#F06736]'
+                                    link.isActive ? 'bg-primary text-on-primary' : 'bg-primary/5 text-primary-text'
                                 }`}
                             />
                             <div className="pt-3">

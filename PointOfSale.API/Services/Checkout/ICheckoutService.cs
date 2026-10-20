@@ -110,11 +110,20 @@ public class CheckoutException : Exception
         Step = step;
     }
 
-    public CheckoutException(string errorCode, string message, string step, Exception innerException) 
+    public CheckoutException(string errorCode, string message, string step, Exception? innerException)
         : base(message, innerException)
     {
         ErrorCode = errorCode;
         Step = step;
+    }
+}
+
+/// <summary>A coupon admission rejection, including a capacity race at final commit.</summary>
+public sealed class CheckoutCouponException : CheckoutException
+{
+    public CheckoutCouponException(string errorCode, string message, Exception? innerException = null)
+        : base(errorCode, message, "CouponValidation", innerException)
+    {
     }
 }
 

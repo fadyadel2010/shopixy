@@ -20,6 +20,9 @@ public sealed class Phase5HttpCacheTests
     [InlineData("wishlist", 401)]
     [InlineData("auth/me", 403)]
     [InlineData("orders/missing", 404)]
+    [InlineData("chat", 200)]
+    [InlineData("chat", 403)]
+    [InlineData("chat", 503)]
     public async Task CentralPolicyWinsOverLateHandlerHeaders_OverRealHttp(string route, int status)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions {EnvironmentName = "Testing"});
@@ -42,7 +45,9 @@ public sealed class Phase5HttpCacheTests
         await app.StartAsync();
         using var client = new HttpClient {BaseAddress = new Uri(app.Services.GetRequiredService<IServer>()
             .Features.Get<IServerAddressesFeature>()!.Addresses.Single())};
-        using var response = await client.GetAsync("/api/storefront/" + route);
+        using var response = route == "chat"
+            ? await client.PostAsync("/api/storefront/chat", new StringContent("{}"))
+            : await client.GetAsync("/api/storefront/" + route);
         Assert.Equal(status, (int)response.StatusCode);
         var cache = response.Headers.CacheControl!;
         Assert.True(cache.Private && cache.NoStore && cache.NoCache && cache.MustRevalidate);

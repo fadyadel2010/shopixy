@@ -6760,6 +6760,7 @@
     "actions": {
       "createOffer": "Create offer",
       "refresh": "Refresh",
+      "details": "Details",
       "enable": "Enable",
       "disable": "Disable",
       "edit": "Edit",
@@ -6774,11 +6775,20 @@
       "deleteSuccess": "Smart offer deleted.",
       "deleteError": "Failed to delete smart offer.",
       "statusUpdated": "{{name}} is now {{status}}.",
-      "statusUpdateError": "Failed to update offer status."
+      "statusUpdateError": "Failed to update offer status.",
+      "statsError": "Offer statistics are unavailable. Refresh to retry."
     },
     "emptyState": {
       "title": "No smart offers yet",
       "description": "Create your first popup to start testing conversion moments across the storefront."
+    },
+    "details": {
+      "currency": "Currency",
+      "usage": "Usage",
+      "customerLimit": "Usage limit per customer",
+      "eligibility": "Eligibility",
+      "created": "Created",
+      "updated": "Updated"
     },
     "offer": "Offer"
   },
@@ -6997,7 +7007,8 @@
       "minOrderAmount": "Min order amount",
       "maxDiscountAmount": "Max discount amount",
       "backgroundColor": "Background color",
-      "imageUrl": "Image URL"
+      "imageUrl": "Image URL",
+      "colorPicker": "Choose color"
     },
     "placeholders": {
       "name": "Exit Discount",
@@ -7025,10 +7036,14 @@
       "popupContentBadge": "Popup content",
       "popupContentTitle": "Message and CTA",
       "previewBadge": "Live preview",
-      "previewTitle": "Popup appearance"
+      "previewTitle": "Popup appearance",
+      "configuration": "Display settings",
+      "coupon": "Linked coupon"
     },
     "notes": {
-      "couponAutoCreate": "When a coupon code is filled, Smart Offers creates a linked redeemable coupon automatically for checkout."
+      "couponAutoCreate": "A coupon code creates a linked checkout coupon. Storefront displays only active offers with an eligible linked coupon; the code is never public.",
+      "frequency": "Leave the per-user limit empty for unlimited displays. Delay is in seconds; scroll depth is a percentage (1–100). Only the selected trigger uses its timing or depth value.",
+      "preview": "Appearance preview only; it does not trigger or redeem offers. Storefront applies saved status, page scope, timing and display limits. Empty title and button text use placeholders here only."
     },
     "options": {
       "status": {
@@ -7065,6 +7080,12 @@
       "createOffer": "Create offer"
     },
     "previewEmpty": "Turn on preview to inspect the popup before saving."
+  },
+  "SmartOfferPreview": {
+    "badge": "Smart offer",
+    "verified": "Server-verified offer",
+    "emptyTitle": "Offer title",
+    "emptyButton": "Button text"
   },
   "superAdmin": {
     "navigation": {

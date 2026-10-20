@@ -39,9 +39,8 @@ public sealed partial class AdminOrderListPostgresTests
             await db.SaveChangesAsync();
             var service = CreateService(db);
             var storefront = await service.ListOrdersAsync(tenant, new AdminOrderListQuery { Page = 1, PageSize = 20 }, "qe-postgres-orders");
-            Assert.Equal(1, storefront.TotalCount);
-            Assert.Equal(orderId, Assert.Single(storefront.Items).OrderId);
-            Assert.Equal(tenant, storefront.Items[0].TenantId);
+            Assert.Equal(0, storefront.TotalCount);
+            Assert.Empty(storefront.Items); // awaiting wallet review is detail/audit-only
             db.ChangeTracker.Clear();
             var details = await service.GetOrderDetailsAsync(tenant, orderId, "P4QA-version-readback");
             var authoritativeVersion = await db.Orders.IgnoreQueryFilters().Where(o => o.Id == orderId)

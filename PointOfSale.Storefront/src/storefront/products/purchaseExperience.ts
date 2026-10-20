@@ -1,4 +1,5 @@
 import themeAuthority from '@theme-authority/shopixy-theme-authority.json';
+import { applyPurchaseAppearance } from './purchaseAppearance';
 
 export type PurchaseExperienceVariant =
     | 'modern'
@@ -597,5 +598,5 @@ export function getPurchaseExperienceProfile(
     layoutVariant?: string | null,
     themeId?: string | null
 ): PurchaseExperienceProfile {
-    return PROFILE_BY_VARIANT[resolvePurchaseExperienceVariant(layoutVariant, themeId)];
+    return applyPurchaseAppearance(PROFILE_BY_VARIANT[resolvePurchaseExperienceVariant(layoutVariant, themeId)]);
 }

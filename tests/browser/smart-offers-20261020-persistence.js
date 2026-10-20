@@ -1,0 +1,75 @@
+async page => {
+    const root = '.ai/evidence/smart-offers-20261020';
+    if (await page.locator('tbody tr').filter({ hasText: 'QA Smart Offers UI 20261020' }).count()) {
+        throw new Error('The retained inactive fixture already exists. Use the readback script instead of creating another.');
+    }
+    const results = [];
+    const failures = [];
+    const errors = [];
+    const onResponse = response => { if (response.url().includes('/api/') && response.status() >= 400) failures.push({ url: response.url(), status: response.status() }); };
+    const onError = error => errors.push(error.message);
+    page.on('response', onResponse);
+    page.on('pageerror', onError);
+    const check = (condition, message) => { if (!condition) throw new Error(message); results.push(message); };
+    const name = `QA Smart Offers UI 20261020 ${await page.evaluate(() => crypto.randomUUID().slice(0, 8))} — INACTIVE`;
+    const dialog = page.getByRole('dialog');
+    const field = label => dialog.getByLabel(label, { exact: true });
+    await page.getByRole('button', { name: 'Create offer', exact: true }).click();
+    await field('Name').fill(name);
+    await field('Title').fill('QA UI — اختبار العرض');
+    await field('Button text').fill('QA preview only');
+    await field('Description').fill('Inactive UI regression fixture. No coupon and no customer-facing activation.');
+    await field('Trigger type').selectOption('TimeDelay');
+    await field('Pages scope').selectOption('Product');
+    await field('Priority').fill('12');
+    await field('Delay seconds').fill('10');
+    await field('Scroll percent').fill('45');
+    await field('Max displays per user').fill('3');
+    await field('Show once per session').uncheck();
+    check(await field('Status').inputValue() === 'Inactive', 'Test offer remains inactive before create');
+    const createResponse = page.waitForResponse(response => response.url().includes('/api/admin/smart-offers') && response.request().method() === 'POST');
+    await dialog.getByRole('button', { name: 'Create offer', exact: true }).click();
+    const createdResponse = await createResponse;
+    const createPayload = createdResponse.request().postDataJSON();
+    const created = await createdResponse.json();
+    check(createdResponse.ok(), `Real API create succeeds (${createdResponse.status()})`);
+    check(created.status === 'Inactive' && !created.generatedCouponId && !created.couponCode, 'Created fixture has no eligible Storefront offer or linked coupon');
+    check(createPayload.priority === 12 && createPayload.delaySeconds === 10 && createPayload.maxDisplaysPerUser === 3 && !createPayload.showOncePerSession, 'Create payload preserves numeric and boolean types');
+    const row = page.getByRole('row').filter({ hasText: name });
+    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    check(await field('Priority').inputValue() === '12' && await field('Delay seconds').inputValue() === '10', 'Saved numbers restored when reopening');
+    check(await field('Pages scope').inputValue() === 'Product' && !await field('Show once per session').isChecked(), 'Saved selectors and session flag restored');
+    await field('Trigger type').selectOption('ScrollDepth');
+    await field('Pages scope').selectOption('Cart');
+    await field('Scroll percent').fill('55');
+    await field('Priority').fill('0');
+    await field('Max displays per user').fill('');
+    await field('Show once per session').check();
+    await field('Description').fill('');
+    const updateResponse = page.waitForResponse(response => response.url().includes(`/api/admin/smart-offers/${created.id}`) && response.request().method() === 'PUT');
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    const updatedResponse = await updateResponse;
+    const updated = await updatedResponse.json();
+    const updatePayload = updatedResponse.request().postDataJSON();
+    check(updatedResponse.ok(), `Real API update succeeds (${updatedResponse.status()})`);
+    check(updatedResponse.request().headers()['if-match'] === `"${created.rowVersion}"`, 'Update uses admitted backend If-Match row version');
+    check(updatePayload.maxDisplaysPerUser === null && updatePayload.popupDescription === null && updatePayload.priority === 0, 'Cleared optional values persist as null while zero remains zero');
+    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.screenshot({ path: `${root}/after-saved-reopened.png` });
+    await dialog.getByRole('button', { name: 'Close editor' }).click();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    check(await field('Priority').inputValue() === '0' && await field('Scroll percent').inputValue() === '55', 'Persisted zero and updated depth survive full navigation');
+    check(await field('Max displays per user').inputValue() === '' && await field('Description').inputValue() === '', 'Persisted nullable fields reopen empty, not fabricated defaults');
+    check(await field('Trigger type').inputValue() === 'ScrollDepth' && await field('Pages scope').inputValue() === 'Cart', 'Persisted trigger and scope survive full navigation');
+    await dialog.getByRole('button', { name: 'Close editor' }).click();
+    await row.getByRole('button', { name: 'Details', exact: true }).click();
+    await dialog.getByRole('heading', { name }).waitFor();
+    await page.screenshot({ path: `${root}/after-details.png` });
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    page.off('response', onResponse);
+    page.off('pageerror', onError);
+    return { results, name, created: { id: created.id, status: created.status, rowVersion: created.rowVersion },
+        updated: { id: updated.id, status: updated.status, rowVersion: updated.rowVersion }, createPayload, updatePayload, failures, errors,
+        retention: 'Inactive non-redeemable fixture retained; no deletion or activation performed.' };
+}

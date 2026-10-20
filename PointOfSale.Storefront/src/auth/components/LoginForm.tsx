@@ -122,10 +122,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({
         <div className={`w-full max-w-md ${className}`}>
             {/* Header */}
             <div className="text-center mb-8">
-                <h1 className="text-2xl font-bold text-gray-900">
+                <h1 className="text-2xl font-bold text-text">
                     {t('auth.login.title', { defaultValue: 'Welcome back' })}
                 </h1>
-                <p className="text-gray-600 mt-2">
+                <p className="text-muted mt-2">
                     {t('auth.login.subtitle', {
                         defaultValue: 'Sign in to your account to continue'
                     })}
@@ -155,7 +155,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                 <div>
                     <label
                         htmlFor="login-email"
-                        className="block text-sm font-medium text-gray-700 mb-1.5"
+                        className="block text-sm font-medium text-text mb-1.5"
                     >
                         {t('auth.fields.email', { defaultValue: 'Email' })}
                     </label>
@@ -169,13 +169,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         disabled={isLoading}
                         className={`
                             w-full px-4 py-3 rounded-lg border
-                            text-gray-900 placeholder-gray-400
+                            bg-background text-text placeholder:text-muted
                             transition-all duration-200
                             focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                            disabled:bg-gray-50 disabled:text-gray-500
+                            disabled:bg-subtle disabled:text-muted
                             ${formErrors.email
                                 ? 'border-red-300 focus:ring-red-500'
-                                : 'border-gray-200 hover:border-gray-300'
+                                : 'border-border hover:border-text'
                             }
                         `}
                         placeholder={t('auth.fields.emailPlaceholder', {
@@ -196,7 +196,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     <div className="flex items-center justify-between mb-1.5">
                         <label
                             htmlFor="login-password"
-                            className="block text-sm font-medium text-gray-700"
+                            className="block text-sm font-medium text-text"
                         >
                             {t('auth.fields.password', { defaultValue: 'Password' })}
                         </label>
@@ -223,13 +223,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                             disabled={isLoading}
                             className={`
                                 w-full px-4 py-3 pe-12 rounded-lg border
-                                text-gray-900 placeholder-gray-400
+                                bg-background text-text placeholder:text-muted
                                 transition-all duration-200
                                 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent
-                                disabled:bg-gray-50 disabled:text-gray-500
+                                disabled:bg-subtle disabled:text-muted
                                 ${formErrors.password
                                     ? 'border-red-300 focus:ring-red-500'
-                                    : 'border-gray-200 hover:border-gray-300'
+                                    : 'border-border hover:border-text'
                                 }
                             `}
                             placeholder="••••••••"
@@ -239,7 +239,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         <button
                             type="button"
                             onClick={() => setShowPassword(!showPassword)}
-                            className="absolute inset-y-0 end-0 px-3 flex items-center text-gray-400 hover:text-gray-600"
+                            className="absolute inset-y-0 end-0 px-3 flex items-center text-muted hover:text-text"
                             aria-label={showPassword
                                 ? t('auth.fields.hidePassword', { defaultValue: 'Hide password' })
                                 : t('auth.fields.showPassword', { defaultValue: 'Show password' })
@@ -273,7 +273,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     disabled={isLoading}
                     className={`
                         w-full px-4 py-3 rounded-lg
-                        bg-[var(--color-primary)] text-white font-medium
+                        bg-primary text-on-primary font-medium
                         transition-all duration-200
                         ${isLoading
                             ? 'opacity-70 cursor-not-allowed'
@@ -305,7 +305,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
 
             {/* Register link */}
             {onRegisterClick && (
-                <p className="text-center text-sm text-gray-600 mt-8">
+                <p className="text-center text-sm text-muted mt-8">
                     {t('auth.login.noAccount', { defaultValue: "Don't have an account?" })}{' '}
                     <button
                         type="button"

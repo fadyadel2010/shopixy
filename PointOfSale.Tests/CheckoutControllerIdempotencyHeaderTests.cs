@@ -16,6 +16,26 @@ namespace PointOfSale.Tests;
 
 public sealed class CheckoutControllerIdempotencyHeaderTests
 {
+    [Theory]
+    [InlineData("COUPON_RESERVATION_EXISTS", 409)]
+    [InlineData("COUPON_EXPIRED", 400)]
+    [InlineData("COUPON_MAX_USAGE_EXCEEDED", 400)]
+    public async Task Checkout_CouponAdmissionFailure_RetainsActionableCode_NotGenericCreation500(string code, int status)
+    {
+        var service = new Mock<ICheckoutService>();
+        service.Setup(s => s.ProcessCheckoutAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string?>(), It.IsAny<Guid?>(), It.IsAny<string>(), It.IsAny<CheckoutRequestDto>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new CheckoutCouponException(code, "Complete or cancel the pending order, or remove the coupon."));
+        var controller = new CheckoutController(service.Object, Mock.Of<ICheckoutAttachmentService>(), NullLogger<CheckoutController>.Instance)
+        { ControllerContext = new ControllerContext { HttpContext = BuildHttpContext(Guid.NewGuid(), "coupon-session") } };
+        var result = Assert.IsType<ObjectResult>(await controller.Checkout(BuildValidRequest(Guid.NewGuid()), default));
+        Assert.Equal(status, result.StatusCode);
+        var error = Assert.IsType<ApiErrorResponse>(result.Value);
+        Assert.Equal(code, error.Code);
+        Assert.Contains("remove the coupon", error.Message);
+    }
+
     [Fact]
     public async Task Checkout_AllowsMissingClientIdempotencyHeaders_AndGeneratesCompatibilityRequestId()
     {

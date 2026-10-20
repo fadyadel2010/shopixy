@@ -1,3 +1,5 @@
+using PointOfSale.Tests.Infrastructure;
+
 namespace PointOfSale.Tests.Architecture;
 
 public sealed class StorefrontAnalyticsAuthorityCertificationTests
@@ -138,13 +140,7 @@ public sealed class StorefrontAnalyticsAuthorityCertificationTests
 
     private static string ReadRepoFile(string relativePath)
     {
-        var path = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            relativePath));
+        var path = Path.Combine(TestConfiguration.GetSolutionRoot(), relativePath);
 
         return File.ReadAllText(path);
     }
@@ -153,13 +149,7 @@ public sealed class StorefrontAnalyticsAuthorityCertificationTests
         string relativeDirectory,
         string pattern)
     {
-        var directory = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            relativeDirectory));
+        var directory = Path.Combine(TestConfiguration.GetSolutionRoot(), relativeDirectory);
 
         return Directory.GetFiles(directory, pattern)
             .Select(path => (path, File.ReadAllText(path)))

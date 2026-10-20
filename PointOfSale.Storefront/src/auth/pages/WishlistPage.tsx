@@ -273,7 +273,7 @@ const WishlistPageContent: React.FC = () => {
                                     src={resolveProductImage(product)}
                                     alt={getProductName(product)}
                                     sizes="(max-width: 768px) 50vw, (max-width: 1280px) 25vw, 320px"
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    className="absolute inset-0 w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
                                 />
 
                                 {/* Out of Stock Badge */}

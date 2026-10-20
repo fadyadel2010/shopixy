@@ -1,1 +1,0 @@
-const n="mx-auto max-w-7xl px-4",s="font-['Jost',sans-serif]",a=`${s} text-[12px] uppercase tracking-[0.28em]`,o=`${s} text-[11px] uppercase tracking-[0.32em]`,c=e=>{const t=`${a} transition-colors`;return e?`${t} text-white`:`${t} text-white/60 hover:text-white`},x="bg-[#DC2626]",r="text-white";export{x as P,r as a,s as b,o as c,n as d,a as e,c as p};

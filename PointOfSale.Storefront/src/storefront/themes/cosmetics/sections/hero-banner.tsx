@@ -1,15 +1,17 @@
 import React from 'react';
+import type { HeroBannerProps } from '@/components/sections/heroBannerTypes';
+import { OptimizedImage } from '@/components/media';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import { useTranslation } from '@/i18n';
 import { COSMETICS_FONT } from '../layout/cosmeticsTokens';
 
 const heightClasses: Record<string, string> = {
-    small: 'min-h-[560px] md:min-h-[720px]',
-    medium: 'min-h-[635px] md:min-h-[800px]',
-    large: 'min-h-[635px] md:min-h-[1000px]',
+    small: 'min-h-[min(480px,65svh)]',
+    medium: 'min-h-[min(640px,75svh)]',
+    large: 'min-h-[min(760px,85svh)]',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -18,7 +20,7 @@ const HeroBanner: React.FC<any> = ({
     backgroundColor,
     overlayOpacity,
     alignment,
-    height,
+    height = 'medium',
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 12), 0), 100) / 100;
@@ -32,7 +34,7 @@ const HeroBanner: React.FC<any> = ({
             style={{ backgroundColor: backgroundColor || '#7a635c' }}
         >
             {backgroundImage ? (
-                <img
+                <OptimizedImage loading="eager"
                     src={backgroundImage}
                     alt={title || ''}
                     className="absolute inset-0 h-full w-full object-cover"

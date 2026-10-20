@@ -87,7 +87,7 @@ export const CategoryNav: React.FC<CategoryNavProps> = ({
     }
 
     return (
-        <nav className={`relative ${className}`} aria-label="Category navigation">
+        <nav className={`relative min-w-0 max-w-full ${className}`} aria-label="Category navigation">
             {/* Left gradient fade */}
             {showLeftGradient && (
                 <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none" />
@@ -96,7 +96,7 @@ export const CategoryNav: React.FC<CategoryNavProps> = ({
             {/* Scrollable container */}
             <div
                 ref={scrollRef}
-                className="flex gap-2 overflow-x-auto scrollbar-hide py-2 -mx-4 px-4"
+                className="flex max-w-full gap-2 overflow-x-auto scrollbar-hide py-2"
                 style={{ scrollBehavior: 'smooth' }}
             >
                 {/* All button */}
@@ -104,7 +104,7 @@ export const CategoryNav: React.FC<CategoryNavProps> = ({
                     <button
                         onClick={() => onSelect(undefined)}
                         className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all ${selectedId === undefined
-                                ? 'bg-primary text-white shadow-md'
+                                ? 'bg-primary text-on-primary shadow-md'
                                 : 'bg-muted/10 text-text hover:bg-muted/20'
                             }`}
                     >
@@ -118,7 +118,7 @@ export const CategoryNav: React.FC<CategoryNavProps> = ({
                         key={category.id}
                         onClick={() => onSelect(category.id)}
                         className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all ${selectedId === category.id
-                                ? 'bg-primary text-white shadow-md'
+                                ? 'bg-primary text-on-primary shadow-md'
                                 : 'bg-muted/10 text-text hover:bg-muted/20'
                             }`}
                     >

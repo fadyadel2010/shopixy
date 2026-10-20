@@ -181,7 +181,7 @@ const ImageBlock: React.FC<{ block: CmsPageBlock }> = ({ block }) => {
 
     return (
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-            <img src={imageUrl} alt={block.data?.alt || 'CMS image'} className="h-auto w-full object-cover" loading="lazy" />
+            <MediaFrame role="content"><OptimizedImage src={imageUrl} alt={block.data?.alt || 'CMS image'} /></MediaFrame>
             {block.data?.caption && (
                 <div className="border-t border-slate-200 px-6 py-4 text-sm text-slate-500">
                     {block.data.caption}
@@ -278,3 +278,4 @@ function setMetaProperty(property: string, content: string): void {
 }
 
 export default CmsPageView;
+import { MediaFrame, OptimizedImage } from '@/components/media';

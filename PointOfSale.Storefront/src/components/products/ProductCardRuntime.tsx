@@ -263,7 +263,7 @@ export function ProductCardQuickAddButton({
     // Selection-required is an authoritative backend outcome, not an unavailable product.
     if (runtime.product.availability?.unavailableReason === 'VARIANT_SELECTION_REQUIRED') {
         return (
-            <ThemeActionLink themeId={runtime.themeId} href={runtime.href} className={className}>
+            <ThemeActionLink themeId={runtime.themeId} appearance="custom" href={runtime.href} className={className}>
                 {t('product.selectOptions')}
             </ThemeActionLink>
         );
@@ -271,6 +271,7 @@ export function ProductCardQuickAddButton({
     return (
         <ThemeAddToCartButton
             themeId={runtime.themeId}
+            appearance="custom"
             label={runtime.labels.addToCart}
             onClick={runtime.handleQuickAdd}
             disabled={!runtime.canQuickAdd || runtime.isAddingToCart}
@@ -280,19 +281,19 @@ export function ProductCardQuickAddButton({
 }
 
 const CONTROL_PANEL_CLASSES: Record<string, string> = {
-    cosmetics: 'border-x border-b border-black bg-white px-3 pb-3 text-[10px]',
-    fashion: 'border-t border-slate-200 bg-white px-3 py-3',
+    cosmetics: 'border-x border-b border-border bg-background px-3 pb-3 text-xs',
+    fashion: 'border-t border-border bg-background px-3 py-3',
     minimal: 'border-t border-muted/15 bg-background px-3 py-3',
     pearl: 'border-t border-secondary/30 bg-background px-3 py-3',
     phoenix: 'border-t border-black/10 bg-background px-3 py-3',
-    seven: 'border-t border-muted/15 bg-white px-3 py-3',
+    seven: 'border-t border-muted/15 bg-background px-3 py-3',
 };
 
 const QUICK_ADD_CLASSES: Record<string, string> = {
-    alizon: 'inline-flex min-h-9 items-center justify-center rounded-none bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white',
-    cosmetics: 'inline-flex min-h-9 items-center justify-center rounded-full bg-primary px-3 py-2 text-xs font-medium text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white',
-    hype: 'inline-flex min-h-9 items-center justify-center rounded-full bg-primary px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white',
-    seven: 'inline-flex min-h-9 items-center justify-center text-xs font-black uppercase tracking-[0.12em] text-primary disabled:text-muted',
+    alizon: 'inline-flex min-h-9 items-center justify-center rounded-none bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-on-primary hover:opacity-90 disabled:opacity-50',
+    cosmetics: 'inline-flex min-h-9 items-center justify-center rounded-full bg-primary px-3 py-2 text-xs font-medium text-on-primary hover:opacity-90 disabled:opacity-50',
+    hype: 'inline-flex min-h-9 items-center justify-center rounded-full bg-primary px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-on-primary hover:opacity-90 disabled:opacity-50',
+    seven: 'inline-flex min-h-9 items-center justify-center bg-background text-xs font-black uppercase tracking-[0.12em] text-primary-text hover:bg-subtle disabled:text-muted',
 };
 
 /**
@@ -307,7 +308,7 @@ export function ProductCardInteractionLayer({ runtime }: { runtime: ProductCardR
     const panelClassName = CONTROL_PANEL_CLASSES[runtime.themeId]
         ?? 'border-t border-muted/15 bg-background px-3 py-3';
     const quickAddClassName = QUICK_ADD_CLASSES[runtime.themeId]
-        ?? 'inline-flex min-h-9 items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white';
+        ?? 'inline-flex min-h-9 items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-on-primary hover:opacity-90 disabled:opacity-50';
 
     return (
         <>

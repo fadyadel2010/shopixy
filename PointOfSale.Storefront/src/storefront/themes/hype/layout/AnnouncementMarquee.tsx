@@ -1,10 +1,10 @@
 /**
  * Hype Theme — Announcement Marquee (Phase H1.1)
  *
- * A reusable, orange announcement strip for the Hype theme.
+ * A reusable announcement strip for the Hype theme.
  *
- * Design (from report): orange (#F06736) scrolling strip, white uppercase text,
- * repeated with bullet (•) separators, sits above the header.
+ * Keeps the scrolling/uppercase identity while following Appearance by default.
+ * Explicit authored background/text values remain authoritative.
  *
  * Reuse note: there is NO existing marquee/announcement primitive in the
  * platform, so this is a new, self-contained, theme-scoped component. It does
@@ -12,9 +12,10 @@
  */
 
 import React from 'react';
+import { isHexColor, onColor } from '@theme-authority/appearanceRoles';
 import { AnnouncementLink } from '@/storefront/presentation/HeaderAnnouncement';
 import { useTranslation } from '@/i18n';
-import { HYPE_BRAND_BG, HYPE_EYEBROW, HYPE_FONT_BODY } from './hypeTokens';
+import { HYPE_EYEBROW, HYPE_FONT_BODY } from './hypeTokens';
 
 export interface AnnouncementMarqueeProps {
     link?: string;
@@ -26,7 +27,7 @@ export interface AnnouncementMarqueeProps {
     text?: string;
     /** Explicit Arabic text. When omitted, `text` or i18n default is used. */
     textAr?: string;
-    /** Optional accent background override class (defaults to Hype orange). */
+    /** Optional presentation override; defaults to Appearance's primary fill. */
     accentClass?: string;
 }
 
@@ -64,10 +65,11 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
     enabled = true,
     text,
     textAr,
-    accentClass = HYPE_BRAND_BG,
+    accentClass = 'bg-primary text-on-primary',
     link, backgroundColor, textColor,
 }) => {
     const { t, language, direction } = useTranslation();
+    const foreground = textColor || (isHexColor(backgroundColor) ? onColor(backgroundColor) : undefined);
     const resolved = resolveAnnouncement({
         enabled,
         text,
@@ -87,7 +89,7 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
     return (
         <div
             role="region"
-            style={{ backgroundColor: backgroundColor || undefined, color: textColor || undefined }}
+            style={{ backgroundColor: backgroundColor || undefined, color: foreground }}
             aria-label={t('announcement.label')}
             dir={resolved.isRTL ? 'rtl' : 'ltr'}
             className={`${accentClass} overflow-hidden`}
@@ -98,12 +100,12 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
             >
                 {items.map((_, index) => (
                     <span
-                        style={{ color: textColor || undefined }}
+                        style={{ color: foreground }}
                         key={index}
-                        className={`${HYPE_EYEBROW} whitespace-nowrap px-6 py-2 text-white`}
+                        className={`${HYPE_EYEBROW} whitespace-nowrap px-6 py-2`}
                     >
                         {resolved.text}
-                        <span className="px-6 opacity-70">&#10022;</span>
+                        <span aria-hidden="true" className="px-6">&#10022;</span>
                     </span>
                 ))}
             </div></AnnouncementLink>

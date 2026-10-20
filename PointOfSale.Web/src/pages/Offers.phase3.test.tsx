@@ -67,7 +67,8 @@ describe('Phase 3 offer editors', () => {
             fireEvent.change(dates[0], { target: { value: (dates[0] as HTMLInputElement).type === 'date' ? '2026-10-16' : '2026-10-16T00:00:00' } })
             fireEvent.change(dates[1], { target: { value: (dates[1] as HTMLInputElement).type === 'date' ? '2027-10-16' : '2027-10-16T00:00:00' } })
         }
-        act(() => { fireEvent.submit(container.querySelector('form')!); fireEvent.submit(container.querySelector('form')!) })
+        const editorForm = kind === 'smart' ? document.querySelector('form')! : container.querySelector('form')!
+        act(() => { fireEvent.submit(editorForm); fireEvent.submit(editorForm) })
         expect(create).toHaveBeenCalledOnce()
         await act(async () => pending.resolve({}))
     })
@@ -85,9 +86,9 @@ describe('Phase 3 offer editors', () => {
 
     it('smart editor clears disabled coupon settings when the code is removed', async () => {
         const save = vi.fn()
-        const { container } = render(<SmartOfferEditor open offer={{ name: 'Synthetic', couponCode: 'OLD', couponDiscountType: 'Percentage', couponDiscountValue: 20, couponMinOrderAmount: 10, couponMaxDiscountAmount: 5 }} saving={false} error="" onClose={vi.fn()} onSave={save} />)
+        render(<SmartOfferEditor open offer={{ name: 'Synthetic', couponCode: 'OLD', couponDiscountType: 'Percentage', couponDiscountValue: 20, couponMinOrderAmount: 10, couponMaxDiscountAmount: 5 }} saving={false} error="" onClose={vi.fn()} onSave={save} />)
         fireEvent.change(screen.getByDisplayValue('OLD'), { target: { value: '' } })
-        fireEvent.submit(container.querySelector('form')!)
+        fireEvent.submit(document.querySelector('form')!)
         expect(save.mock.calls[0][0]).toMatchObject({ couponCode: null, couponDiscountType: null, couponDiscountValue: null, couponMinOrderAmount: null, couponMaxDiscountAmount: null })
     })
 
@@ -104,9 +105,9 @@ describe('Phase 3 offer editors', () => {
             fireEvent.change(dates[0], { target: { value: '2026-10-16T00:00:00' } })
             fireEvent.change(dates[1], { target: { value: '2027-10-16T00:00:00' } })
         }
-        fireEvent.submit(container.querySelector('form')!)
+        fireEvent.submit(kind === 'smart' ? document.querySelector('form')! : container.querySelector('form')!)
         await screen.findByText('offers.savedReloadFailed')
-        expect(container.querySelector('form')).toBeNull()
+        expect(document.querySelector('form')).toBeNull()
         expect(create).toHaveBeenCalledOnce()
         expect(screen.queryByText(kind === 'coupon' ? 'coupons.created' : kind === 'promotion' ? 'promotions.created' : 'SmartOffersPage.messages.createSuccess')).toBeNull()
     })

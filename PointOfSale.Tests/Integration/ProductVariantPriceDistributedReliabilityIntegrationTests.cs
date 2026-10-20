@@ -3263,6 +3263,14 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
 
         try
         {
+            // The actor must submit the revision it reviewed. Without this,
+            // lifecycle admission returns 428 before the commit-pause window,
+            // so the intended distributed scenario only times out in setup.
+            var reviewedVersion = await context.Promotions.AsNoTracking()
+                .Where(promotion => promotion.TenantId == tenantContext.TenantId && promotion.Id == actor.PromotionId)
+                .Select(promotion => promotion.RowVersion)
+                .SingleAsync();
+            controller.Request.Headers.IfMatch = $"\"{reviewedVersion}\"";
             progressEntries.Enqueue($"{actor.Name}:invoking-controller");
             var result = await controller.TogglePromotionStatus(actor.PromotionId);
             if (controllerLogger.LastException is Exception loggedException)

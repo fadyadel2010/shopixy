@@ -13,7 +13,7 @@ const CategoryGrid: React.FC<CategoryGridProps> = ({ categoryGridModel: model })
     }
 
     return (
-        <section className={`${COSMETICS_FONT} bg-white`}>
+        <section className={`${COSMETICS_FONT} bg-background`}>
             <ThemeSectionHeader
                 themeId="cosmetics"
                 eyebrow={model.labels.eyebrowCategories}

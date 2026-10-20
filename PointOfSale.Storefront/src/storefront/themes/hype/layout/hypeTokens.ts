@@ -44,7 +44,7 @@ export const HYPE_EYEBROW = `${HYPE_FONT_BODY} text-[12px] font-semibold upperca
  */
 export const hypeNavLinkClass = (isActive: boolean): string => {
     const base = `${HYPE_NAV_LINK} transition-colors`;
-    return isActive ? `${base} text-[#F06736]` : `${base} text-[#F06736]/70 hover:text-[#F06736]`;
+    return isActive ? `${base} text-primary-text` : `${base} text-text hover:text-primary-text`;
 };
 
 /** Hype accents (hardcoded brand colors per design report). */

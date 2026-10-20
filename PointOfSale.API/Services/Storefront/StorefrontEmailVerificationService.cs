@@ -394,21 +394,25 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
             }
 
             // Update customer and token (Source of Truth)
+            var verifiedAtUtc = DateTime.UtcNow;
             customer.EmailVerified = true;
-            customer.UpdatedAtUtc = DateTime.UtcNow;
+            customer.EmailVerifiedAtUtc = verifiedAtUtc;
+            customer.UpdatedAtUtc = verifiedAtUtc;
             verification.IsUsed = true;
-            verification.UsedAtUtc = DateTime.UtcNow;
+            verification.UsedAtUtc = verifiedAtUtc;
 
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            // Publish event for MongoDB projection and cache invalidation
+            // Customer, consumed token and authoritative outbox fact must commit
+            // together. Publishing after SaveChanges violates the outbox guard
+            // and falsely reports failure for an already-verified account.
             await _eventPublisher.PublishAsync(new OnlineCustomerEmailVerifiedEvent
             {
                 TenantId = tenantId,
                 CustomerId = customer.Id,
                 Email = customer.Email,
-                VerifiedAtUtc = DateTime.UtcNow
+                VerifiedAtUtc = verifiedAtUtc
             }, cancellationToken);
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
                 "[EmailVerification] {Action} success | TenantId: {TenantId} | CustomerId: {CustomerId} | Email: {Email} | TraceId: {TraceId}",

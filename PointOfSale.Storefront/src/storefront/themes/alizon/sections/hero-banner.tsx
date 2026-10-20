@@ -1,4 +1,6 @@
 import React from 'react';
+import type { HeroBannerProps } from '@/components/sections/heroBannerTypes';
+import { MediaFrame, OptimizedImage } from '@/components/media';
 import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
@@ -8,7 +10,7 @@ const heightClasses: Record<string, string> = {
     large: 'min-h-[820px]',
 };
 
-const HeroBanner: React.FC<any> = ({
+const HeroBanner: React.FC<HeroBannerProps> = ({
     title,
     subtitle,
     ctaText,
@@ -16,7 +18,7 @@ const HeroBanner: React.FC<any> = ({
     backgroundImage,
     overlayOpacity,
     alignment,
-    height,
+    height = 'medium',
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 12), 0), 100) / 100;
@@ -63,9 +65,9 @@ const HeroBanner: React.FC<any> = ({
 
                 <div className="order-2">
                     <div className="mx-auto max-w-xl overflow-hidden border border-[#E5E7EB] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.10)] lg:mx-0">
-                        <div className="relative aspect-[4/3] overflow-hidden bg-white">
+                        <MediaFrame role="hero" aspectRatio="4 / 3" fit="contain">
                             {backgroundImage ? (
-                                <img
+                                <OptimizedImage loading="eager"
                                     src={backgroundImage}
                                     alt={title || ''}
                                     className="h-full w-full object-contain p-4"
@@ -76,7 +78,7 @@ const HeroBanner: React.FC<any> = ({
                                 </div>
                             )}
                             <div className="absolute inset-0 bg-black" style={{ opacity: resolvedOverlayOpacity * 0.15 }} />
-                        </div>
+                        </MediaFrame>
                     </div>
                 </div>
             </div>

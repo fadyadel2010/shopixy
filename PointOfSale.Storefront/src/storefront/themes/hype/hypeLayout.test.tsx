@@ -41,9 +41,9 @@ describe('Hype layout — tokens (global layout rhythm)', () => {
         expect(HYPE_FONT_DISPLAY).toContain('Newsreader');
     });
 
-    it('nav link class reflects active state (orange both states)', () => {
-        expect(hypeNavLinkClass(true)).toContain('#F06736');
-        expect(hypeNavLinkClass(false)).toContain('#F06736');
+    it('nav link class reflects active state using authoritative accent roles', () => {
+        expect(hypeNavLinkClass(true)).toContain('text-primary-text');
+        expect(hypeNavLinkClass(false)).toContain('hover:text-primary-text');
         expect(hypeNavLinkClass(true)).not.toBe(hypeNavLinkClass(false));
     });
 });
@@ -77,13 +77,14 @@ describe('Hype layout — Announcement Marquee (reusable primitive)', () => {
         expect(r.text).toBe('Limited Edition Collection');
     });
 
-    it('component is prop-driven and does not hardcode copy; defaults to orange', () => {
+    it('component is prop-driven and does not hardcode copy; defaults to Appearance', () => {
         expect(marqueeSrc).toContain('enabled');
         expect(marqueeSrc).toContain('textAr');
         expect(marqueeSrc).toContain("t('announcement.defaultText')");
-        // Default accent is the Hype orange token (imported + used as the
-        // default param value for `accentClass`).
-        expect(marqueeSrc).toContain('HYPE_BRAND_BG');
+        // The default accent follows Appearance so the merchant palette stays
+        // authoritative; an authored fill may still be passed explicitly.
+        expect(marqueeSrc).toContain('bg-primary text-on-primary');
+        expect(marqueeSrc).toContain('onColor');
         // No literal marquee copy baked into the component.
         expect(marqueeSrc).not.toMatch(/LIMITED EDITION/i);
     });
@@ -97,11 +98,11 @@ describe('Hype layout — Header rendering contract', () => {
         expect(headerSrc).toContain('AnnouncementMarquee');
     });
 
-    it('is a white sticky bar (reference site header) with orange nav', () => {
+    it('retains the sticky layout while taking canvas and readable accent from Appearance', () => {
         expect(headerSrc).toContain('sticky top-0');
-        expect(headerSrc).toContain('bg-white');
-        // Brand orange (#F06736) is the nav/logo color.
-        expect(headerSrc).toContain('#F06736');
+        expect(headerSrc).toContain('bg-background');
+        expect(headerSrc).toContain('text-primary-text');
+        expect(headerSrc).not.toContain('text-[#F06736]');
     });
 
     it('applies Jost nav typography (orange, medium)', () => {
@@ -128,9 +129,10 @@ describe('Hype layout — Footer rendering contract', () => {
         expect(footerSrc).not.toMatch(/Visa|Mastercard|Cash on Delivery/);
     });
 
-    it('uses the black/orange palette (reference site)', () => {
-        expect(footerSrc).toContain('bg-black');
-        expect(footerSrc).toContain('#F06736');
+    it('pairs merchant secondary chrome with its contrasting foreground', () => {
+        expect(footerSrc).toContain('bg-secondary');
+        expect(footerSrc).toContain('text-on-secondary');
+        expect(footerSrc).not.toContain('text-[#F06736]');
     });
 
     it('reuses platform footer infrastructure', () => {

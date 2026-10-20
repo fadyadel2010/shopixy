@@ -25,6 +25,10 @@ const EMPTY_CONFIG_FORM = {
 
 const HIDDEN_NEW_PAYMENT_PROVIDER_CODES = new Set(['FAWRY'])
 
+export function isValidManualWalletNumber(value) {
+    return typeof value === 'string' && /^(?=(?:\D*\d){8,20}\D*$)[\d\s\-+()]+$/.test(value.trim())
+}
+
 function isHiddenNewPaymentProvider(code) {
     return HIDDEN_NEW_PAYMENT_PROVIDER_CODES.has(code?.toUpperCase?.() || code)
 }
@@ -284,6 +288,10 @@ export default function PaymentMethods() {
         clearFeedback()
 
         const configuration = sanitizeConfiguration(configData.configuration)
+        if (editingMethod.code === 'MANUALWALLET' && !configData.reset && !isValidManualWalletNumber(configData.configuration.walletNumber)) {
+            setError('A valid recipient wallet number is required (8 to 20 digits; phone-number characters only).')
+            return
+        }
         if (configData.reset) {
             if (Object.keys(configuration).length > 0) {
                 setError('Configuration reset cannot include new provider values.')
@@ -346,7 +354,7 @@ export default function PaymentMethods() {
         setEditingMethod(method)
         setConfigData({
             isSandbox: method.isSandbox ?? true,
-            configuration: {},
+            configuration: method.code === 'MANUALWALLET' ? { walletNumber: method.publicConfiguration?.walletNumber || '' } : {},
             reset: false,
             confirmReset: false
         })
@@ -370,11 +378,11 @@ export default function PaymentMethods() {
             }
 
             if (method.requiresConfiguration && !method.isConfigurationValid) {
+                handleConfig(method)
                 setError(t('paymentMethods.validConfigurationRequired', { name: getLocalizedMethodName(method) }))
                 setErrorDetails(method.configurationErrors.length > 0
                     ? method.configurationErrors
                     : [t('paymentMethods.completeRequiredFields')])
-                handleConfig(method)
                 return
             }
 
@@ -830,11 +838,14 @@ export default function PaymentMethods() {
                                 {t('paymentMethods.configure', 'Configure')} {getLocalizedMethodName(editingMethod)}
                             </h2>
                             <p className="mt-1 text-sm text-gray-500">
-                                {t('paymentMethods.secretHandlingDescription')}
+                                {editingMethod.code === 'MANUALWALLET'
+                                    ? 'Recipient wallet number is shown as saved. Sandbox mode is not activation; use Enable in the list after saving.'
+                                    : t('paymentMethods.secretHandlingDescription')}
                             </p>
                         </div>
 
                         <form onSubmit={handleConfigSubmit} className="space-y-4 p-6">
+                            {error && <div role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">{error}{errorDetails.map((detail) => <p key={detail}>{detail}</p>)}</div>}
                             {editingMethod.requiresConfiguration && !editingMethod.isConfigurationValid && editingMethod.configurationErrors.length > 0 && (
                                 <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">
                                     <p className="font-medium">{t('paymentMethods.configurationIssues')}</p>

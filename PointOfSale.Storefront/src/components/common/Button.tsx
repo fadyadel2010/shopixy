@@ -43,12 +43,12 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
 const getVariantClasses = (variant: ButtonVariant, buttonStyle: 'solid' | 'outline'): string => {
     const variants: Record<ButtonVariant, Record<'solid' | 'outline', string>> = {
         primary: {
-            solid: 'bg-primary text-white hover:bg-primary/90 focus:ring-primary/50',
-            outline: 'border-2 border-primary text-primary hover:bg-primary hover:text-white focus:ring-primary/50',
+            solid: 'bg-primary text-on-primary hover:bg-primary/90 focus:ring-primary-text',
+            outline: 'border-2 border-primary-text text-primary-text hover:bg-primary hover:text-on-primary focus:ring-primary-text',
         },
         secondary: {
-            solid: 'bg-secondary text-white hover:bg-secondary/90 focus:ring-secondary/50',
-            outline: 'border-2 border-secondary text-secondary hover:bg-secondary hover:text-white focus:ring-secondary/50',
+            solid: 'bg-secondary text-on-secondary hover:bg-secondary/90 focus:ring-secondary-text',
+            outline: 'border-2 border-secondary-text text-secondary-text hover:bg-secondary hover:text-on-secondary focus:ring-secondary-text',
         },
         ghost: {
             solid: 'bg-transparent text-text hover:bg-muted/10 focus:ring-muted/30',

@@ -134,14 +134,14 @@ export const ProductGalleryModal: React.FC<ProductGalleryModalProps> = ({
                     </button>
                 </div>
 
-                <div className="relative flex-1 overflow-hidden bg-black">
+                <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
                     {isImageMedia(activeMedia) ? (
                         <OptimizedImage
                             src={activeMedia.url}
                             alt={getMediaLabel(activeMedia, productName, activeIndex)}
                             loading="eager"
                             sizes="100vw"
-                            className="h-full w-full object-contain"
+                            className="absolute inset-0 h-full w-full object-contain"
                         />
                     ) : activeProvider === 'youtube' && activePlaybackUrl ? (
                         <iframe
@@ -217,7 +217,7 @@ export const ProductGalleryModal: React.FC<ProductGalleryModalProps> = ({
                                             alt={getMediaLabel(item, productName, index)}
                                             loading="lazy"
                                             sizes="80px"
-                                            className="h-full w-full object-cover"
+                                            className="h-full w-full object-contain"
                                         />
                                     ) : thumbnailUrl ? (
                                         <OptimizedImage
@@ -225,7 +225,7 @@ export const ProductGalleryModal: React.FC<ProductGalleryModalProps> = ({
                                             alt={getMediaLabel(item, productName, index)}
                                             loading="lazy"
                                             sizes="80px"
-                                            className="h-full w-full object-cover"
+                                            className="h-full w-full object-contain"
                                         />
                                     ) : (
                                         <video

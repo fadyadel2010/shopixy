@@ -1,4 +1,5 @@
 import React from 'react';
+import { MediaFrame } from '@/components/media';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import {
     normalizeThemeComponentTheme,
@@ -36,87 +37,87 @@ const sectionHeaderStyles: Record<ThemeComponentTheme, {
 }> = {
     modern: {
         wrapper: 'mb-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between',
-        eyebrow: 'text-sm font-semibold uppercase tracking-[0.24em] text-primary/80',
-        title: 'mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl',
-        subtitle: 'mt-4 text-base leading-7 text-slate-600',
-        action: 'inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-700 transition-colors hover:text-primary',
+        eyebrow: 'text-sm font-semibold uppercase tracking-[0.24em] text-primary-text',
+        title: 'mt-3 text-3xl font-semibold tracking-tight text-text sm:text-4xl',
+        subtitle: 'mt-4 text-base leading-7 text-muted',
+        action: 'inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-text transition-colors hover:text-primary-text',
     },
     minimal: {
-        wrapper: 'mb-12 flex flex-col gap-3 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between',
-        eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500',
-        title: 'max-w-xl text-2xl font-normal leading-tight text-slate-950',
-        subtitle: 'mt-3 text-sm leading-6 text-slate-600',
-        action: 'text-xs font-medium uppercase tracking-[0.18em] text-slate-600 underline underline-offset-8 transition-colors hover:text-slate-950',
+        wrapper: 'mb-12 flex flex-col gap-3 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between',
+        eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-muted',
+        title: 'max-w-xl text-2xl font-normal leading-tight text-text',
+        subtitle: 'mt-3 text-sm leading-6 text-muted',
+        action: 'text-xs font-medium uppercase tracking-[0.18em] text-muted underline underline-offset-8 transition-colors hover:text-text',
     },
     fashion: {
         wrapper: 'mb-12 grid gap-5 border-l-4 border-text pl-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
-        eyebrow: 'text-xs font-bold uppercase tracking-[0.34em] text-primary',
-        title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-slate-950 sm:text-5xl',
-        subtitle: 'mt-5 max-w-xl text-base leading-7 text-slate-600',
-        action: 'self-start border-b-2 border-text pb-1 text-xs font-bold uppercase tracking-[0.26em] text-slate-950 transition-colors hover:border-primary hover:text-primary',
+        eyebrow: 'text-xs font-bold uppercase tracking-[0.34em] text-primary-text',
+        title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-text sm:text-5xl',
+        subtitle: 'mt-5 max-w-xl text-base leading-7 text-muted',
+        action: 'self-start border-b-2 border-text pb-1 text-xs font-bold uppercase tracking-[0.26em] text-text transition-colors hover:border-primary hover:text-primary-text',
     },
     pearl: {
         wrapper: 'mb-14 max-w-3xl border-b border-secondary/25 pb-7 text-center sm:mx-auto',
-        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.34em] text-secondary',
+        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.34em] text-secondary-text',
         title: 'mx-auto mt-4 max-w-2xl font-serif text-3xl font-normal leading-tight text-text sm:text-4xl',
         subtitle: 'mx-auto mt-5 max-w-xl text-sm leading-7 text-muted',
-        action: 'mt-5 inline-flex border-b border-secondary pb-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-secondary transition-colors hover:border-primary hover:text-primary',
+        action: 'mt-5 inline-flex border-b border-secondary pb-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-secondary-text transition-colors hover:border-primary hover:text-primary-text',
     },
     phoenix: {
         wrapper: 'mb-10 grid gap-5 border-b border-black/10 pb-6 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
-        eyebrow: 'text-xs font-bold uppercase tracking-[0.28em] text-primary',
+        eyebrow: 'text-xs font-bold uppercase tracking-[0.28em] text-primary-text',
         title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-text sm:text-5xl',
         subtitle: 'mt-4 max-w-xl text-sm leading-7 text-muted',
-        action: 'self-start border-b border-primary pb-1 text-xs font-bold uppercase tracking-[0.22em] text-primary transition-colors hover:border-text hover:text-text',
+        action: 'self-start border-b border-primary pb-1 text-xs font-bold uppercase tracking-[0.22em] text-primary-text transition-colors hover:border-text hover:text-text',
     },
     hype: {
         wrapper: 'mb-7 grid gap-3 border-b border-muted/20 pb-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
-        eyebrow: 'text-[11px] font-bold uppercase tracking-[0.16em] text-primary',
+        eyebrow: 'text-[11px] font-bold uppercase tracking-[0.16em] text-primary-text',
         title: 'text-2xl font-black leading-tight text-text sm:text-3xl',
         subtitle: 'mt-2 max-w-3xl text-sm leading-6 text-muted',
-        action: 'rounded-full border border-primary/35 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.1em] text-primary transition-colors hover:bg-primary hover:text-white',
+        action: 'rounded-full border border-primary/35 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.1em] text-primary-text transition-colors hover:bg-primary hover:text-on-primary',
     },
     electronics: {
         wrapper: 'mb-7 grid gap-3 border-b border-muted/25 pb-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
-        eyebrow: 'font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-primary',
+        eyebrow: 'font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-primary-text',
         title: 'text-2xl font-black leading-tight text-text sm:text-3xl',
         subtitle: 'mt-2 max-w-3xl text-sm leading-6 text-muted',
-        action: 'rounded border border-primary/35 px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-primary transition-colors hover:bg-primary hover:text-white',
+        action: 'rounded border border-primary/35 px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-primary-text transition-colors hover:bg-primary hover:text-on-primary',
     },
     alizon: {
         wrapper: 'mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between',
-        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.16em] text-primary',
+        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.16em] text-primary-text',
         title: 'text-2xl font-semibold leading-tight text-text sm:text-3xl',
         subtitle: 'mt-2 max-w-xl text-sm leading-6 text-muted',
-        action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-primary',
+        action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-primary-text',
     },
     sharp: {
         wrapper: 'mb-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between',
-        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary-text',
         title: 'text-2xl font-semibold leading-tight text-text sm:text-3xl',
         subtitle: 'mt-3 max-w-xl text-sm leading-6 text-muted',
-        action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-secondary',
+        action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-secondary-text',
     },
     cosmetics: {
         wrapper: 'mb-0 flex min-h-[50px] items-center justify-between gap-4 px-3 py-3',
-        eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-primary',
-        title: 'text-sm font-normal capitalize leading-[26.4px] text-primary sm:text-2xl',
+        eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-primary-text',
+        title: 'text-sm font-normal capitalize leading-[26.4px] text-primary-text sm:text-2xl',
         subtitle: 'mt-2 max-w-xl text-sm leading-6 text-muted',
         action: 'text-sm font-normal capitalize leading-7 text-text transition-opacity hover:opacity-70 sm:text-[19px]',
     },
     seven: {
         wrapper: 'mb-12 grid gap-5 border-l-4 border-text pl-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
-        eyebrow: 'text-xs font-bold uppercase tracking-[0.34em] text-primary',
-        title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-slate-950 sm:text-5xl',
-        subtitle: 'mt-5 max-w-xl text-base leading-7 text-slate-600',
-        action: 'self-start border-b-2 border-text pb-1 text-xs font-bold uppercase tracking-[0.26em] text-slate-950 transition-colors hover:border-primary hover:text-primary',
+        eyebrow: 'text-xs font-bold uppercase tracking-[0.34em] text-primary-text',
+        title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-text sm:text-5xl',
+        subtitle: 'mt-5 max-w-xl text-base leading-7 text-muted',
+        action: 'self-start border-b-2 border-text pb-1 text-xs font-bold uppercase tracking-[0.26em] text-text transition-colors hover:border-primary hover:text-primary-text',
     },
     default: {
         wrapper: 'mb-8 flex items-end justify-between gap-4',
-        eyebrow: 'text-sm font-semibold uppercase tracking-[0.2em] text-primary',
+        eyebrow: 'text-sm font-semibold uppercase tracking-[0.2em] text-primary-text',
         title: 'text-2xl font-bold text-text',
         subtitle: 'mt-3 text-sm leading-6 text-muted',
-        action: 'text-primary transition-colors hover:text-primary/80',
+        action: 'text-primary-text hover:underline',
     },
 };
 
@@ -188,18 +189,18 @@ const categoryArt = {
 };
 
 const buttonStyles: Record<ThemeComponentTheme, string> = {
-    modern: 'rounded-md bg-primary px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-primary/25 transition-all duration-normal hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
-    minimal: 'border border-slate-950 bg-transparent px-6 py-3 text-xs font-medium uppercase tracking-[0.16em] text-slate-950 transition-colors duration-fast hover:bg-slate-950 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/40 focus-visible:ring-offset-2',
+    modern: 'rounded-md bg-primary px-7 py-3.5 text-sm font-semibold text-on-primary shadow-lg shadow-primary/25 transition-all duration-normal hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
+    minimal: 'border border-current bg-transparent px-6 py-3 text-xs font-medium uppercase tracking-[0.16em] text-text transition-opacity duration-fast hover:opacity-80 focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
     fashion: 'border-2 border-current bg-slate-950 px-8 py-3.5 text-xs font-black uppercase tracking-[0.24em] text-white transition-all duration-normal hover:bg-white hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
     pearl: 'border border-secondary bg-background px-7 py-3 text-[11px] font-semibold uppercase tracking-[0.28em] text-text transition-colors duration-slow hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary/50 focus-visible:ring-offset-2',
-    phoenix: 'border border-primary bg-primary px-7 py-3 text-xs font-bold uppercase tracking-[0.22em] text-white transition-colors duration-normal hover:bg-text hover:border-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
-    hype: 'rounded-full bg-primary px-5 py-3 text-xs font-bold uppercase tracking-[0.12em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
-    electronics: 'rounded-md bg-primary px-4 py-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
-    alizon: 'rounded-none bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors duration-fast hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
-    sharp: 'bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors duration-fast hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
+    phoenix: 'border border-primary bg-primary px-7 py-3 text-xs font-bold uppercase tracking-[0.22em] text-on-primary transition-colors duration-normal hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
+    hype: 'rounded-full bg-primary px-5 py-3 text-xs font-bold uppercase tracking-[0.12em] text-on-primary transition-colors duration-fast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
+    electronics: 'rounded-md bg-primary px-4 py-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-on-primary transition-colors duration-fast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
+    alizon: 'rounded-none bg-primary px-6 py-3 text-sm font-semibold text-on-primary transition-colors duration-fast hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
+    sharp: 'bg-primary px-6 py-3 text-sm font-semibold text-on-primary transition-colors duration-fast hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
     cosmetics: 'border border-current bg-transparent px-7 py-3 text-xs font-bold uppercase tracking-[0.08em] text-current transition-colors duration-slow hover:bg-current hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2',
     seven: 'border-2 border-current bg-slate-950 px-8 py-3.5 text-xs font-black uppercase tracking-[0.24em] text-white transition-all duration-normal hover:bg-white hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
-    default: 'rounded-xl bg-primary px-7 py-3 font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
+    default: 'rounded-xl bg-primary px-7 py-3 font-semibold text-on-primary transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
 };
 
 export function ThemeSurface({
@@ -297,11 +298,13 @@ export function ThemeHeroCTA({
 
 export function ThemeButton({
     themeId,
+    appearance = 'theme',
     className,
     children,
     ...props
 }: {
     themeId?: string | null;
+    appearance?: 'theme' | 'custom';
     className?: string;
     children: React.ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -310,7 +313,8 @@ export function ThemeButton({
             type="button"
             className={cx(
                 'inline-flex min-h-9 items-center justify-center gap-1',
-                buttonStyles[normalizeThemeComponentTheme(themeId)],
+                appearance === 'theme' && buttonStyles[normalizeThemeComponentTheme(themeId)],
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2',
                 className
             )}
             {...props}
@@ -321,15 +325,17 @@ export function ThemeButton({
 }
 
 /** Navigation action with the same visual/focus treatment as the theme's buttons. */
-export function ThemeActionLink({ themeId, href, className, children }: {
+export function ThemeActionLink({ themeId, appearance = 'theme', href, className, children }: {
     themeId?: string | null;
+    appearance?: 'theme' | 'custom';
     href: string;
     className?: string;
     children: React.ReactNode;
 }) {
     return <AffiliateLink href={href} className={cx(
         'inline-flex min-h-9 w-full items-center justify-center gap-1',
-        buttonStyles[normalizeThemeComponentTheme(themeId)], className
+        appearance === 'theme' && buttonStyles[normalizeThemeComponentTheme(themeId)],
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text focus-visible:ring-offset-2', className
     )}>{children}</AffiliateLink>;
 }
 
@@ -347,7 +353,7 @@ export function ThemeBadge({
     const theme = normalizeThemeComponentTheme(themeId);
     const toneStyles: Record<ThemeComponentTheme, Record<'primary' | 'accent' | 'muted', string>> = {
         modern: {
-            primary: 'bg-primary text-white',
+            primary: 'bg-primary text-on-primary',
             accent: 'bg-rose-500 text-white',
             muted: 'border border-muted/20 bg-background/90 text-muted',
         },
@@ -357,52 +363,52 @@ export function ThemeBadge({
             muted: 'border border-muted/25 bg-background text-muted',
         },
         fashion: {
-            primary: 'bg-text text-background',
-            accent: 'bg-primary text-white',
+            primary: 'bg-text text-on-text',
+            accent: 'bg-primary text-on-primary',
             muted: 'border border-text/20 bg-background/90 text-text',
         },
         pearl: {
-            primary: 'border border-secondary/40 bg-background text-secondary',
-            accent: 'bg-secondary text-white',
+            primary: 'border border-secondary/40 bg-background text-secondary-text',
+            accent: 'bg-secondary text-on-secondary',
             muted: 'border border-secondary/25 bg-background/95 text-muted',
         },
         phoenix: {
-            primary: 'border border-primary bg-primary text-white',
-            accent: 'bg-text text-background',
+            primary: 'border border-primary bg-primary text-on-primary',
+            accent: 'bg-text text-on-text',
             muted: 'border border-black/10 bg-background/95 text-muted',
         },
         hype: {
-            primary: 'border border-primary bg-primary text-white',
+            primary: 'border border-primary bg-primary text-on-primary',
             accent: 'border border-cyan-400 bg-cyan-50 text-cyan-700',
             muted: 'border border-muted/20 bg-muted/10 text-muted',
         },
         electronics: {
-            primary: 'border border-primary bg-primary text-white',
+            primary: 'border border-primary bg-primary text-on-primary',
             accent: 'border border-primary/40 bg-primary/10 text-primary',
             muted: 'border border-muted/25 bg-muted/10 text-muted',
         },
         alizon: {
-            primary: 'bg-primary text-white',
-            accent: 'bg-primary text-white',
+            primary: 'bg-primary text-on-primary',
+            accent: 'bg-primary text-on-primary',
             muted: 'border border-muted/20 bg-background text-muted',
         },
         sharp: {
-            primary: 'bg-primary text-white',
-            accent: 'bg-primary text-white',
+            primary: 'bg-primary text-on-primary',
+            accent: 'bg-primary text-on-primary',
             muted: 'border border-muted/20 bg-background text-muted',
         },
         cosmetics: {
-            primary: 'bg-primary text-white',
+            primary: 'bg-primary text-on-primary',
             accent: 'bg-[#F2627B] text-white',
             muted: 'border border-primary/20 bg-background/95 text-primary',
         },
         seven: {
-            primary: 'bg-text text-background',
-            accent: 'bg-primary text-white',
+            primary: 'bg-text text-on-text',
+            accent: 'bg-primary text-on-primary',
             muted: 'border border-text/20 bg-background/90 text-text',
         },
         default: {
-            primary: 'bg-primary text-white',
+            primary: 'bg-primary text-on-primary',
             accent: 'bg-rose-500 text-white',
             muted: 'border border-muted/20 bg-background/85 text-muted',
         },
@@ -418,7 +424,7 @@ export function ThemeBadge({
         alizon: 'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]',
         sharp: 'px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]',
         cosmetics: 'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]',
-        seven: 'px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.28em] text-primary',
+        seven: 'px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.28em]',
         default: 'rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] shadow-sm',
     };
 
@@ -443,12 +449,12 @@ export function ThemeLabel({
         modern: 'rounded-md border border-primary/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-primary',
         minimal: 'text-[11px] uppercase tracking-[0.14em] text-muted',
         fashion: 'border-l-2 border-primary pl-2 text-xs font-bold uppercase tracking-[0.24em] text-text',
-        pearl: 'text-[11px] font-semibold uppercase tracking-[0.3em] text-secondary',
+        pearl: 'text-[11px] font-semibold uppercase tracking-[0.3em] text-secondary-text',
         phoenix: 'border-l-2 border-primary pl-2 text-xs font-bold uppercase tracking-[0.22em] text-text',
         hype: 'rounded-sm border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-primary',
         electronics: 'rounded-sm border border-primary/25 bg-primary/5 px-2 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-primary',
         alizon: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted',
-        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary-text',
         cosmetics: 'text-[11px] font-medium uppercase tracking-[0.16em] text-primary',
         seven: 'border-l-2 border-primary pl-2 text-xs font-bold uppercase tracking-[0.24em] text-text',
         default: 'rounded-full border border-primary/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-primary',
@@ -501,12 +507,12 @@ export function ThemeProductMeta({
         modern: 'text-xs font-semibold uppercase tracking-[0.16em] text-muted',
         minimal: 'text-[11px] uppercase tracking-[0.14em] text-muted',
         fashion: 'line-clamp-1 text-xs font-bold uppercase tracking-[0.24em] text-primary',
-        pearl: 'text-[11px] font-semibold uppercase tracking-[0.3em] text-secondary',
+        pearl: 'text-[11px] font-semibold uppercase tracking-[0.3em] text-secondary-text',
         phoenix: 'line-clamp-1 text-xs font-bold uppercase tracking-[0.22em] text-primary',
         hype: 'text-[11px] font-semibold uppercase tracking-[0.1em] text-muted',
         electronics: 'font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted',
         alizon: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted',
-        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary-text',
         cosmetics: 'text-[10px] font-semibold uppercase tracking-[0.18em] text-primary',
         seven: 'line-clamp-1 text-xs font-bold uppercase tracking-[0.24em] text-primary',
         default: 'text-xs font-semibold uppercase tracking-[0.16em] text-muted',
@@ -640,17 +646,19 @@ export function ThemeImageFrame({
         default: 'relative aspect-square overflow-hidden bg-muted/5',
     };
 
-    return <div className={cx(styles[theme], className)}>{children}</div>;
+    return <MediaFrame role="product-card" className={cx(styles[theme], className)}>{children}</MediaFrame>;
 }
 
 export function ThemeAddToCartButton({
     themeId,
+    appearance,
     label,
     onClick,
     disabled,
     className,
 }: {
     themeId?: string | null;
+    appearance?: 'theme' | 'custom';
     label: string;
     onClick: React.MouseEventHandler<HTMLButtonElement>;
     disabled?: boolean;
@@ -659,6 +667,7 @@ export function ThemeAddToCartButton({
     return (
         <ThemeButton
             themeId={themeId}
+            appearance={appearance}
             onClick={onClick}
             disabled={disabled}
             className={cx('w-full', className)}

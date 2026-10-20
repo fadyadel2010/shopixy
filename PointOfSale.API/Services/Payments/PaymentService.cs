@@ -24,6 +24,7 @@ using PointOfSale.Infrastructure.Data.Repositories;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Redis.Services;
+using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.API.Services.Payments.Adapters;
 using PointOfSale.API.Services.Payments.Fawry;
 using PointOfSale.API.Services.Payments.ManualPayment;
@@ -69,6 +70,7 @@ public class PaymentService : IPaymentService
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<PaymentService> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly IServiceScopeFactory? _scopeFactory;
 
     // =============================================================================
     // PAYMENT CONFIGURATION CONSTANTS
@@ -124,9 +126,11 @@ public class PaymentService : IPaymentService
         IManualPaymentRuntimeApplicationService? manualPaymentRuntimeApplicationService = null,
         IManualPaymentEvidenceApplicationService? manualPaymentEvidenceApplicationService = null,
         IManualPaymentRetentionAuthority? manualPaymentRetentionAuthority = null,
-        IManualPaymentDurableEvidenceAuthority? manualPaymentDurableEvidenceAuthority = null)
+        IManualPaymentDurableEvidenceAuthority? manualPaymentDurableEvidenceAuthority = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _dbContext = dbContext;
+        _scopeFactory = scopeFactory;
         _redisFactory = redisFactory;
         _redisSettings = redisSettings.Value;
         _eventPublisher = eventPublisher;
@@ -1993,7 +1997,47 @@ public class PaymentService : IPaymentService
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<PaymentIntentResponseDto> EnsurePersistedPaymentIntentReadyAsync(
+    private Task<PaymentIntentResponseDto> EnsurePersistedPaymentIntentReadyAsync(
+        Guid tenantId,
+        Guid orderId,
+        Guid paymentIntentId,
+        PaymentProvider provider,
+        bool promotionCalculationFailed,
+        string requestId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        async Task<PaymentIntentResponseDto> Attempt()
+        {
+            if (provider == PaymentProvider.ManualWallet && _scopeFactory != null)
+            {
+                // MassTransit's scoped bus outbox retains its OutboxState identity
+                // after SaveChanges. Clearing EF tracking cannot reset that state:
+                // order-commit delivery may already have removed the old row, and a
+                // rolled-back attempt must not append to that stale outbox identity.
+                // Give each resumable local unit of work its own publisher/context.
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                scope.ServiceProvider.GetRequiredService<TenantContext>().SetTenantId(tenantId);
+                var service = (PaymentService)scope.ServiceProvider.GetRequiredService<IPaymentService>();
+                return await service.EnsurePersistedPaymentIntentReadyOnceAsync(
+                    tenantId, orderId, paymentIntentId, provider, promotionCalculationFailed, requestId, correlationId, cancellationToken);
+            }
+
+            return await EnsurePersistedPaymentIntentReadyOnceAsync(
+                tenantId, orderId, paymentIntentId, provider, promotionCalculationFailed, requestId, correlationId, cancellationToken);
+        }
+
+        // Each local attempt rolls back/disposes its transaction, clears tracking
+        // and reacquires SQL authority. Never retry online provider execution here.
+        return provider == PaymentProvider.ManualWallet
+            ? ManualWalletAdmissionRetry.ExecuteAsync(Attempt,
+                (exception, number) => _logger.LogWarning(exception,
+                    "Retrying local Manual Wallet admission after serialization failure | OrderId: {OrderId} | PaymentIntentId: {PaymentIntentId} | Attempt: {Attempt} | CorrelationId: {CorrelationId}",
+                    orderId, paymentIntentId, number, correlationId), cancellationToken)
+            : Attempt();
+    }
+
+    private async Task<PaymentIntentResponseDto> EnsurePersistedPaymentIntentReadyOnceAsync(
         Guid tenantId,
         Guid orderId,
         Guid paymentIntentId,
@@ -2071,7 +2115,7 @@ public class PaymentService : IPaymentService
         }
         catch
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }

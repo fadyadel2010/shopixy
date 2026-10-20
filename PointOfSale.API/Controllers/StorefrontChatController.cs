@@ -143,7 +143,8 @@ public class StorefrontChatController : ControllerBase
                 "Chat response generated | TenantId: {TenantId} | Type: {Type} | IsFallback: {IsFallback} | CorrelationId: {CorrelationId}",
                 resolvedTenantId, response.Type, response.IsFallback, correlationId);
 
-            Response.Headers.CacheControl = "no-store";
+            // StorefrontHttpCachePolicyMiddleware owns and reasserts the full
+            // private/no-store contract for success and every failure response.
             return response.IsFallback ? StatusCode(503, response) : Ok(response);
         }
         catch (OperationCanceledException)

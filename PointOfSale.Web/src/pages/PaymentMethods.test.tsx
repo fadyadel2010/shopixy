@@ -3,7 +3,7 @@ import { act } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import PaymentMethods, { isUnsupportedMethod, mergePaymentMethodCatalog } from './PaymentMethods.jsx'
+import PaymentMethods, { isUnsupportedMethod, mergePaymentMethodCatalog, isValidManualWalletNumber } from './PaymentMethods.jsx'
 import AuthBootstrap from '../components/AuthBootstrap'
 import ProtectedRoute from '../components/ProtectedRoute'
 import { useAuthStore } from '../store/authStore'
@@ -96,6 +96,28 @@ afterEach(() => {
 })
 
 describe('PaymentMethods provider catalog', () => {
+    it.each(['', '  ', 'bad-wallet', '1234567', '123456789012345678901'])('rejects unusable wallet recipient %s', (value) => {
+        expect(isValidManualWalletNumber(value)).toBe(false)
+    })
+
+    it('displays saved public recipient and preserves invalid edits without posting', async () => {
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/catalog') ? providerCatalog : [{
+            id: 'wallet', code: 'MANUALWALLET', displayName: 'Manual Wallet', requiresConfiguration: true,
+            isConfigurationValid: true, isEnabled: true, publicConfiguration: { walletNumber: '01000000000' },
+        }] }))
+        const user = userEvent.setup()
+        render(<PaymentMethods />)
+        const row = (await screen.findByText('MANUALWALLET')).closest('tr')!
+        await user.click(within(row).getByRole('button', { name: 'Configure' }))
+        const input = screen.getByLabelText('paymentMethods.fields.walletNumber')
+        expect(input).toHaveValue('01000000000')
+        await user.clear(input)
+        await user.type(input, 'bad-wallet')
+        await user.click(screen.getByRole('button', { name: 'common.save' }))
+        expect(screen.getByRole('alert')).toHaveTextContent('valid recipient wallet number')
+        expect(input).toHaveValue('bad-wallet')
+        expect(apiMock.put).not.toHaveBeenCalled()
+    })
     it('merges a backend provider catalog with zero tenant rows as not configured providers', () => {
         const methods = mergePaymentMethodCatalog(providerCatalog, [])
 

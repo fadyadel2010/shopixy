@@ -1,7 +1,15 @@
 import React from 'react';
 import { useTranslation } from '@/i18n';
 
-const NewsletterSignup: React.FC<any> = ({
+interface NewsletterSignupProps {
+    heading?: string;
+    subheading?: string;
+    buttonText?: string;
+    backgroundColor?: string;
+    textColor?: string;
+}
+
+const NewsletterSignup: React.FC<NewsletterSignupProps> = ({
     heading,
     subheading,
     buttonText,
@@ -35,11 +43,11 @@ const NewsletterSignup: React.FC<any> = ({
                     <input
                         type="email"
                         placeholder={t('footer.enterEmail')}
-                        className="px-6 py-3 rounded-full text-text bg-white flex-1 max-w-md"
+                        className="px-6 py-3 rounded-full text-text bg-background placeholder:text-muted flex-1 max-w-md"
                     />
                     <button
                         type="submit"
-                        className="px-8 py-3 bg-primary text-white rounded-full font-semibold hover:opacity-90 transition-opacity"
+                        className="px-8 py-3 bg-primary text-on-primary rounded-full font-semibold hover:opacity-90 transition-opacity"
                     >
                         {displayButtonText}
                     </button>

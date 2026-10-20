@@ -17,7 +17,7 @@ namespace PointOfSale.Core.Entities;
 /// CRITICAL RULES:
 /// - MONEY IS TRACKED ON ORDER ITEMS (VARIANTS), NOT ON ORDERS
 /// - Every SKU knows exactly how much money was paid and refunded for it
-/// - Order.Total = SUM(OrderItems.Subtotal), but money lives on OrderItems
+/// - Net line balances exclude order-level shipping/fees; Order.Total includes both
 /// - This enables: Partial payments, Partial refunds, SKU-level disputes, Accurate COGS
 /// </summary>
 public class OrderItem : BaseEntity
@@ -142,9 +142,17 @@ public class OrderItem : BaseEntity
     
     /// <summary>
     /// Computed subtotal for this line item (UnitPrice × Quantity).
-    /// PHASE 11.4.2.A: This is the billable amount for this SKU.
+    /// Gross merchandise amount before the accepted line discount and tax.
     /// </summary>
     public decimal Subtotal => UnitPrice * Quantity;
+
+    /// <summary>
+    /// Accepted line amount due. Checkout already allocates order discounts and
+    /// tax into these persisted fields; never subtract the order discount again.
+    /// Shipping and payment fees remain order-level charges. Derive from the
+    /// pricing fields so legacy lines without a populated Total retain their value.
+    /// </summary>
+    public decimal PayableAmount => Math.Max(0m, Subtotal - DiscountAmount + TaxAmount);
     
     /// <summary>
     /// How much money has been applied/paid toward this SKU.
@@ -162,9 +170,9 @@ public class OrderItem : BaseEntity
     
     /// <summary>
     /// Whether this line item is fully paid.
-    /// PHASE 11.4.2.A: Computed from PaidAmount >= Subtotal.
+    /// Computed against the accepted net line amount, not gross merchandise.
     /// </summary>
-    public bool IsFullyPaid => PaidAmount >= Subtotal;
+    public bool IsFullyPaid => PaidAmount >= PayableAmount;
     
     /// <summary>
     /// Whether this line item is fully refunded.
@@ -180,8 +188,9 @@ public class OrderItem : BaseEntity
     
     /// <summary>
     /// Remaining amount to be paid for this SKU.
-    /// PHASE 11.4.2.A: Subtotal - PaidAmount.
+    /// Accepted net line amount less prior allocated payments.
+    /// Refunds do not reopen the original collection obligation.
     /// Returns 0 if fully paid.
     /// </summary>
-    public decimal RemainingAmount => Math.Max(0, Subtotal - PaidAmount);
+    public decimal RemainingAmount => Math.Max(0m, PayableAmount - PaidAmount);
 }

@@ -5,11 +5,10 @@ export default {
         extend: {
             // All colors use CSS variables - NO HARDCODED VALUES
             colors: {
-                primary: 'var(--color-primary)',
-                secondary: 'var(--color-secondary)',
-                background: 'var(--color-background)',
-                text: 'var(--color-text)',
-                muted: 'var(--color-muted)',
+                // Channels are necessary for Tailwind's /opacity variants.
+                ...Object.fromEntries(['primary', 'secondary', 'background', 'text', 'muted',
+                    'on-primary', 'on-secondary', 'on-text', 'primary-text', 'secondary-text',
+                    'surface', 'subtle', 'border'].map(role => [role, `rgba(var(--color-${role}-rgb), <alpha-value>)`])),
             },
             // Font family uses CSS variable
             fontFamily: {
