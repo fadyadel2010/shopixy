@@ -159,8 +159,8 @@ export default function PaymentMethods() {
         if (method.isAvailableForCheckout === true) {
             return t('paymentMethods.checkoutReady', 'Available for checkout (order limits still apply)')
         }
-        if (method.checkoutUnavailableReasonCode === 'MANUAL_PAYMENT_ENVIRONMENT_MISMATCH') {
-            return t('paymentMethods.walletEnvironmentMismatch', 'Unavailable at checkout: Sandbox Mode must match the active payment runtime. This is separate from Enable; ask the administrator which environment is permitted.')
+        if (method.checkoutUnavailableReason) {
+            return method.checkoutUnavailableReason
         }
         return t('paymentMethods.checkoutUnavailable', 'Unavailable at checkout')
     }
@@ -320,7 +320,7 @@ export default function PaymentMethods() {
         }
 
             const payload = {
-                isSandbox: configData.isSandbox,
+                ...(editingMethod.code !== 'MANUALWALLET' ? { isSandbox: configData.isSandbox } : {}),
                 configuration,
                 reset: configData.reset,
                 confirmReset: configData.confirmReset
@@ -854,7 +854,7 @@ export default function PaymentMethods() {
                             </h2>
                             <p className="mt-1 text-sm text-gray-500">
                                 {editingMethod.code === 'MANUALWALLET'
-                                    ? 'Recipient wallet number is shown as saved. Sandbox mode is not activation; use Enable in the list after saving.'
+                                    ? t('paymentMethods.walletConfigurationHelp', 'Recipient wallet number is shown as saved. Save valid settings, then use Enable in the list. Checkout readiness is checked independently.')
                                     : t('paymentMethods.secretHandlingDescription')}
                             </p>
                             {editingMethod.code === 'MANUALWALLET' && editingMethod.isAvailableForCheckout === false && (
@@ -875,7 +875,7 @@ export default function PaymentMethods() {
                                 </div>
                             )}
 
-                            <div className="rounded-lg bg-amber-50 p-4">
+                            {editingMethod.code !== 'MANUALWALLET' && <div className="rounded-lg bg-amber-50 p-4">
                                 <div className="flex items-center justify-between gap-4">
                                     <div>
                                         <p className="font-medium text-amber-800">{t('paymentMethods.sandboxMode', 'Sandbox Mode')}</p>
@@ -891,7 +891,7 @@ export default function PaymentMethods() {
                                         <div className="peer h-6 w-11 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
                                     </label>
                                 </div>
-                            </div>
+                            </div>}
 
                             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
                                 {t('paymentMethods.secretResetDescription')}

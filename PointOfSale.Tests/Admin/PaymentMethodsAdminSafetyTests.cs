@@ -19,6 +19,34 @@ namespace PointOfSale.Tests.Admin;
 public sealed class PaymentMethodsAdminSafetyTests
 {
     [Theory]
+    [InlineData(true, true)] [InlineData(false, true)]
+    [InlineData(true, false)] [InlineData(false, false)]
+    public async Task ManualWallet_LegacyModeInputIgnoredAndOmittedFromApi(bool storedSandbox, bool upsert)
+    {
+        var tenant = Guid.NewGuid();
+        var protection = new EphemeralDataProtectionProvider();
+        await using var db = CreateDbContext(tenant);
+        db.TenantPaymentMethods.Add(new TenantPaymentMethod
+        {
+            Id = Guid.NewGuid(), TenantId = tenant, Code = "MANUALWALLET", DisplayName = "QA wallet",
+            IsSandbox = storedSandbox, SupportsOffline = true,
+            ConfigEncrypted = ProtectConfiguration(protection, new() { ["walletNumber"] = "01000000000" })
+        });
+        await db.SaveChangesAsync();
+        var controller = CreateController(db, tenant, protection);
+        var request = new UpsertPaymentMethodDto
+        {
+            IsSandbox = !storedSandbox, Configuration = new() { ["walletNumber"] = "01000000000" }
+        };
+        var result = upsert ? await controller.UpsertPaymentMethod("MANUALWALLET", request, default)
+            : await controller.UpdateConfiguration("MANUALWALLET", request, default);
+        var dto = Assert.IsType<PaymentMethodResponseDto>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Null(dto.IsSandbox);
+        Assert.DoesNotContain("IsSandbox", JsonSerializer.Serialize(dto));
+        Assert.Equal(storedSandbox, (await db.TenantPaymentMethods.SingleAsync()).IsSandbox);
+    }
+
+    [Theory]
     [InlineData(false)] [InlineData(true)]
     public async Task ManualWallet_MetadataUpdateCannotPersistLegacyEnabledInvalidConfiguration(bool emptyObject)
     {

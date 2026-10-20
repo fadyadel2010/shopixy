@@ -84,26 +84,15 @@ public sealed class ManualPaymentEvidenceApplicationContractCertificationTests
     }
 
     [Fact]
-    public async Task EnvironmentValidation_MustRejectMismatchBeforeAdapterOrBridge()
+    public async Task EvidenceAdmission_MustIgnoreLegacyEnvironment()
     {
         await using var dbContext = CreateDbContext();
         dbContext.TenantPaymentMethods.Add(CreatePaymentMethod(isSandbox: false));
         await dbContext.SaveChangesAsync();
-        var adapter = new Mock<IManualPaymentEvidenceAdapter>(MockBehavior.Strict);
-        var bridge = new Mock<IManualPaymentRuntimeBridge>(MockBehavior.Strict);
-        var service = new ManualPaymentEvidenceApplicationService(
-            CreateResolver(dbContext),
-            adapter.Object,
-            bridge.Object,
-            Mock.Of<IManualPaymentOperationalTelemetryAuthority>(),
-            NullLogger<ManualPaymentEvidenceApplicationService>.Instance);
-
-        var exception = await Assert.ThrowsAsync<ManualPaymentApplicationException>(() =>
-            service.AdmitEvidenceAsync(EvidenceRequest()));
-
-        Assert.Equal("MANUAL_PAYMENT_ENVIRONMENT_MISMATCH", exception.Code);
-        adapter.Verify(value => value.Translate(It.IsAny<ManualPaymentEvidenceSubmission>()), Times.Never);
-        bridge.Verify(value => value.ExecuteEvidenceAsync(It.IsAny<ManualPaymentEvidenceExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        var configuration = await CreateResolver(dbContext).ResolveAsync(
+            TenantId, ManualPaymentOperationalCapability.EvidenceAdmission, ManualPaymentChannel.BankTransfer);
+        Assert.Equal(TenantId, configuration.TenantId);
+        Assert.Equal(ManualPaymentChannel.BankTransfer, configuration.Channel);
     }
 
     [Fact]

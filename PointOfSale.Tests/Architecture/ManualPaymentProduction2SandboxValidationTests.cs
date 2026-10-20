@@ -7,7 +7,7 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class ManualPaymentProduction2SandboxValidationTests
 {
     [Fact]
-    public void SandboxConfiguration_MustValidateSourceEnvironmentIsolationAndFailClosedDefaults()
+    public void ManualConfiguration_MustIgnoreLegacyModeAndPreserveDisabledDefaults()
     {
         var appsettings = CertificationSource.ReadRepoFile("PointOfSale.API/appsettings.json");
         var options = CertificationSource.ReadRepoFile("PointOfSale.API/Configuration/ManualPaymentOptions.cs");
@@ -20,25 +20,22 @@ public sealed class ManualPaymentProduction2SandboxValidationTests
         Assert.Contains("\"SandboxEnabled\": true", appsettings, StringComparison.Ordinal);
         Assert.Contains("\"ProductionEnabled\": false", appsettings, StringComparison.Ordinal);
 
-        Assert.Contains("Manual Payment sandbox environment must set SandboxMode to true", options, StringComparison.Ordinal);
-        Assert.Contains("Manual Payment production environment must set SandboxMode to false", options, StringComparison.Ordinal);
-        Assert.Contains("Manual Payment sandbox execution must be explicitly enabled by the sandbox feature flag", options, StringComparison.Ordinal);
-        Assert.Contains("Manual Payment production execution must be explicitly enabled by the production feature flag", options, StringComparison.Ordinal);
-        Assert.Contains("paymentMethod.IsSandbox != expectedSandbox", application, StringComparison.Ordinal);
-        Assert.Contains("paymentMethod.IsSandbox != options.SandboxMode", application, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (options.Environment", options, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsureTenantEnvironment", application, StringComparison.Ordinal);
+        Assert.DoesNotContain("paymentMethod.IsSandbox", application, StringComparison.Ordinal);
 
         AssertValid(ValidSandboxOptions());
-        AssertInvalid(ValidSandboxOptions() with { SandboxMode = false }, "SandboxMode");
-        AssertInvalid(ValidSandboxOptions() with
+        AssertValid(ValidSandboxOptions() with { SandboxMode = false });
+        AssertValid(ValidSandboxOptions() with
         {
             Environment = ManualPaymentEnvironment.Production,
             SandboxMode = true,
             FeatureFlags = new ManualPaymentFeatureFlags { Enabled = true, ProductionEnabled = true }
-        }, "SandboxMode");
-        AssertInvalid(ValidSandboxOptions() with
+        });
+        AssertValid(ValidSandboxOptions() with
         {
             FeatureFlags = new ManualPaymentFeatureFlags { Enabled = true, SandboxEnabled = false }
-        }, "sandbox feature flag");
+        });
     }
 
     [Fact]

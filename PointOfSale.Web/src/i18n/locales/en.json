@@ -1539,7 +1539,7 @@
     "sandboxDescription": "Use test credentials for development",
     "checkoutReady": "Available for checkout (order limits still apply)",
     "checkoutUnavailable": "Unavailable at checkout",
-    "walletEnvironmentMismatch": "Unavailable at checkout: Sandbox Mode must match the active payment runtime. This is separate from Enable; ask the administrator which environment is permitted.",
+    "walletConfigurationHelp": "Recipient wallet number is shown as saved. Save valid settings, then use Enable in the list. Checkout readiness is checked independently.",
     "configured": "Configured",
     "notConfigured": "Not Configured",
     "configRequired": "Please configure {{name}} first",

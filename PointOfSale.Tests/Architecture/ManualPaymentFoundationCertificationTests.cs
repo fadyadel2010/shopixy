@@ -53,7 +53,7 @@ public sealed class ManualPaymentFoundationCertificationTests
     }
 
     [Fact]
-    public void Validation_MustFailClosedForDisabledProviderAndEnvironmentMismatch()
+    public void Validation_MustRejectDisabledProviderButIgnoreLegacyEnvironmentMismatch()
     {
         var disabledProvider = ManualPaymentConfigurationValidator.Validate(ValidOptions() with
         {
@@ -73,11 +73,11 @@ public sealed class ManualPaymentFoundationCertificationTests
         });
 
         Assert.False(disabledProvider.IsValid);
-        Assert.False(sandboxMismatch.IsValid);
-        Assert.False(productionFlagDisabled.IsValid);
+        Assert.True(sandboxMismatch.IsValid);
+        Assert.True(productionFlagDisabled.IsValid);
         Assert.Contains(disabledProvider.Errors, error => error.Contains("provider must be enabled", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(sandboxMismatch.Errors, error => error.Contains("SandboxMode to true", StringComparison.Ordinal));
-        Assert.Contains(productionFlagDisabled.Errors, error => error.Contains("production feature flag", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(sandboxMismatch.Errors);
+        Assert.Empty(productionFlagDisabled.Errors);
     }
 
     [Fact]

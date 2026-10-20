@@ -1,0 +1,3 @@
+?? tests/browser/manual-wallet-no-sandbox-20261020-before.js
+?? tests/manual-wallet-no-sandbox-20261020.py
+?? tests/quality-closeout/manual-wallet-no-sandbox-20261020-capture.ps1

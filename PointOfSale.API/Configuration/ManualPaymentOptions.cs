@@ -8,6 +8,7 @@ public sealed record ManualPaymentOptions
     public const string SectionName = "CommerceHub:Payments:ManualPayment";
 
     public bool Enabled { get; init; }
+    // Legacy configuration/diagnostic metadata only. Manual payments have no gateway mode.
     public ManualPaymentEnvironment Environment { get; init; } = ManualPaymentEnvironment.Sandbox;
     public bool SandboxMode { get; init; } = true;
     public ManualPaymentFeatureFlags FeatureFlags { get; init; } = new();
@@ -146,26 +147,6 @@ public static class ManualPaymentConfigurationValidator
         if (!options.Enabled && options.FeatureFlags.Enabled)
         {
             errors.Add("Manual Payment provider must be enabled when the Manual Payment foundation feature flag is enabled.");
-        }
-
-        if (options.Environment == ManualPaymentEnvironment.Sandbox && !options.SandboxMode)
-        {
-            errors.Add("Manual Payment sandbox environment must set SandboxMode to true.");
-        }
-
-        if (options.Environment == ManualPaymentEnvironment.Production && options.SandboxMode)
-        {
-            errors.Add("Manual Payment production environment must set SandboxMode to false.");
-        }
-
-        if (enabled && options.Environment == ManualPaymentEnvironment.Sandbox && !options.FeatureFlags.SandboxEnabled)
-        {
-            errors.Add("Manual Payment sandbox execution must be explicitly enabled by the sandbox feature flag.");
-        }
-
-        if (enabled && options.Environment == ManualPaymentEnvironment.Production && !options.FeatureFlags.ProductionEnabled)
-        {
-            errors.Add("Manual Payment production execution must be explicitly enabled by the production feature flag.");
         }
 
         ValidateProofConfiguration(options.Proof, errors);

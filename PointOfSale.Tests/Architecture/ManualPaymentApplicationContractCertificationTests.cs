@@ -110,19 +110,19 @@ public sealed class ManualPaymentApplicationContractCertificationTests
     }
 
     [Fact]
-    public async Task EnvironmentValidation_MustRejectTenantEnvironmentMismatch()
+    public async Task TenantResolution_MustIgnoreLegacyTenantEnvironment()
     {
         await using var dbContext = CreateDbContext();
         dbContext.TenantPaymentMethods.Add(CreatePaymentMethod(isSandbox: false));
         await dbContext.SaveChangesAsync();
 
-        var exception = await Assert.ThrowsAsync<ManualPaymentApplicationException>(() =>
-            CreateResolver(dbContext).ResolveAsync(
+        var configuration = await CreateResolver(dbContext).ResolveAsync(
                 TenantId,
                 ManualPaymentOperationalCapability.ReferencePaymentInitialization,
-                ManualPaymentChannel.BankTransfer));
+                ManualPaymentChannel.BankTransfer);
 
-        Assert.Equal("MANUAL_PAYMENT_ENVIRONMENT_MISMATCH", exception.Code);
+        Assert.Equal(TenantId, configuration.TenantId);
+        Assert.Equal(ManualPaymentChannel.BankTransfer, configuration.Channel);
     }
 
     [Fact]

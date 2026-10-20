@@ -100,14 +100,15 @@ describe('PaymentMethods provider catalog', () => {
         apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/catalog') ? providerCatalog : [{
             id: 'wallet', code: 'MANUALWALLET', displayName: 'Manual Wallet', requiresConfiguration: true,
             isConfigurationValid: true, isEnabled: true, isSandbox: false,
-            isAvailableForCheckout: false, checkoutUnavailableReasonCode: 'MANUAL_PAYMENT_ENVIRONMENT_MISMATCH',
+            isAvailableForCheckout: false, checkoutUnavailableReasonCode: 'MANUAL_PAYMENT_CONFIGURATION_INVALID',
+            checkoutUnavailableReason: 'Manual Payment requires configured customer instructions before enabling the provider.',
             publicConfiguration: { walletNumber: '01000000000' },
         }] }))
         render(<PaymentMethods />)
         const row = (await screen.findByText('MANUALWALLET')).closest('tr')!
         expect(within(row).getByText('Enabled')).toBeInTheDocument()
-        expect(within(row).getByText(/Sandbox Mode must match the active payment runtime/)).toBeInTheDocument()
-        expect(within(row).getByText('MANUAL_PAYMENT_ENVIRONMENT_MISMATCH')).toBeInTheDocument()
+        expect(within(row).getByText(/requires configured customer instructions/)).toBeInTheDocument()
+        expect(within(row).getByText('MANUAL_PAYMENT_CONFIGURATION_INVALID')).toBeInTheDocument()
         expect(within(row).getByRole('button', { name: 'common.disable' })).toBeInTheDocument()
         expect(apiMock.put).not.toHaveBeenCalled()
     })
@@ -119,6 +120,26 @@ describe('PaymentMethods provider catalog', () => {
         }] }))
         render(<PaymentMethods />)
         expect(await screen.findByText('Available for checkout (order limits still apply)')).toBeInTheDocument()
+    })
+    it('omits mode controls and mode payload for Manual Wallet only', async () => {
+        apiMock.get.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/catalog') ? providerCatalog : [{
+            id: 'wallet', code: 'MANUALWALLET', displayName: 'Manual Wallet', requiresConfiguration: true,
+            isConfigurationValid: true, isEnabled: false, isSandbox: false, publicConfiguration: { walletNumber: '01000000000' },
+        }] }))
+        apiMock.put.mockResolvedValue({ data: {} })
+        const user = userEvent.setup()
+        render(<PaymentMethods />)
+        const row = (await screen.findByText('MANUALWALLET')).closest('tr')!
+        await user.click(within(row).getByRole('button', { name: 'Configure' }))
+        expect(screen.queryByText('Sandbox Mode')).not.toBeInTheDocument()
+        expect(screen.queryByText(/test credentials/i)).not.toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'common.save' }))
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalled())
+        const payload = apiMock.put.mock.calls[0][1]
+        expect(payload).not.toHaveProperty('isSandbox')
+        expect(payload.configuration).toEqual({ walletNumber: '01000000000' })
+        await user.click(within((await screen.findByText('Online Payment')).closest('tr')!).getByRole('button', { name: 'Configure' }))
+        expect(screen.getByText('Sandbox Mode')).toBeInTheDocument()
     })
     it.each(['', '  ', 'bad-wallet', '1234567', '123456789012345678901'])('rejects unusable wallet recipient %s', (value) => {
         expect(isValidManualWalletNumber(value)).toBe(false)

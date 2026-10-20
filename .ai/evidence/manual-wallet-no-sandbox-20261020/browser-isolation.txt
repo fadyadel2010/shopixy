@@ -1,0 +1,57 @@
+### Result
+{"foreign":[{"method":"get","url":"/admin/payment-methods/MANUALWALLET","status":403,"body":{"error":"Tenant spoofing detected.","code":"TENANT_FORBIDDEN"}},{"method":"put","url":"/admin/payment-methods/MANUALWALLET/configure","status":403,"body":{"error":"Tenant spoofing detected.","code":"TENANT_FORBIDDEN"}},{"method":"get","url":"/admin/orders/d8bf8244-68b9-4e09-8a13-ce2f5584587c","status":403,"body":{"error":"Tenant spoofing detected.","code":"TENANT_FORBIDDEN"}},{"method":"post","url":"/admin/payments/manual-wallet/d18f26f8-d4ce-48ed-9ff8-7e25d3effc6f/confirm","status":403,"body":{"error":"Tenant spoofing detected.","code":"TENANT_FORBIDDEN"}},{"method":"get","url":"/admin/payments/manual-wallet/proof-image/d18f26f8-d4ce-48ed-9ff8-7e25d3effc6f","status":403,"body":{"error":"Tenant spoofing detected.","code":"TENANT_FORBIDDEN"}}],"invalid":[{"status":400,"body":{"code":"MANUALWALLET","message":"Manual Wallet recipient cannot be cleared or invalidated.","traceId":"18014350-9d91-4404-8011-9aff8f55bd08","data":{"validationErrors":["A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method."]}}},{"status":400,"body":{"code":"MANUALWALLET","message":"Manual Wallet recipient cannot be cleared or invalidated.","traceId":"d348591e-a1f5-4ab2-98c1-89e2076b2235","data":{"validationErrors":["A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method."]}}}],"duplicate":[{"status":409,"body":{"code":"MANUAL_PAYMENT_REQUEST_INVALID","message":"Manual Payment is not awaiting operator review.","traceId":"00-72975bae5fc9ad302c9eb8c14fc2ed7c-490bd20e415cf3a5-01"}},{"status":409,"body":{"code":"MANUAL_PAYMENT_REQUEST_INVALID","message":"Manual Payment is not awaiting operator review.","traceId":"00-c90297f8e78c9916b5805d8b17ab9cc4-039723fd987c1a4c-01"}}],"staleRejection":{"status":409,"body":{"code":"MANUAL_PAYMENT_REQUEST_INVALID","message":"Manual Payment is not awaiting operator review.","traceId":"00-2092a62f4ee5b30c588e126459109b32-0d4b017a143509d6-01"}},"unchanged":true,"proof":{"status":200,"type":"image/png","size":38410},"publicProbes":[{"path":"/payment-methods","status":403},{"path":"/payments/manual-wallet/config","status":403},{"path":"/payments/d18f26f8-d4ce-48ed-9ff8-7e25d3effc6f","status":403}],"passed":true}
+### Ran Playwright code
+```js
+await (async page => {
+    const admin=page.context().pages().find(p=>p.url().startsWith('http://localhost:5173/'));
+    const storefront=page.context().pages().find(p=>p.url().startsWith('http://ahramstore.localhost:5174/'));
+    const target=await storefront.evaluate(()=>JSON.parse(sessionStorage.getItem('mwnosb-wallet-result')).body);
+    const result=await admin.evaluate(async target=>{
+        const api=(await import('/src/services/api.js')).default;
+        const original=(await api.get('/admin/payment-methods/MANUALWALLET')).data;
+        const request=async(method,url,data,headers={})=>{
+            try{const r=await api.request({method,url,data,headers});return{status:r.status,body:r.data};}
+            catch(e){return{status:e.response?.status,body:e.response?.data};}
+        };
+        const foreign=[];
+        for(const [method,url,data] of [
+            ['get','/admin/payment-methods/MANUALWALLET'],
+            ['put','/admin/payment-methods/MANUALWALLET/configure',{configuration:{walletNumber:'01000000088'}}],
+            ['get','/admin/orders/'+target.orderId],
+            ['post','/admin/payments/manual-wallet/'+target.paymentIntentId+'/confirm',{}],
+            ['get','/admin/payments/manual-wallet/proof-image/'+target.paymentIntentId]
+        ])foreign.push({method,url,...await request(method,url,data,{'X-Tenant-Id':'11111111-1111-4111-8111-111111111111'})});
+        const invalid=[];
+        for(const value of['','not-a-wallet'])invalid.push(await request('put','/admin/payment-methods/MANUALWALLET/configure',{configuration:{walletNumber:value}}));
+        const duplicate=await Promise.all([1,2].map(()=>request('post','/admin/payments/manual-wallet/'+target.paymentIntentId+'/confirm',{})));
+        const staleRejection=await request('post','/admin/payments/manual-wallet/'+target.paymentIntentId+'/reject',{reason:'MWNOSB20261020 stale decision must fail'});
+        const unchanged=JSON.stringify(original)===JSON.stringify((await api.get('/admin/payment-methods/MANUALWALLET')).data);
+        const proof=await api.get('/admin/payments/manual-wallet/proof-image/'+target.paymentIntentId,{responseType:'blob'});
+        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(proof.data);});
+        const tab=window.open('','_blank');const img=tab.document.createElement('img');img.src=dataUrl;img.alt='Actual retained TEST ONLY proof';tab.document.body.append(img);
+        return{foreign,invalid,duplicate,staleRejection,unchanged,proof:{status:proof.status,type:proof.data.type,size:proof.data.size}};
+    },target);
+    const proofPage=page.context().pages().find(p=>p.url()==='about:blank');
+    await proofPage.waitForFunction(()=>document.querySelector('img')?.complete&&document.querySelector('img').naturalWidth>0);
+    await proofPage.screenshot({path:'.ai/evidence/manual-wallet-no-sandbox-20261020/actual-retained-proof.png',fullPage:true});
+    await proofPage.close();
+    const publicProbes=await storefront.evaluate(async target=>{
+        const loaded=performance.getEntriesByType('resource').find(e=>e.name.includes('/src/bootstrap/index.ts'))?.name||'/src/bootstrap/index.ts';
+        const{getRequestHeaders}=await import(loaded);const probes=[];
+        for(const path of['/payment-methods','/payments/manual-wallet/config','/payments/'+target.paymentIntentId]){
+            const r=await fetch('/api/storefront'+path,{headers:{...getRequestHeaders(),'X-Tenant-Id':'11111111-1111-4111-8111-111111111111'},credentials:'include'});probes.push({path,status:r.status});
+        }return probes;
+    },target);
+    return{...result,publicProbes,passed:result.unchanged&&result.foreign.every(r=>r.status===403)&&result.invalid.every(r=>r.status===400)&&result.duplicate.every(r=>r.status>=400)&&result.staleRejection.status>=400&&publicProbes.every(r=>r.status===403)};
+}
+)(page);
+```
+### Open tabs
+- 0: [Point of Sale System](http://localhost:5173/ecommerce/orders?search=ORD-C9C5-2026-01084&page=1)
+- 1: (current) [Storefront](http://ahramstore.localhost:5174/checkout/pending?orderId=d8bf8244-68b9-4e09-8a13-ce2f5584587c&orderNumber=ORD-C9C5-2026-01084)
+### Page
+- Page URL: http://ahramstore.localhost:5174/checkout/pending?orderId=d8bf8244-68b9-4e09-8a13-ce2f5584587c&orderNumber=ORD-C9C5-2026-01084
+- Page Title: Storefront
+- Console: 3 errors, 2 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-10-20T19-38-05-916Z.log#L1095-L1100

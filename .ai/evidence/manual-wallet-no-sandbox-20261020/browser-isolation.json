@@ -1,0 +1,124 @@
+{
+  "foreign": [
+    {
+      "method": "get",
+      "url": "/admin/payment-methods/MANUALWALLET",
+      "status": 403,
+      "body": {
+        "error": "Tenant spoofing detected.",
+        "code": "TENANT_FORBIDDEN"
+      }
+    },
+    {
+      "method": "put",
+      "url": "/admin/payment-methods/MANUALWALLET/configure",
+      "status": 403,
+      "body": {
+        "error": "Tenant spoofing detected.",
+        "code": "TENANT_FORBIDDEN"
+      }
+    },
+    {
+      "method": "get",
+      "url": "/admin/orders/d8bf8244-68b9-4e09-8a13-ce2f5584587c",
+      "status": 403,
+      "body": {
+        "error": "Tenant spoofing detected.",
+        "code": "TENANT_FORBIDDEN"
+      }
+    },
+    {
+      "method": "post",
+      "url": "/admin/payments/manual-wallet/d18f26f8-d4ce-48ed-9ff8-7e25d3effc6f/confirm",
+      "status": 403,
+      "body": {
+        "error": "Tenant spoofing detected.",
+        "code": "TENANT_FORBIDDEN"
+      }
+    },
+    {
+      "method": "get",
+      "url": "/admin/payments/manual-wallet/proof-image/d18f26f8-d4ce-48ed-9ff8-7e25d3effc6f",
+      "status": 403,
+      "body": {
+        "error": "Tenant spoofing detected.",
+        "code": "TENANT_FORBIDDEN"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "status": 400,
+      "body": {
+        "code": "MANUALWALLET",
+        "message": "Manual Wallet recipient cannot be cleared or invalidated.",
+        "traceId": "18014350-9d91-4404-8011-9aff8f55bd08",
+        "data": {
+          "validationErrors": [
+            "A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method."
+          ]
+        }
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "MANUALWALLET",
+        "message": "Manual Wallet recipient cannot be cleared or invalidated.",
+        "traceId": "d348591e-a1f5-4ab2-98c1-89e2076b2235",
+        "data": {
+          "validationErrors": [
+            "A valid recipient wallet number is required. Use reset with confirmation to clear and disable the method."
+          ]
+        }
+      }
+    }
+  ],
+  "duplicate": [
+    {
+      "status": 409,
+      "body": {
+        "code": "MANUAL_PAYMENT_REQUEST_INVALID",
+        "message": "Manual Payment is not awaiting operator review.",
+        "traceId": "00-72975bae5fc9ad302c9eb8c14fc2ed7c-490bd20e415cf3a5-01"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "MANUAL_PAYMENT_REQUEST_INVALID",
+        "message": "Manual Payment is not awaiting operator review.",
+        "traceId": "00-c90297f8e78c9916b5805d8b17ab9cc4-039723fd987c1a4c-01"
+      }
+    }
+  ],
+  "staleRejection": {
+    "status": 409,
+    "body": {
+      "code": "MANUAL_PAYMENT_REQUEST_INVALID",
+      "message": "Manual Payment is not awaiting operator review.",
+      "traceId": "00-2092a62f4ee5b30c588e126459109b32-0d4b017a143509d6-01"
+    }
+  },
+  "unchanged": true,
+  "proof": {
+    "status": 200,
+    "type": "image/png",
+    "size": 38410
+  },
+  "publicProbes": [
+    {
+      "path": "/payment-methods",
+      "status": 403
+    },
+    {
+      "path": "/payments/manual-wallet/config",
+      "status": 403
+    },
+    {
+      "path": "/payments/d18f26f8-d4ce-48ed-9ff8-7e25d3effc6f",
+      "status": 403
+    }
+  ],
+  "passed": true
+}

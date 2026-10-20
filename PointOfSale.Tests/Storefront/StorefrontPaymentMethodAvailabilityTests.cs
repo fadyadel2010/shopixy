@@ -122,14 +122,14 @@ public sealed class StorefrontPaymentMethodAvailabilityTests
     }
 
     [Fact]
-    public async Task EnabledValidWallet_WithEnvironmentMismatch_IsSuppressedWithoutHidingCod()
+    public async Task EnabledValidWallet_WithMissingRuntimeCapability_IsSuppressedWithoutHidingCod()
     {
         var repository = new Mock<IPaymentMethodReadRepository>();
         repository.Setup(repo => repo.GetEnabledPaymentMethodsAsync(_tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([CreateDocument("COD", "COD"), CreateDocument("MANUALWALLET", "Wallet")]);
         var runtime = CreateAvailableRuntime();
         runtime.Setup(service => service.EvaluateAsync(_tenantId, "MANUALWALLET", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(StorefrontPaymentRuntimeReadiness.Blocked("MANUAL_PAYMENT_ENVIRONMENT_MISMATCH"));
+            .ReturnsAsync(StorefrontPaymentRuntimeReadiness.Blocked("MANUAL_PAYMENT_CAPABILITY_DISABLED"));
         var controller = CreateController(repository.Object, CreateDbContext(), runtime.Object);
         var response = Assert.IsType<StorefrontPaymentMethodsResponseDto>(Assert.IsType<OkObjectResult>(
             await controller.GetPaymentMethods(default)).Value);

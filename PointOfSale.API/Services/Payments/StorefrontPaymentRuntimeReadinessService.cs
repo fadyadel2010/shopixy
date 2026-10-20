@@ -15,11 +15,12 @@ namespace PointOfSale.API.Services.Payments;
 
 public sealed record StorefrontPaymentRuntimeReadiness(
     bool IsReady,
-    string? FirstFailedGate)
+    string? FirstFailedGate,
+    string? Reason = null)
 {
     public static StorefrontPaymentRuntimeReadiness Ready { get; } = new(true, null);
 
-    public static StorefrontPaymentRuntimeReadiness Blocked(string gate) => new(false, gate);
+    public static StorefrontPaymentRuntimeReadiness Blocked(string gate, string? reason = null) => new(false, gate, reason);
 }
 
 public interface IStorefrontPaymentRuntimeReadinessService
@@ -130,7 +131,7 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
         }
         catch (ManualPaymentApplicationException exception)
         {
-            return StorefrontPaymentRuntimeReadiness.Blocked(exception.Code);
+            return StorefrontPaymentRuntimeReadiness.Blocked(exception.Code, exception.Message);
         }
         catch (Exception exception)
         {
@@ -269,9 +270,10 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
         TenantPaymentMethod paymentMethod,
         CancellationToken cancellationToken)
     {
-        if (!HasValidManualWalletConfiguration(paymentMethod))
+        var configurationError = GetManualWalletConfigurationError(paymentMethod);
+        if (configurationError is not null)
         {
-            return StorefrontPaymentRuntimeReadiness.Blocked("MANUAL_PAYMENT_TENANT_CONFIGURATION_INVALID");
+            return StorefrontPaymentRuntimeReadiness.Blocked("MANUAL_PAYMENT_TENANT_CONFIGURATION_INVALID", configurationError);
         }
 
         var requiredCapabilities = new[]
@@ -293,11 +295,11 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
         return StorefrontPaymentRuntimeReadiness.Ready;
     }
 
-    private bool HasValidManualWalletConfiguration(TenantPaymentMethod paymentMethod)
+    private string? GetManualWalletConfigurationError(TenantPaymentMethod paymentMethod)
     {
         if (string.IsNullOrWhiteSpace(paymentMethod.ConfigEncrypted))
         {
-            return false;
+            return "Manual wallet number is required.";
         }
 
         try
@@ -306,8 +308,8 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
             var configuration = JsonSerializer.Deserialize<Dictionary<string, string>>(
                 decrypted,
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-            return PaymentMethodConfigurationValidator.Validate(paymentMethod.Code, configuration)
-                .IsConfigurationValid;
+            var validation = PaymentMethodConfigurationValidator.Validate(paymentMethod.Code, configuration);
+            return validation.IsConfigurationValid ? null : string.Join(" ", validation.ValidationErrors);
         }
         catch (Exception exception)
         {
@@ -315,7 +317,7 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
                 exception,
                 "Manual payment tenant configuration could not be decrypted | TenantPaymentMethodId: {TenantPaymentMethodId}",
                 paymentMethod.Id);
-            return false;
+            return "Stored payment configuration could not be decrypted. Reset and configure the recipient again.";
         }
     }
 }

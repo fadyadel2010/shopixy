@@ -1,0 +1,106 @@
+{
+  "checks": [
+    {
+      "name": "Original disabled/empty recipient restored",
+      "passed": true
+    },
+    {
+      "name": "Original legacy mode bit preserved",
+      "passed": true
+    },
+    {
+      "name": "COD row unchanged",
+      "passed": true
+    },
+    {
+      "name": "No Stripe/Paymob tenant configuration introduced",
+      "passed": true
+    },
+    {
+      "name": "No task order committed by stale refused checkout",
+      "passed": true
+    },
+    {
+      "name": "Exactly three intentional QA orders retained",
+      "passed": true
+    },
+    {
+      "name": "Approved order/intent/accepted quote amounts agree",
+      "passed": true
+    },
+    {
+      "name": "Net merchandise allocation is 25, not shipping-inclusive 35",
+      "passed": true
+    },
+    {
+      "name": "Exactly one settlement journal after concurrent stale decisions",
+      "passed": true
+    },
+    {
+      "name": "Journal balanced at authoritative payable",
+      "passed": true
+    },
+    {
+      "name": "Wallet clearing debit1140 / revenue credit4020",
+      "passed": true
+    },
+    {
+      "name": "Accounting outbox points to the same single journal",
+      "passed": true
+    },
+    {
+      "name": "Rejected payment has no allocation or settlement",
+      "passed": true
+    },
+    {
+      "name": "Independent COD has no wallet intent or settlement",
+      "passed": true
+    },
+    {
+      "name": "Actual tenant/invalid-write/stale-review HTTP guards passed",
+      "passed": true
+    },
+    {
+      "name": "Normal no-Sandbox Admin configuration checks passed",
+      "passed": true
+    },
+    {
+      "name": "Successful valid rejection through Admin UI",
+      "passed": true
+    },
+    {
+      "name": "Unconfigured Enable rejected with actionable recipient error",
+      "passed": true
+    },
+    {
+      "name": "Final fresh public read only COD with private no-store",
+      "passed": true
+    },
+    {
+      "name": "Previous visibility QA orders and financial history unchanged",
+      "passed": true
+    },
+    {
+      "name": "Preserved PointOfSale.API/appsettings.json",
+      "passed": true
+    },
+    {
+      "name": "Preserved PointOfSale.API/appsettings.Development.json",
+      "passed": true
+    },
+    {
+      "name": "Preserved PointOfSale.Storefront/src/store/checkoutStore.ts",
+      "passed": true
+    },
+    {
+      "name": "API DLL unchanged since headed workflows",
+      "passed": true
+    },
+    {
+      "name": "Task projections agree with review outcomes and amounts",
+      "passed": true
+    }
+  ],
+  "passed": 25,
+  "failed": 0
+}

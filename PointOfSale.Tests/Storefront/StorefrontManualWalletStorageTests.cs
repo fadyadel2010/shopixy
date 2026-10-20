@@ -330,8 +330,6 @@ public sealed class StorefrontManualWalletStorageTests
             .ReturnsAsync(new ManualPaymentTenantConfiguration(
                 tenantId,
                 Guid.NewGuid(),
-                true,
-                ManualPaymentEnvironment.Sandbox,
                 ManualPaymentChannel.VodafoneCash,
                 new[]
                 {

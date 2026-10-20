@@ -503,8 +503,6 @@ public sealed class StorefrontProductionBlockerFixTests
             .ReturnsAsync(new ManualPaymentTenantConfiguration(
                 tenantId,
                 Guid.NewGuid(),
-                true,
-                ManualPaymentEnvironment.Sandbox,
                 ManualPaymentChannel.BankTransfer,
                 Array.Empty<ManualPaymentChannelConfiguration>(),
                 true,

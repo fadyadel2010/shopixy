@@ -26,7 +26,6 @@ public sealed class ManualPaymentProductionOperationalReadinessTests
             "instructionConfigurationHealth",
             "expirationPolicyHealth",
             "proofConfigurationHealth",
-            "environmentConsistencyHealth",
             "secretExposureHealth",
             "runtimeBridgeHealth",
             "applicationServiceHealth",
@@ -101,25 +100,25 @@ public sealed class ManualPaymentProductionOperationalReadinessTests
             FeatureFlags = new ManualPaymentFeatureFlags { Enabled = true, SandboxEnabled = true }
         }, "at least one enabled");
 
-        AssertInvalid(ValidOptions() with
+        Assert.Empty(ManualPaymentOperationalReadinessValidator.ValidateStartup(ValidOptions() with
         {
             Environment = ManualPaymentEnvironment.Sandbox,
             SandboxMode = false
-        }, "SandboxMode");
+        }));
 
-        AssertInvalid(ValidOptions() with
+        Assert.Empty(ManualPaymentOperationalReadinessValidator.ValidateStartup(ValidOptions() with
         {
             Environment = ManualPaymentEnvironment.Production,
             SandboxMode = true,
             FeatureFlags = new ManualPaymentFeatureFlags { Enabled = true, ProductionEnabled = true }
-        }, "SandboxMode");
+        }));
 
-        AssertInvalid(ValidOptions() with
+        Assert.Empty(ManualPaymentOperationalReadinessValidator.ValidateStartup(ValidOptions() with
         {
             Environment = ManualPaymentEnvironment.Production,
             SandboxMode = false,
             FeatureFlags = new ManualPaymentFeatureFlags { Enabled = true, ProductionEnabled = false }
-        }, "production feature flag");
+        }));
 
         AssertInvalid(ValidOptions() with
         {
@@ -164,7 +163,7 @@ public sealed class ManualPaymentProductionOperationalReadinessTests
 
         Assert.Contains("ManualPayment.ConfigurationInvalid", names);
         Assert.Contains("ManualPayment.ProviderDisabled", names);
-        Assert.Contains("ManualPayment.EnvironmentMismatch", names);
+        Assert.DoesNotContain("ManualPayment.EnvironmentMismatch", names);
         Assert.Contains("ManualPayment.RepeatedRuntimeRejection", names);
         Assert.Contains("ManualPayment.EvidenceAdmissionFailures", names);
         Assert.Contains("ManualPayment.HighConfigurationFailures", names);

@@ -86,16 +86,16 @@ public sealed class ManualPaymentCertificationClosure2Tests
     }
 
     [Fact]
-    public async Task CapabilityAdmission_MustRejectEnvironmentMismatchBeforeExecution()
+    public async Task CapabilityAdmission_MustIgnoreLegacyEnvironmentForProofUpload()
     {
         await using var dbContext = CreateDbContext();
         dbContext.TenantPaymentMethods.Add(CreatePaymentMethod(isSandbox: false));
         await dbContext.SaveChangesAsync();
 
-        var exception = await Assert.ThrowsAsync<ManualPaymentApplicationException>(() =>
-            CreateAuthority(dbContext, EnabledOptions()).AdmitAsync(TenantId, ManualPaymentOperationalCapability.ProofUpload));
+        var configuration = await CreateAuthority(dbContext, EnabledOptions())
+            .AdmitAsync(TenantId, ManualPaymentOperationalCapability.ProofUpload);
 
-        Assert.Equal("MANUAL_PAYMENT_ENVIRONMENT_MISMATCH", exception.Code);
+        Assert.Equal(TenantId, configuration.TenantId);
     }
 
     [Fact]

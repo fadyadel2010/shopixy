@@ -1,0 +1,38 @@
+{
+  "observedUtc": "2026-10-20T19:38:48.950419+00:00",
+  "readOnly": true,
+  "target": [
+    {
+      "database": "PosEcommerceDb_Baseline",
+      "host": "192.168.1.5",
+      "read_only": "on"
+    }
+  ],
+  "methods": [
+    {
+      "Id": "5fd1c166-73cd-4235-a127-9efffad10b23",
+      "TenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+      "Code": "COD",
+      "DisplayName": "Cash on Delivery",
+      "IsEnabled": true,
+      "IsSandbox": true,
+      "SupportsOffline": true,
+      "Version": 13,
+      "has_encrypted_config": false,
+      "encrypted_hash": "d41d8cd98f00b204e9800998ecf8427e"
+    },
+    {
+      "Id": "8596894a-df67-44c5-8e0e-f64372bc1d74",
+      "TenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+      "Code": "MANUALWALLET",
+      "DisplayName": "P5QA20261017-817 TEST ONLY Wallet",
+      "IsEnabled": false,
+      "IsSandbox": true,
+      "SupportsOffline": true,
+      "Version": 33,
+      "has_encrypted_config": false,
+      "encrypted_hash": "d41d8cd98f00b204e9800998ecf8427e"
+    }
+  ],
+  "orders": []
+}

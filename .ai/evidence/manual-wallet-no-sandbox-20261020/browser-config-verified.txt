@@ -1,0 +1,73 @@
+### Result
+{"checks":[{"name":"No Sandbox or test/live instructions","passed":true},{"name":"Invalid recipient blocked: \"\"","passed":true},{"name":"Invalid recipient blocked: \"bad-wallet\"","passed":true},{"name":"Invalid recipient blocked: \"1234567\"","passed":true},{"name":"Save payload contains no mode","passed":true},{"name":"Save preserves separate activation","passed":true},{"name":"Enabled + valid + canonically ready","passed":true},{"name":"Mode absent from API","passed":true},{"name":"Recipient reopens as saved","passed":true},{"name":"Real required setting change reflected immediately","passed":true},{"name":"Readiness survives page refresh","passed":true},{"name":"Public COD and wallet available with no private metadata","passed":true}],"before":{"version":37,"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"محفظة اختبار فقط","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"حول لمحفظتنا وارفع صورة التحويل","isEnabled":false,"sortOrder":5,"supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","requiresConfiguration":true,"isConfigurationValid":true,"isAvailableForCheckout":false,"checkoutUnavailableReasonCode":"TENANT_METHOD_DISABLED","configurationErrors":[],"publicConfiguration":{"walletNumber":"01000000000"},"isSupported":true,"createdAt":"2026-10-16T22:38:22.186501Z","updatedAt":"2026-10-20T19:39:25.885241Z"},"request":{"configuration":{"walletNumber":"01000000000"},"reset":false,"confirmReset":false},"saved":{"version":38,"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"محفظة اختبار فقط","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"حول لمحفظتنا وارفع صورة التحويل","isEnabled":false,"sortOrder":5,"supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","requiresConfiguration":true,"isConfigurationValid":true,"isAvailableForCheckout":false,"checkoutUnavailableReasonCode":"TENANT_METHOD_DISABLED","configurationErrors":[],"publicConfiguration":{"walletNumber":"01000000000"},"isSupported":true,"createdAt":"2026-10-16T22:38:22.186501Z","updatedAt":"2026-10-20T19:48:41.295097Z"},"enabled":{"version":39,"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"محفظة اختبار فقط","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"حول لمحفظتنا وارفع صورة التحويل","isEnabled":true,"sortOrder":5,"supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","requiresConfiguration":true,"isConfigurationValid":true,"isAvailableForCheckout":true,"configurationErrors":[],"publicConfiguration":{"walletNumber":"01000000000"},"isSupported":true,"createdAt":"2026-10-16T22:38:22.186501Z","updatedAt":"2026-10-20T19:48:43.294459Z"},"changed":{"version":40,"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"محفظة اختبار فقط","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"حول لمحفظتنا وارفع صورة التحويل","isEnabled":true,"sortOrder":5,"supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","requiresConfiguration":true,"isConfigurationValid":true,"isAvailableForCheckout":true,"configurationErrors":[],"publicConfiguration":{"walletNumber":"01000000001"},"isSupported":true,"createdAt":"2026-10-16T22:38:22.186501Z","updatedAt":"2026-10-20T19:48:49.401654Z"},"refreshed":{"version":41,"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"محفظة اختبار فقط","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"حول لمحفظتنا وارفع صورة التحويل","isEnabled":true,"sortOrder":5,"supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","requiresConfiguration":true,"isConfigurationValid":true,"isAvailableForCheckout":true,"configurationErrors":[],"publicConfiguration":{"walletNumber":"01000000000"},"isSupported":true,"createdAt":"2026-10-16T22:38:22.186501Z","updatedAt":"2026-10-20T19:48:53.483395Z"},"publicResult":{"status":200,"headers":{"cache-control":"private, no-store, no-cache, max-age=0, must-revalidate","connection":"close","content-security-policy":"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'","content-type":"application/json; charset=utf-8","date":"Tue, 20 Oct 2026 19:48:57 GMT","expires":"0","pragma":"no-cache","server":"Kestrel","surrogate-control":"no-store","transfer-encoding":"chunked","vary":"Origin","x-content-type-options":"nosniff","x-correlation-id":"8038c862-7a9f-4bae-ad34-a775c796534d","x-frame-options":"DENY","x-request-id":"8038c862-7a9f-4bae-ad34-a775c796534d"},"body":{"status":"AVAILABLE","paymentMethods":[{"id":"5fd1c166-73cd-4235-a127-9efffad10b23","code":"COD","displayName":"Cash on Delivery","displayNameAr":"الدفع عند الاستلام","description":"Pay with cash when your order is delivered","descriptionAr":"ادفع نقداً عند استلام طلبك","supportsOnline":false,"supportsOffline":true,"icon":"cash","fee":0,"feeType":"fixed","sortOrder":1,"isAvailable":true},{"id":"8596894a-df67-44c5-8e0e-f64372bc1d74","code":"MANUALWALLET","displayName":"P5QA20261017-817 TEST ONLY Wallet","displayNameAr":"محفظة اختبار فقط","description":"Transfer to our wallet and upload proof of payment","descriptionAr":"حول لمحفظتنا وارفع صورة التحويل","supportsOnline":false,"supportsOffline":true,"icon":"phone-portrait","fee":0,"feeType":"fixed","sortOrder":5,"isAvailable":true}],"totalCount":2,"configuredCount":2,"enabledCount":2,"availableCount":2},"config":{"walletNumber":"01000000000","walletTypes":[{"code":"VODAFONECASH","name":"Vodafone Cash","nameAr":"Vodafone Cash","icon":"VF"}],"allowedMimeTypes":["image/jpeg","image/jpg","image/png","application/pdf"],"allowedExtensions":[".jpg",".jpeg",".png",".pdf"],"maxFileBytes":5242880}}}
+### Ran Playwright code
+```js
+await (async page => {
+    const admin = page.context().pages().find(p => p.url().startsWith('http://localhost:5173/'));
+    const storefront = page.context().pages().find(p => p.url().startsWith('http://ahramstore.localhost:5174/'));
+    const checks = [];
+    const check = (name, passed) => { checks.push({name,passed:!!passed}); if (!passed) throw new Error(name); };
+    const read = () => admin.evaluate(async () => (await (await import('/src/services/api.js')).default.get('/admin/payment-methods/MANUALWALLET')).data);
+    try {
+        await admin.goto('http://localhost:5173/ecommerce/payment-methods');
+        const row = admin.getByRole('row').filter({hasText:'MANUALWALLET'});
+        await row.getByRole('button',{name:'Configure',exact:true}).click();
+        const input = admin.locator('#payment-config-MANUALWALLET-walletNumber');
+        check('No Sandbox or test/live instructions', !/sandbox|test credentials|live mode/i.test(await admin.locator('form').filter({has:input}).innerText()));
+        const before = await read();
+        for (const invalid of ['', 'bad-wallet', '1234567']) {
+            await input.fill(invalid);
+            await admin.getByRole('button',{name:'Save',exact:true}).click();
+            check('Invalid recipient blocked: '+JSON.stringify(invalid), /valid recipient/.test(await admin.getByRole('alert').innerText()));
+        }
+        await input.fill('01000000000');
+        const requestPromise = admin.waitForRequest(r => r.url().includes('/MANUALWALLET/configure') && r.method()==='PUT');
+        await admin.getByRole('button',{name:'Save',exact:true}).click();
+        const request = (await requestPromise).postDataJSON();
+        await input.waitFor({state:'hidden'});
+        check('Save payload contains no mode', !('isSandbox' in request));
+        const saved = await read();
+        check('Save preserves separate activation', !saved.isEnabled && saved.isConfigurationValid);
+        await row.getByRole('button',{name:'Enable',exact:true}).click();
+        await row.getByRole('button',{name:'Disable',exact:true}).waitFor();
+        const enabled = await read();
+        check('Enabled + valid + canonically ready', enabled.isEnabled && enabled.isConfigurationValid && enabled.isAvailableForCheckout);
+        check('Mode absent from API', !('isSandbox' in enabled));
+        await row.getByRole('button',{name:'Configure',exact:true}).click();
+        check('Recipient reopens as saved', await input.inputValue()==='01000000000');
+        await admin.screenshot({path:'.ai/evidence/manual-wallet-no-sandbox-20261020/admin-no-sandbox.png',fullPage:true});
+        await input.fill('01000000001');
+        await admin.getByRole('button',{name:'Save',exact:true}).click();
+        await input.waitFor({state:'hidden'});
+        const changed = await read();
+        check('Real required setting change reflected immediately', changed.publicConfiguration.walletNumber==='01000000001' && changed.isAvailableForCheckout);
+        await row.getByRole('button',{name:'Configure',exact:true}).click();
+        await input.fill('01000000000');
+        await admin.getByRole('button',{name:'Save',exact:true}).click();
+        await input.waitFor({state:'hidden'});
+        await admin.reload();
+        await row.getByRole('button',{name:'Disable',exact:true}).waitFor();
+        const refreshed = await read();
+        check('Readiness survives page refresh', refreshed.isAvailableForCheckout && refreshed.isConfigurationValid);
+        await admin.screenshot({path:'.ai/evidence/manual-wallet-no-sandbox-20261020/admin-ready-refreshed.png',fullPage:true});
+        const publicResult = await storefront.evaluate(async () => {
+            const api = (await import('/src/services/api/httpClient.ts')).httpClient;
+            const r = await api.get('/api/storefront/payment-methods');
+            const config = await api.get('/api/storefront/payments/manual-wallet/config');
+            return {status:r.status,headers:r.headers,body:r.data,config:config.data};
+        });
+        check('Public COD and wallet available with no private metadata', publicResult.body.paymentMethods.map(m=>m.code).join(',')==='COD,MANUALWALLET' && !JSON.stringify(publicResult.body).includes('walletNumber'));
+        return {checks,before,request,saved,enabled,changed,refreshed,publicResult};
+    } catch(e) { return {checks,failed:e.message,mustRestore:true}; }
+}
+)(page);
+```
+### Open tabs
+- 0: [Point of Sale System](http://localhost:5173/ecommerce/payment-methods)
+- 1: (current) [Storefront](http://ahramstore.localhost:5174/)
+### Page
+- Page URL: http://ahramstore.localhost:5174/
+- Page Title: Storefront
+- Console: 25 errors, 1 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-10-20T19-38-05-916Z.log#L210-L215

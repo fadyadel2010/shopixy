@@ -199,7 +199,8 @@ public class PaymentMethodsAdminController : ControllerBase
         method.SortOrder = request.SortOrder ?? method.SortOrder;
         method.SupportsOnline = GetSupportsOnline(normalizedCode);
         method.SupportsOffline = GetSupportsOffline(normalizedCode);
-        method.IsSandbox = request.IsSandbox ?? (isNew ? true : method.IsSandbox);
+        if (normalizedCode != "MANUALWALLET")
+            method.IsSandbox = request.IsSandbox ?? (isNew ? true : method.IsSandbox);
         method.Icon = request.Icon ?? GetDefaultIcon(normalizedCode);
         method.MinOrderAmount = request.MinOrderAmount;
         method.MaxOrderAmount = request.MaxOrderAmount;
@@ -316,7 +317,7 @@ public class PaymentMethodsAdminController : ControllerBase
         }
 
         // Update specific fields
-        if (request.IsSandbox.HasValue)
+        if (normalizedCode != "MANUALWALLET" && request.IsSandbox.HasValue)
         {
             method.IsSandbox = request.IsSandbox.Value;
         }
@@ -700,7 +701,7 @@ public class PaymentMethodsAdminController : ControllerBase
         SortOrder = GetDefaultSortOrder(code),
         SupportsOnline = GetSupportsOnline(code),
         SupportsOffline = GetSupportsOffline(code),
-        IsSandbox = true,
+        IsSandbox = code == "MANUALWALLET" ? null : true,
         Icon = GetDefaultIcon(code),
         Fee = 0,
         FeeType = "fixed",
@@ -733,7 +734,7 @@ public class PaymentMethodsAdminController : ControllerBase
             SortOrder = method.SortOrder,
             SupportsOnline = method.SupportsOnline,
             SupportsOffline = method.SupportsOffline,
-            IsSandbox = method.IsSandbox,
+            IsSandbox = method.Code == "MANUALWALLET" ? null : method.IsSandbox,
             Icon = method.Icon,
             MinOrderAmount = method.MinOrderAmount,
             MaxOrderAmount = method.MaxOrderAmount,
@@ -770,6 +771,8 @@ public class PaymentMethodsAdminController : ControllerBase
                     : await _runtimeReadiness.EvaluateAsync(tenantId, method.Code, cancellationToken);
         method.IsAvailableForCheckout = readiness.IsReady;
         method.CheckoutUnavailableReasonCode = readiness.FirstFailedGate;
+        method.CheckoutUnavailableReason = readiness.Reason
+            ?? (!method.IsConfigurationValid ? string.Join(" ", method.ConfigurationErrors) : null);
     }
 
     private async Task PublishCreatedEvent(TenantPaymentMethod method, string traceId, CancellationToken cancellationToken)
@@ -1248,7 +1251,8 @@ public class PaymentMethodResponseDto
     public int SortOrder { get; set; }
     public bool SupportsOnline { get; set; }
     public bool SupportsOffline { get; set; }
-    public bool IsSandbox { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsSandbox { get; set; }
     public string? Icon { get; set; }
     public decimal? MinOrderAmount { get; set; }
     public decimal? MaxOrderAmount { get; set; }
@@ -1259,6 +1263,7 @@ public class PaymentMethodResponseDto
     // Populated on fresh reads, not inferred from a successful configuration write.
     public bool? IsAvailableForCheckout { get; set; }
     public string? CheckoutUnavailableReasonCode { get; set; }
+    public string? CheckoutUnavailableReason { get; set; }
     public List<string> ConfigurationErrors { get; set; } = new();
     // Allow-listed customer-facing recipient only; never gateway credentials.
     public Dictionary<string, string> PublicConfiguration { get; set; } = new();
@@ -1282,7 +1287,8 @@ public class PaymentMethodCatalogProviderDto
     public int SortOrder { get; set; }
     public bool SupportsOnline { get; set; }
     public bool SupportsOffline { get; set; }
-    public bool IsSandbox { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsSandbox { get; set; }
     public string? Icon { get; set; }
     public decimal Fee { get; set; }
     public string FeeType { get; set; } = "fixed";

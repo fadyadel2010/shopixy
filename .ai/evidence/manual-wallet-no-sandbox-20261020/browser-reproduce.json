@@ -1,0 +1,81 @@
+{
+  "mismatch": {
+    "version": 35,
+    "id": "8596894a-df67-44c5-8e0e-f64372bc1d74",
+    "code": "MANUALWALLET",
+    "displayName": "P5QA20261017-817 TEST ONLY Wallet",
+    "displayNameAr": "محفظة اختبار فقط",
+    "description": "Transfer to our wallet and upload proof of payment",
+    "descriptionAr": "حول لمحفظتنا وارفع صورة التحويل",
+    "isEnabled": true,
+    "sortOrder": 5,
+    "supportsOnline": false,
+    "supportsOffline": true,
+    "isSandbox": false,
+    "icon": "phone-portrait",
+    "fee": 0,
+    "feeType": "fixed",
+    "requiresConfiguration": true,
+    "isConfigurationValid": true,
+    "isAvailableForCheckout": false,
+    "checkoutUnavailableReasonCode": "MANUAL_PAYMENT_ENVIRONMENT_MISMATCH",
+    "configurationErrors": [],
+    "publicConfiguration": {
+      "walletNumber": "01000000000"
+    },
+    "isSupported": true,
+    "createdAt": "2026-10-16T22:38:22.186501Z",
+    "updatedAt": "2026-10-20T19:39:19.660063Z"
+  },
+  "publicResult": {
+    "body": {
+      "status": "AVAILABLE",
+      "paymentMethods": [
+        {
+          "id": "5fd1c166-73cd-4235-a127-9efffad10b23",
+          "code": "COD",
+          "displayName": "Cash on Delivery",
+          "displayNameAr": "الدفع عند الاستلام",
+          "description": "Pay with cash when your order is delivered",
+          "descriptionAr": "ادفع نقداً عند استلام طلبك",
+          "supportsOnline": false,
+          "supportsOffline": true,
+          "icon": "cash",
+          "fee": 0,
+          "feeType": "fixed",
+          "sortOrder": 1,
+          "isAvailable": true
+        }
+      ],
+      "totalCount": 1,
+      "configuredCount": 2,
+      "enabledCount": 2,
+      "availableCount": 1
+    },
+    "headers": {
+      "cache-control": "private, no-store, no-cache, max-age=0, must-revalidate",
+      "connection": "close",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Tue, 20 Oct 2026 19:39:19 GMT",
+      "expires": "0",
+      "pragma": "no-cache",
+      "server": "Kestrel",
+      "surrogate-control": "no-store",
+      "transfer-encoding": "chunked",
+      "vary": "Origin",
+      "x-content-type-options": "nosniff",
+      "x-correlation-id": "c052e5e3-dfeb-43b9-9629-03a5f0293795",
+      "x-frame-options": "DENY",
+      "x-request-id": "c052e5e3-dfeb-43b9-9629-03a5f0293795"
+    },
+    "diagnostic": {
+      "code": "MANUAL_PAYMENT_ENVIRONMENT_MISMATCH",
+      "message": "Manual Payment tenant configuration does not match the active environment.",
+      "traceId": "00-36cbb7c7e6daeed0040ac6cfe8bf6586-a5f97866b12cf8f4-01"
+    },
+    "status": 409
+  },
+  "legacyBitRestored": true,
+  "syntheticRecipientMustBeCleared": true
+}

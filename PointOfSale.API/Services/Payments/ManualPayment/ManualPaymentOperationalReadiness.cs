@@ -41,7 +41,6 @@ public sealed class ManualPaymentOperationalReadinessHealthContributor : IManual
             ["instructionConfigurationHealth"] = configuration.InstructionsConfigured,
             ["expirationPolicyHealth"] = configuration.ExpirationConfigured,
             ["proofConfigurationHealth"] = configuration.AcceptedProofTypeCount > 0 && configuration.MaximumUploadBytes > 0,
-            ["environmentConsistencyHealth"] = EnvironmentConsistent(configuration),
             ["featureFlagHealth"] = FeatureFlagsConsistent(configuration),
             ["capabilityConsistencyHealth"] = CapabilitiesConsistent(configuration.Capabilities),
             ["secretExposureHealth"] = NoSecretsExposed(configuration)
@@ -54,16 +53,8 @@ public sealed class ManualPaymentOperationalReadinessHealthContributor : IManual
             foundation.Messages);
     }
 
-    private static bool EnvironmentConsistent(ManualPaymentConfigurationStatus configuration) =>
-        configuration.Environment switch
-        {
-            ManualPaymentEnvironment.Sandbox => configuration.SandboxMode && configuration.SandboxEnabled,
-            ManualPaymentEnvironment.Production => !configuration.SandboxMode && configuration.ProductionEnabled,
-            _ => false
-        };
-
     private static bool FeatureFlagsConsistent(ManualPaymentConfigurationStatus configuration) =>
-        EnvironmentConsistent(configuration) && configuration.Validation.IsValid;
+        configuration.Validation.IsValid;
 
     private static bool CapabilitiesConsistent(ManualPaymentCapabilityModel capabilities) =>
         capabilities.SupportsTenantScopedConfiguration
@@ -100,11 +91,6 @@ public static class ManualPaymentOperationalAlerts
             "High",
             "manual_payment_environment_failures_total with provider_disabled reason or providerEnabledHealth=false",
             "Confirm provider and feature flags are intentionally disabled; otherwise restore tenant/provider enablement."),
-        new ManualPaymentOperationalAlertDefinition(
-            "ManualPayment.EnvironmentMismatch",
-            "High",
-            "manual_payment_environment_failures_total with environment_mismatch reason",
-            "Align SandboxMode, environment, tenant payment method, and rollout flags before accepting Manual Payment traffic."),
         new ManualPaymentOperationalAlertDefinition(
             "ManualPayment.RepeatedRuntimeRejection",
             "High",

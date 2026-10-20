@@ -151,13 +151,9 @@ public sealed class ManualPaymentTenantConfigurationResolver :
             throw ManualPaymentApplicationException.CapabilityDisabled();
         }
 
-        EnsureTenantEnvironment(paymentMethod, options);
-
         return new ManualPaymentTenantConfiguration(
             tenantId,
             paymentMethod.Id,
-            paymentMethod.IsSandbox,
-            options.Environment,
             admittedChannel,
             options.Channels.Where(channel => channel.Enabled).ToArray(),
             options.Instructions.RequireReferenceNumber,
@@ -166,7 +162,7 @@ public sealed class ManualPaymentTenantConfigurationResolver :
             options.Instructions.DefaultInstructions,
             options.Expiration.Configured,
             options.Expiration.PendingPaymentTtl,
-            BuildInstructionVersion(paymentMethod, options));
+            BuildInstructionVersion(paymentMethod));
     }
 
     private static void EnsureProviderConfiguration(
@@ -175,9 +171,14 @@ public sealed class ManualPaymentTenantConfigurationResolver :
         ManualPaymentChannel requestedChannel)
     {
         var validation = ManualPaymentConfigurationValidator.Validate(options);
-        if (!validation.IsValid || !validation.Enabled)
+        if (!validation.Enabled)
         {
-            throw ManualPaymentApplicationException.InvalidConfiguration();
+            throw ManualPaymentApplicationException.InvalidConfiguration("Manual Payment runtime is disabled. Enable the manual-payment provider before accepting submissions.");
+        }
+
+        if (!validation.IsValid)
+        {
+            throw ManualPaymentApplicationException.InvalidConfiguration(string.Join(" ", validation.Errors));
         }
 
         if (!IsCapabilitySupported(options, capability) ||
@@ -192,18 +193,6 @@ public sealed class ManualPaymentTenantConfigurationResolver :
             !options.Capabilities.SupportsExpirationPolicy)
         {
             throw ManualPaymentApplicationException.CapabilityDisabled();
-        }
-
-        if (options.Environment == ManualPaymentEnvironment.Sandbox &&
-            (!options.SandboxMode || !options.FeatureFlags.SandboxEnabled || !options.Capabilities.SupportsSandboxEnvironment))
-        {
-            throw ManualPaymentApplicationException.EnvironmentMismatch();
-        }
-
-        if (options.Environment == ManualPaymentEnvironment.Production &&
-            (options.SandboxMode || !options.FeatureFlags.ProductionEnabled || !options.Capabilities.SupportsProductionEnvironment))
-        {
-            throw ManualPaymentApplicationException.EnvironmentMismatch();
         }
 
         if (!Enum.IsDefined(requestedChannel) ||
@@ -272,28 +261,14 @@ public sealed class ManualPaymentTenantConfigurationResolver :
         _ => false
     };
 
-    private static void EnsureTenantEnvironment(
-        TenantPaymentMethod paymentMethod,
-        ManualPaymentOptions options)
-    {
-        var expectedSandbox = options.Environment == ManualPaymentEnvironment.Sandbox;
-        if (paymentMethod.IsSandbox != expectedSandbox || paymentMethod.IsSandbox != options.SandboxMode)
-        {
-            throw ManualPaymentApplicationException.EnvironmentMismatch();
-        }
-    }
-
-    private static string BuildInstructionVersion(
-        TenantPaymentMethod paymentMethod,
-        ManualPaymentOptions options)
+    private static string BuildInstructionVersion(TenantPaymentMethod paymentMethod)
     {
         var updated = paymentMethod.UpdatedAtUtc ?? paymentMethod.UpdatedAt ?? paymentMethod.CreatedAt;
         var source = string.Join(
             '|',
             paymentMethod.Id.ToString("N"),
             paymentMethod.Version.ToString(CultureInfo.InvariantCulture),
-            updated.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture),
-            options.Environment.ToString());
+            updated.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
 
         return $"manual-config-{Hash(source)[..12]}";
     }
@@ -898,8 +873,6 @@ public static class ManualPaymentRuntimeOutcomeValidator
 public sealed record ManualPaymentTenantConfiguration(
     Guid TenantId,
     Guid TenantPaymentMethodId,
-    bool IsSandbox,
-    ManualPaymentEnvironment Environment,
     ManualPaymentChannel Channel,
     IReadOnlyList<ManualPaymentChannelConfiguration> SupportedChannels,
     bool ReferenceNumberRequired,
@@ -1543,14 +1516,11 @@ public sealed class ManualPaymentApplicationException : Exception
     public static ManualPaymentApplicationException CapabilityDisabled() =>
         new("MANUAL_PAYMENT_CAPABILITY_DISABLED", "Manual Payment capability is not enabled for this operation.", ManualPaymentApplicationFailureType.Capability, false);
 
-    public static ManualPaymentApplicationException EnvironmentMismatch() =>
-        new("MANUAL_PAYMENT_ENVIRONMENT_MISMATCH", "Manual Payment tenant configuration does not match the active environment.", ManualPaymentApplicationFailureType.Environment, false);
-
     public static ManualPaymentApplicationException UnsupportedChannel() =>
         new("MANUAL_PAYMENT_CHANNEL_UNSUPPORTED", "Manual Payment channel is not supported by the tenant configuration.", ManualPaymentApplicationFailureType.Capability, false);
 
-    public static ManualPaymentApplicationException InvalidConfiguration() =>
-        new("MANUAL_PAYMENT_CONFIGURATION_INVALID", "Manual Payment configuration is invalid.", ManualPaymentApplicationFailureType.Configuration, false);
+    public static ManualPaymentApplicationException InvalidConfiguration(string reason = "Manual Payment configuration is invalid.") =>
+        new("MANUAL_PAYMENT_CONFIGURATION_INVALID", reason, ManualPaymentApplicationFailureType.Configuration, false);
 
     public static ManualPaymentApplicationException RuntimeRejected() =>
         new("MANUAL_PAYMENT_RUNTIME_OUTCOME_REJECTED", "Manual Payment initialization did not produce the required canonical Runtime outcome.", ManualPaymentApplicationFailureType.Runtime, false);

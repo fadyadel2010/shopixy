@@ -30,7 +30,14 @@ public sealed class ManualPaymentOperationalReadinessHealthCheck : IHealthCheck
         checks["providerAdapterHealth"] = IsRegistered<IManualPaymentProviderAdapter>(scope);
         checks["evidenceAdapterHealth"] = IsRegistered<IManualPaymentEvidenceAdapter>(scope);
         checks["tenantConfigurationResolverHealth"] = IsRegistered<IManualPaymentTenantConfigurationResolver>(scope);
-        checks["alertDefinitionHealth"] = ManualPaymentOperationalAlerts.Definitions.Count >= 6;
+        checks["alertDefinitionHealth"] = new[]
+        {
+            "ManualPayment.ConfigurationInvalid",
+            "ManualPayment.ProviderDisabled",
+            "ManualPayment.RepeatedRuntimeRejection",
+            "ManualPayment.EvidenceAdmissionFailures",
+            "ManualPayment.HighConfigurationFailures"
+        }.All(name => ManualPaymentOperationalAlerts.Definitions.Any(alert => alert.Name == name));
         checks["telemetryDefinitionHealth"] = PointOfSale.API.Instrumentation.ManualPaymentOperationalTelemetry.RequiredMetricNames.Count >= 6;
 
         var data = checks.ToDictionary(pair => pair.Key, pair => (object)pair.Value, StringComparer.Ordinal);
