@@ -379,6 +379,9 @@ public interface ICommerceAccountingService
     
     Task<PostingResult> PostManualCodSettlementAsync(Guid tenantId, Guid settlementBatchId, CancellationToken ct = default);
 
+    Task<PostingResult> PostManualWalletSettlementAsync(Guid tenantId, Guid settlementBatchId, CancellationToken ct = default)
+        => throw new NotSupportedException();
+
     Task<PostingResult> PostCarrierRemittanceAsync(Guid tenantId, Guid remittanceId, CancellationToken ct = default);
 
     /// <summary>

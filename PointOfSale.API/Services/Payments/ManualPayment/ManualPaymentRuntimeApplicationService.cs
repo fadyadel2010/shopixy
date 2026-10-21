@@ -170,12 +170,13 @@ public sealed class ManualPaymentTenantConfigurationResolver :
         ManualPaymentOperationalCapability capability,
         ManualPaymentChannel requestedChannel)
     {
+        // Manual Wallet is a backend-owned workflow provider with no gateway, so the
+        // runtime admission is decided by the genuine foundation prerequisites (manual
+        // channel, customer instructions, customer proof, expiration policy and the
+        // certified review/approval/rejection workflows) and by the tenant-owned
+        // payment method state. There is no independent deployment-level runtime-enable
+        // switch that can suppress an otherwise correctly configured wallet.
         var validation = ManualPaymentConfigurationValidator.Validate(options);
-        if (!validation.Enabled)
-        {
-            throw ManualPaymentApplicationException.InvalidConfiguration("Manual Payment runtime is disabled. Enable the manual-payment provider before accepting submissions.");
-        }
-
         if (!validation.IsValid)
         {
             throw ManualPaymentApplicationException.InvalidConfiguration(string.Join(" ", validation.Errors));

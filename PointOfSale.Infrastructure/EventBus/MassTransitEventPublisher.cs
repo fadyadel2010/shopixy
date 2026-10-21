@@ -127,7 +127,7 @@ public class MassTransitEventPublisher : IEventPublisher
         // Consume-scoped endpoints need not participate in a service-owned SQL
         // transaction. Logistics/fulfillment facts must not escape before commit.
         if (_dbContext.Database.CurrentTransaction != null &&
-            @event is ShipmentEventBase or OrderFulfillmentEventBase or OrderStatusChangedEvent or OrderDeliveredEvent or OrderShippedEvent)
+            @event is ShipmentEventBase or OrderFulfillmentEventBase or OrderStatusChangedEvent or OrderDeliveredEvent or OrderShippedEvent or SyntheticQaCollectionRecordedEvent)
         {
             _dbContext.OutboxMessages.Add(new OutboxMessage
             {

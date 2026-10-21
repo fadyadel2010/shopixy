@@ -40,8 +40,8 @@ namespace PointOfSale.API.Middleware;
 /// - NO PII stored: IP is SHA-256 hashed
 /// - Cookie-based session tracking survives page refresh
 /// - Only runs on storefront paths (not admin/api paths)
-/// - Silently skips on any error — never blocks the request
-/// - AF-12: Affiliate Mode is request-scoped only (NOT persisted)
+/// - Validation failures on checkout return retryable 503 rather than silently dropping attribution
+/// - Request-scoped Affiliate Mode is rebuilt from SQL and protected first-touch evidence
 /// </summary>
 public class AffiliateReferralMiddleware
 {
@@ -70,12 +70,24 @@ public class AffiliateReferralMiddleware
 
         async Task InvokeNextAsync()
         {
+            // Existing response contract, including an explicit negative verdict.
+            // A URL/storage candidate must never present itself as validated attribution.
+            context.Response.Headers["X-Affiliate-Mode"] = AffiliateModeResolver.IsAffiliateMode(context) ? "true" : "false";
+            if (AffiliateModeResolver.GetReferralCode(context) is { } acceptedCode)
+                context.Response.Headers[RefHeaderName] = acceptedCode;
             downstreamInvoked = true;
             await _next(context);
         }
 
         try
         {
+            if (!context.Request.Path.StartsWithSegments("/api/storefront") &&
+                !context.Request.Path.StartsWithSegments("/products") &&
+                !context.Request.Path.StartsWithSegments("/p"))
+            {
+                await InvokeNextAsync();
+                return;
+            }
             var tenantId = tenantContext.TenantId;
             if (!tenantId.HasValue || tenantId.Value == Guid.Empty)
             {
@@ -165,6 +177,12 @@ public class AffiliateReferralMiddleware
 
             var referralCode = rawRef!.Trim().ToUpperInvariant();
 
+            if (referralCode.Length > 50 || !referralCode.All(char.IsAsciiLetterOrDigit))
+            {
+                await InvokeNextAsync();
+                return;
+            }
+
             context.RequestAborted.ThrowIfCancellationRequested();
 
             _logger.LogInformation(
@@ -227,9 +245,18 @@ public class AffiliateReferralMiddleware
                     _logger.LogWarning(
                         "[Affiliate:Referral] Promotion link rejected by current storefront admission | LinkId: {LinkId} | TenantId: {TenantId} | ProductId: {ProductId} | Ref: {Ref}",
                         promotionLink.Id,
-                    tenantId,
+                        tenantId,
                         promotionLink.ProductId,
                         referralCode);
+                    await InvokeNextAsync();
+                    return;
+                }
+
+                // New touches must actually land on the link's product. Once captured,
+                // first-touch evidence remains store-scoped during subsequent browsing.
+                if (protectedEvidence == null &&
+                    !AffiliatePromotionAttributionAuthority.MatchesProductEntry(context.Request, product, referralCode))
+                {
                     await InvokeNextAsync();
                     return;
                 }
@@ -245,21 +272,12 @@ public class AffiliateReferralMiddleware
 
                 // Resolve AffiliateAccountId — either from the link directly,
                 // or fall back to looking up the AffiliateUser's account
-                var affiliateAccountId = promotionLink.AffiliateAccountId;
-                if (!affiliateAccountId.HasValue)
-                {
-                    // Resolve via AffiliateUser → AffiliateAccount bridge
-                    var userAccount = await dbContext.AffiliateUsers
-                        .AsNoTracking()
-                        .Where(u => u.Id == promotionLink.AffiliateUserId && !u.IsDeleted)
-                        .Select(u => new { u.AffiliateAccountId })
-                        .FirstOrDefaultAsync(context.RequestAborted);
-
-                    affiliateAccountId = userAccount?.AffiliateAccountId;
-                }
+                var affiliateAccountId = await AffiliatePromotionAttributionAuthority.ResolveProfileAsync(
+                    dbContext, promotionLink.AffiliateUserId, promotionLink.AffiliateAccountId, context.RequestAborted);
 
                 if (!affiliateAccountId.HasValue)
                 {
+                    if (protectedEvidence != null) context.Response.Cookies.Delete(AttributionCookieName);
                     _logger.LogWarning(
                         "[AF-15:V2] PromotionLink found but no AffiliateAccountId resolvable | LinkId: {LinkId} | AffiliateUserId: {AffiliateUserId}",
                         promotionLink.Id, promotionLink.AffiliateUserId);
@@ -361,6 +379,16 @@ public class AffiliateReferralMiddleware
                         "[Affiliate:Referral] Protected promotion-link evidence has no current active SQL link | TenantId: {TenantId} | PromotionLinkId: {PromotionLinkId}",
                         tenantId,
                         protectedEvidence.PromotionLinkId.Value);
+                    await InvokeNextAsync();
+                    return;
+                }
+
+                // Profile codes remain supported only at the established legacy landing
+                // entry. They are not product-promotion codes or checkout identity hints.
+                if (protectedEvidence == null &&
+                    !context.Request.Path.StartsWithSegments("/p") &&
+                    !context.Request.Path.StartsWithSegments("/api/storefront/landing"))
+                {
                     await InvokeNextAsync();
                     return;
                 }
@@ -475,15 +503,26 @@ public class AffiliateReferralMiddleware
             _logger.LogDebug(
                 "[Affiliate:Referral] Request canceled while processing referral | Path: {Path}",
                 context.Request.Path.Value ?? "unknown");
+            return;
         }
         catch (Exception ex) when (!downstreamInvoked)
         {
             // NEVER block the request — analytics failure is non-critical
             _logger.LogWarning(ex,
                 "[Affiliate:Referral] Error processing referral (swallowed — non-critical)");
+            if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path == "/api/storefront/checkout")
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    code = "AFFILIATE_ATTRIBUTION_UNAVAILABLE",
+                    message = "Referral validation is temporarily unavailable. Please retry checkout."
+                });
+                return;
+            }
         }
 
-        await _next(context);
+        await InvokeNextAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -503,7 +542,10 @@ public class AffiliateReferralMiddleware
         Guid? promotionLinkId)
     {
         if (context.Request.Cookies.TryGetValue(AttributionCookieName, out var existing) &&
-            !string.IsNullOrWhiteSpace(existing))
+            !string.IsNullOrWhiteSpace(existing) &&
+            attributionEvidenceTokens.TryValidate(existing, tenantId, out var accepted) &&
+            accepted.AffiliateAccountId == affiliateAccountId && accepted.PromotionLinkId == promotionLinkId &&
+            accepted.ReferralCode == referralCode)
         {
             return;
         }
@@ -535,7 +577,11 @@ public class AffiliateReferralMiddleware
             return existingSession;
         }
 
-        var sessionId = Guid.NewGuid().ToString("N");
+        // Reuse the existing anonymous shopping session on parallel initial requests;
+        // this is a deduplication identifier, never customer/authentication authority.
+        var sessionId = Guid.TryParse(context.Request.Headers["X-Session-Id"], out var shoppingSession)
+            ? shoppingSession.ToString("N")
+            : Guid.NewGuid().ToString("N");
         context.Response.Cookies.Append(CookieName, sessionId, new CookieOptions
         {
             HttpOnly = true,
@@ -566,7 +612,7 @@ public class AffiliateReferralMiddleware
         if (product.IsDeleted ||
             !product.IsActive ||
             product.PublishStatus != PublishStatus.Published ||
-            !product.IsOnlineVisible)
+            !product.IsOnlineVisible || !product.IsSearchable)
         {
             return false;
         }
@@ -607,7 +653,8 @@ public class AffiliateReferralMiddleware
             return false;
         }
 
-        return await HasAvailableAffiliateInventoryAsync(dbContext, product, ct);
+        return await HasAvailableAffiliateInventoryAsync(dbContext, product, ct) &&
+            await AffiliatePromotionAttributionAuthority.IsProductEligibleAsync(dbContext, product, ct);
     }
 
     private static async Task<bool> HasPositiveAffiliatePriceAsync(

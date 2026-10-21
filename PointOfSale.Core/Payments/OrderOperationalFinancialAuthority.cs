@@ -106,6 +106,7 @@ public static class OrderOperationalFinancialAuthority
             or OrderStatus.Completed;
 
     private static bool HasRecognizedCollectionAuthority(PaymentStatus paymentStatus) =>
+        paymentStatus == PaymentStatus.SyntheticQaCollected ||
         PaymentStatusAuthority.IsPaidState(paymentStatus) ||
         paymentStatus == PaymentStatus.PartiallyRefunded;
 }

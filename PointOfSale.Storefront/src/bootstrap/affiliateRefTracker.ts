@@ -41,6 +41,40 @@ import { tryGetTenantScopedStorageKey } from './tenantScopedStorage';
 const SESSION_KEY = 'affiliate_ref_code';
 
 let currentRefCode: string | null = null;
+let confirmedRefCode: string | null = null;
+const listeners = new Set<() => void>();
+
+function normalizeCode(value: string | null): string | null {
+    const code = value?.trim().toUpperCase() || '';
+    return /^[A-Z0-9]{1,50}$/.test(code) ? code : null;
+}
+
+export function getConfirmedAffiliateRefCode(): string | null { return confirmedRefCode; }
+
+export function subscribeAffiliateRef(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+}
+
+/** Existing API response headers acknowledge current SQL admission, not a URL hint.
+ * Cookies remain the protected server authority; this state is presentation only.
+ */
+export function acceptAffiliateRefVerdict(mode: unknown, code: unknown, confirmedAtRequest: string | null): void {
+    if (mode === 'true' && typeof code === 'string' && normalizeCode(code)) {
+        confirmedRefCode = normalizeCode(code);
+        currentRefCode = confirmedRefCode;
+        try {
+            const storageKey = tryGetTenantScopedStorageKey(SESSION_KEY);
+            if (storageKey) sessionStorage.setItem(storageKey, confirmedRefCode!);
+        } catch { /* Navigation hints are optional; protected cookies are authoritative. */ }
+    } else if (mode === 'false' && confirmedAtRequest === confirmedRefCode && confirmedRefCode !== null) {
+        // Do not let an older, pre-capture bootstrap response erase a later admission.
+        confirmedRefCode = null;
+    } else {
+        return;
+    }
+    listeners.forEach(listener => listener());
+}
 
 /**
  * Initialize Affiliate Ref Tracker.
@@ -52,18 +86,19 @@ let currentRefCode: string | null = null;
  * 3. Session storage: Persisted from previous navigation
  */
 export function initAffiliateRefTracker(): void {
+    confirmedRefCode = null;
     let refFromUrl: string | null = null;
 
     // PRIORITY 1: Check current URL for ?ref= parameter (legacy flow)
     const urlParams = new URLSearchParams(window.location.search);
-    refFromUrl = urlParams.get('ref')?.trim() || null;
+    refFromUrl = normalizeCode(urlParams.getAll('ref').length === 1 ? urlParams.get('ref') : null);
 
     // PRIORITY 2: AF-27E - Check route for /p/{referralCode}/{slug} pattern
     if (!refFromUrl) {
         const path = window.location.pathname;
-        const match = path.match(/^\/p\/([^\/]+)\//);
+        const match = path.match(/^\/p\/([^/]+)\//);
         if (match && match[1]) {
-            refFromUrl = match[1].trim();
+            refFromUrl = normalizeCode(match[1]);
             if (import.meta.env.DEV) {
                 console.log('[AffiliateRef] Captured ref code from route /p/:', refFromUrl);
             }
@@ -89,7 +124,7 @@ export function initAffiliateRefTracker(): void {
         // PRIORITY 3: No ref in URL — check sessionStorage for existing session
         try {
             const storageKey = tryGetTenantScopedStorageKey(SESSION_KEY);
-            currentRefCode = storageKey ? sessionStorage.getItem(storageKey) : null;
+            currentRefCode = storageKey ? normalizeCode(sessionStorage.getItem(storageKey)) : null;
         } catch {
             currentRefCode = null;
         }
@@ -101,8 +136,7 @@ export function initAffiliateRefTracker(): void {
 }
 
 /**
- * Get the current affiliate referral code.
- * Returns null if not in affiliate mode.
+ * Get the current navigation candidate (not proof of affiliate mode).
  */
 export function getAffiliateRefCode(): string | null {
     return currentRefCode;
@@ -112,7 +146,7 @@ export function getAffiliateRefCode(): string | null {
  * Check if the current session is in affiliate referral mode.
  */
 export function isAffiliateRefActive(): boolean {
-    return currentRefCode !== null && currentRefCode.length > 0;
+    return confirmedRefCode !== null;
 }
 
 /**
@@ -121,6 +155,8 @@ export function isAffiliateRefActive(): boolean {
  */
 export function clearAffiliateRef(): void {
     currentRefCode = null;
+    confirmedRefCode = null;
+    listeners.forEach(listener => listener());
     try {
         const storageKey = tryGetTenantScopedStorageKey(SESSION_KEY);
         if (storageKey) {

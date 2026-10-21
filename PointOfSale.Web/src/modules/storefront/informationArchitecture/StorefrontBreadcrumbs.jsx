@@ -37,11 +37,11 @@ export function StorefrontBreadcrumbs({
         if (!title) return undefined
 
         const previousTitle = document.title
-        document.title = `${title} | Storefront Administration`
+        document.title = `${title} | ${t('smartNavigation.storefrontAdministration')}`
         return () => {
             document.title = previousTitle
         }
-    }, [title])
+    }, [title, t])
 
     if (!screen) return null
 

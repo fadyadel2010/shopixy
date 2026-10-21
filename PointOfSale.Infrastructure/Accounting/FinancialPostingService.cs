@@ -481,6 +481,8 @@ public class FinancialPostingService : IFinancialPostingService
         // Validate the dedicated source even if a substituted destination has no mapped cash inflow.
         if (request.SourceType == ManualCodSettlementAuthority.SourceType)
             await ValidateManualCodSettlementInflowAsync(request, ct);
+        if (request.SourceType == ManualWalletSettlementAuthority.SourceType)
+            await ValidateManualWalletSettlementInflowAsync(request, ct);
         if (request.SourceType == CarrierRemittanceAuthority.SourceType)
             await ValidateCarrierRemittanceInflowAsync(request, ct);
     }
@@ -645,6 +647,7 @@ public class FinancialPostingService : IFinancialPostingService
         var authorizedAmount = request.SourceType switch
         {
             "ManualCodSettlement" => await ValidateManualCodSettlementInflowAsync(request, ct),
+            "ManualWalletSettlement" => await ValidateManualWalletSettlementInflowAsync(request, ct),
             "CarrierCashRemittance" => await ValidateCarrierRemittanceInflowAsync(request, ct),
             "SalesInvoice" => await _db.SalesInvoices
                 .IgnoreQueryFilters()
@@ -804,6 +807,17 @@ public class FinancialPostingService : IFinancialPostingService
         return cumulativeCashRefunds <= originalCashPaid
             ? returnRecord.CashRefundAmount
             : null;
+    }
+
+    private async Task<decimal?> ValidateManualWalletSettlementInflowAsync(PostingRequest request, CancellationToken ct)
+    {
+        var authority = await ManualWalletSettlementAuthority.BuildPostingAsync(_db, request.TenantId, request.SourceId, ct);
+        if (request.SourceReference != authority.SourceReference || request.IdempotencyKey != authority.IdempotencyKey ||
+            request.UserId != authority.UserId || request.JournalDate != authority.JournalDate || request.Lines.Count != 2 ||
+            !request.Lines.Select(l => (l.AccountId, l.DebitAmount, l.CreditAmount))
+                .SequenceEqual(authority.Lines.Select(l => (l.AccountId, l.DebitAmount, l.CreditAmount))))
+            throw new InvalidJournalException("Manual wallet settlement does not match its SQL source authority.");
+        return authority.Lines[0].DebitAmount;
     }
 
     private async Task<decimal?> ValidateManualCodSettlementInflowAsync(PostingRequest request, CancellationToken ct)

@@ -1,4 +1,38 @@
 {
+  "smartNavigation": {
+    "search": "Find a page",
+    "title": "Go to a page",
+    "placeholder": "Search pages, modules or keywords in English or Arabic…",
+    "instructions": "Use ↑ ↓ to select, Enter to open, and Escape to close. Search works in both languages.",
+    "close": "Close page search",
+    "all": "All pages",
+    "favorites": "Favorites",
+    "recent": "Recent",
+    "results": "Navigation results",
+    "resultCount": "Results: {{count}}",
+    "noResults": "No matching pages. Try a screen name, module or another keyword.",
+    "noFavorites": "No favorites yet. Use the star beside a page to save it.",
+    "noRecent": "No recent pages yet.",
+    "unavailable": "No pages are available with your current access.",
+    "addFavorite": "Add {{title}} to favorites",
+    "removeFavorite": "Remove {{title}} from favorites",
+    "favoriteLimit": "You can save up to {{count}} favorites. Remove one to add another.",
+    "clearRecent": "Clear recent pages",
+    "breadcrumb": "Page breadcrumb",
+    "openNavigation": "Open navigation",
+    "storefrontAdministration": "Storefront Administration",
+    "modules": {
+      "pos": "POS Admin",
+      "storefront": "Storefront management",
+      "commercehub": "CommerceHub · Merchant",
+      "services-marketplace": "Services Marketplace"
+    }
+  },
+  "analytics": {
+    "conversionFunnels": "Conversion Funnels",
+    "campaignCosts": "Campaign Costs",
+    "marketingRoi": "Marketing ROI"
+  },
   "phase7": {
     "configurationSaved": "Configuration saved. This does not verify a provider connection or model execution.",
     "savedReadbackFailed": "Saved, but fresh settings could not be loaded. Reload before making another change.",
@@ -72,6 +106,7 @@
     "subtitle": "Store Management System"
   },
   "nav": {
+    "paymentMethods": "Payment Methods",
     "dashboard": "Dashboard",
     "pos": "POS",
     "sales": "Sales",
@@ -622,7 +657,8 @@
       "Settled": "Settled",
       "CashOnDelivery": "Cash on Delivery",
       "Expired": "Expired",
-      "AmountMismatch": "Amount mismatch"
+      "AmountMismatch": "Amount mismatch",
+      "SyntheticQaCollected": "Synthetic QA collection — NO MONEY"
     },
     "items": "Items",
     "noOrders": "No orders found",
@@ -1750,6 +1786,10 @@
     "enterCredentials": "Enter your username or email and password."
   },
   "storefront": {
+    "design": "Design",
+    "abandonedCheckouts": "Abandoned Checkouts",
+    "onlineCustomers": "Online Customers",
+    "shippingSetup": "Shipping Methods",
     "refreshStatus": "Refresh status",
     "failedToLoad": "Failed to load Storefront Status",
     "failedToSave": "Failed to save Storefront Status",
@@ -5923,6 +5963,45 @@
     "notesRequiredInline": "Notes are required when there is a difference.",
     "openingNotesPlaceholder": "Add opening notes...",
     "closingNotesPlaceholder": "Add closing notes..."
+  },
+  "manualWalletSettlement": {
+    "title": "Manual Wallet Settlement",
+    "description": "Settle whole approved manual wallet payments from Wallet Clearing into the configured Main Cashbox. Delivery is not required.",
+    "payments": "payments",
+    "eligiblePayments": "Approved wallet payments",
+    "approvedPosted": "Approved · Posted · Eligible",
+    "approvedAt": "Approved at",
+    "remaining": "Unsettled",
+    "blocked": "Blocked: accounting or payment history requires review.",
+    "empty": "No unsettled approved wallet payments.",
+    "cashbox": "Main Cashbox",
+    "clearing": "Wallet Clearing",
+    "debit": "Debit",
+    "credit": "Credit",
+    "review": "Review selected wallet payments",
+    "serverPreview": "Server-verified posting preview",
+    "confirmText": "This records an internal accounting settlement only. It does not transfer Vodafone Cash/Instapay funds, withdraw money, or move physical cash. Confirm only after the corresponding funds have actually reached the designated destination under your business process.",
+    "attestation": "I attest that the corresponding funds have been received in Main Cashbox.",
+    "confirm": "Confirm wallet settlement",
+    "success": "Wallet settlement posted successfully",
+    "settlementReference": "Settlement reference",
+    "journalReference": "Journal reference",
+    "viewLedger": "View Main Cashbox ledger",
+    "loadError": "Unable to refresh authoritative balances. Any displayed posted settlement remains committed; do not submit a new operation to repeat it.",
+    "conflict": "The selection is no longer eligible or has changed. Refresh and review again. An unresolved operation must first be recovered using its original reference.",
+    "retryNotice": "The outcome is not yet confirmed. Check or retry the SAME operation below; do not create another settlement.",
+    "retrySame": "Recover / retry original operation",
+    "clearingBoundary": "Use the dedicated Manual COD or Manual Wallet workflow for eligible collected payments. Each requires operator confirmation and authoritative payment/accounting validation. Generic Treasury Transfers cannot move clearing funds.",
+    "providerBoundary": "Other provider settlements require their supported evidence workflow. Local manual wallet settlement is not an automated provider remittance.",
+    "blocks": {
+      "WALLET_MANUAL_REFUND_INELIGIBLE": "Blocked: prior refund; whole-payment settlement is unavailable.",
+      "WALLET_MANUAL_APPROVAL_NOT_POSTED": "Blocked: approval accounting has not posted.",
+      "WALLET_MANUAL_APPROVAL_LINEAGE_REQUIRED": "Blocked: approval journal history is missing, reversed or inconsistent.",
+      "WALLET_MANUAL_ACCEPTED_INTENT_REQUIRED": "Blocked: a unique accepted wallet payment is required.",
+      "WALLET_MANUAL_BALANCE_CHANGED": "Blocked: authoritative clearing balance has changed.",
+      "WALLET_MANUAL_APPROVAL_REQUIRED": "Blocked: payment/order is not eligible for settlement.",
+      "WALLET_MANUAL_CURRENCY_MISMATCH": "Blocked: payment currency does not match the tenant currency."
+    }
   },
   "manualCod": {
     "title": "Manual COD Settlement",

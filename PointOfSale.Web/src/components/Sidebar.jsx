@@ -35,6 +35,8 @@ import { useRTL } from '../hooks/useRTL'
 import { isServiceMarketplaceWorkflowActor } from '../marketplace/authority'
 import { canAccessCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
 import { hasPosPermission } from '../auth/posPermissions'
+import { useSmartNavigation } from '../navigation/SmartNavigationContext'
+import { SidebarFavorites } from '../navigation/SidebarFavorites'
 import {
     STOREFRONT_PRODUCT_NAVIGATION,
     STOREFRONT_SIDEBAR_STATE_KEY,
@@ -96,38 +98,9 @@ export default function Sidebar({ isOpen, onClose }) {
     return <SidebarContent key={scope || 'anonymous'} isOpen={isOpen} onClose={onClose} scope={scope} />
 }
 
-function SidebarContent({ isOpen, onClose, scope }) {
-    const { t } = useTranslation()
-    const { user } = useAuthStore()
-    const location = useLocation()
-    const [expandedMenus, setExpandedMenus] = useState(() => readExpandedMenus(scope))
-    const { dir, isRTL } = useRTL()
-
-    const toggleMenu = (menuKey) => {
-        setExpandedMenus(prev => ({
-            ...prev,
-            [menuKey]: !prev[menuKey]
-        }))
-    }
-
-    const isActive = (path) => {
-        // Handle paths with query parameters (e.g., /marketplace?tab=my-requests)
-        if (path.includes('?')) {
-            const [pathname, search] = path.split('?');
-            return location.pathname === pathname && location.search === `?${search}`;
-        }
-        return location.pathname === path;
-    };
-
-    const activeStorefrontScreenId = resolveStorefrontScreen(location.pathname, location.search)?.id || null
-
-    const renderIcon = (icon, size = 20) => {
-        const Icon = STOREFRONT_ICONS[icon]
-        return Icon
-            ? <Icon aria-hidden="true" size={size} />
-            : <span aria-hidden="true">{icon}</span>
-    }
-
+// The existing menu remains the single presentation/permission metadata source.
+// Search also calls this factory with a key collector, not a second list of URLs.
+export function buildAdminMenu(t, user) {
     // Translate the merged Storefront tree and project POS permissions onto it.
     const localizeStorefrontProductNode = (node, inheritedPermission) => ({
         ...node,
@@ -139,7 +112,7 @@ function SidebarContent({ isOpen, onClose, scope }) {
     })
 
     // New navigation structure with renamed items and proper order
-    const menuItems = [
+    return [
         // 1) Dashboard
         {
             key: 'dashboard',
@@ -209,6 +182,7 @@ function SidebarContent({ isOpen, onClose, scope }) {
                 { path: '/treasury', label: t('nav.financeDashboard'), icon: '📊', permission: 'reports.financial.view' },
                 { path: '/treasury/hub', label: t('nav.treasuryHub'), icon: '🏦', permission: 'finance.view' },
                 { path: '/treasury/clearing-aging', label: t('treasury.clearingNav', 'Clearing Aging'), icon: '⏳', permission: 'reports.financial.view' },
+                // Manual COD/Wallet settlement are reachable from Treasury / Clearing Aging only (no dedicated menu entry).
                 { path: '/treasury/general-ledger', label: t('treasury.generalLedgerNav', 'General Ledger'), icon: '📖', permission: 'reports.financial.view' },
                 { path: '/supplier-card-funding', label: t('nav.supplierCardFunding'), icon: '💳', permission: 'suppliers.balance.manage' },
                 // Operational screens (not showing balance)
@@ -254,6 +228,7 @@ function SidebarContent({ isOpen, onClose, scope }) {
         // 11) Services Marketplace (Phase P2 - Tab-Based Navigation)
         {
             key: 'marketplace',
+            application: 'services-marketplace',
             label: t('nav.marketplace', 'Services Marketplace'),
             icon: '🤝',
             path: '/marketplace',
@@ -262,6 +237,7 @@ function SidebarContent({ isOpen, onClose, scope }) {
         // CommerceHub Admin (Global Marketplace Publishing)
         {
             key: 'commercehub',
+            application: 'commercehub',
             label: t('nav.commerceHub', 'CommerceHub'),
             icon: '🏪',
             children: [
@@ -358,7 +334,26 @@ function SidebarContent({ isOpen, onClose, scope }) {
             permission: 'settings.view'
         },
     ]
+}
 
+function SidebarContent({ isOpen, onClose, scope }) {
+    const { t } = useTranslation()
+    const { user } = useAuthStore()
+    const location = useLocation()
+    const navigation = useSmartNavigation()
+    const [expandedMenus, setExpandedMenus] = useState(() => readExpandedMenus(scope))
+    const { dir, isRTL } = useRTL()
+    const menuItems = buildAdminMenu(t, user)
+    const toggleMenu = (menuKey) => setExpandedMenus(prev => ({ ...prev, [menuKey]: !prev[menuKey] }))
+    const isActive = (path) => {
+        const [pathname, search] = path.split('?')
+        return location.pathname === pathname && (!search || location.search === `?${search}`)
+    }
+    const activeStorefrontScreenId = resolveStorefrontScreen(location.pathname, location.search)?.id || null
+    const renderIcon = (icon, size = 20) => {
+        const Icon = STOREFRONT_ICONS[icon]
+        return Icon ? <Icon aria-hidden="true" size={size} /> : <span aria-hidden="true">{icon}</span>
+    }
     // Filter the navigation tree using backend-derived permissions/capabilities.
     // Constitutional law (ONLINE_STORE_CANONICAL_BLUEPRINT.md §17 Law 16):
     //   The Storefront product must never disappear. When capability-based
@@ -559,6 +554,7 @@ function SidebarContent({ isOpen, onClose, scope }) {
 
                 {/* Navigation Menu */}
                 <nav aria-label={t('nav.mainNavigation', 'Main navigation')} className="p-4 space-y-1">
+                    {navigation && <SidebarFavorites navigation={navigation} onNavigate={onClose} />}
                     {filteredMenuItems.map((item) => (
                         <div key={item.key}>
                             {item.children ? (

@@ -14,7 +14,7 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import type { ApiErrorResponse } from '@/types';
 import { getRequestHeaders, isRequestContextReady } from '../../bootstrap/index';
-import { getAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
+import { getAffiliateRefCode, getConfirmedAffiliateRefCode, acceptAffiliateRefVerdict } from '@/bootstrap/affiliateRefTracker';
 import { useLanguageStore } from '@/i18n';
 import { getThemePreviewToken } from '@/storefront/preview/themePreviewMode';
 import { appendCsrfHeader } from './csrf';
@@ -88,6 +88,7 @@ export function normalizeError(error: AxiosError<ApiErrorResponse>): NormalizedE
 const BASE_URL = import.meta.env.VITE_API_URL || '';
 const THEME_PREVIEW_TOKEN_HEADER = 'X-Theme-Preview-Token';
 type AuthRefreshResult = 'authenticated' | 'degraded' | 'unauthenticated';
+type AffiliateRequestConfig = InternalAxiosRequestConfig & { affiliateConfirmedAtRequest?: string | null };
 
 // Track if we're currently refreshing to prevent loops
 let refreshPromise: Promise<AuthRefreshResult> | null = null;
@@ -236,6 +237,7 @@ const createHttpClient = (): AxiosInstance => {
                 // Without this header, the backend middleware can't see the ref code
                 // because the SPA makes its own API calls without ?ref= in the URL.
                 const affiliateRef = getAffiliateRefCode();
+                (config as AffiliateRequestConfig).affiliateConfirmedAtRequest = getConfirmedAffiliateRefCode();
                 if (affiliateRef) {
                     config.headers['X-Affiliate-Ref'] = affiliateRef;
                 }
@@ -284,6 +286,8 @@ const createHttpClient = (): AxiosInstance => {
     // Response interceptor - error handling with 401 refresh
     client.interceptors.response.use(
         (response) => {
+            acceptAffiliateRefVerdict(response.headers['x-affiliate-mode'], response.headers['x-affiliate-ref'],
+                (response.config as AffiliateRequestConfig).affiliateConfirmedAtRequest ?? null);
             if (import.meta.env.DEV) {
                 console.log('[HTTP] Response', { status: response.status });
             }

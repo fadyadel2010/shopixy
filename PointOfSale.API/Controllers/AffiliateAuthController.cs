@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.ComponentModel.DataAnnotations;
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -120,6 +121,11 @@ public class AffiliateAuthController : ControllerBase
         var email = request.Email.Trim().ToLowerInvariant();
 
         // ─── AF-19: GLOBAL MARKETPLACE - Check email globally (not per-tenant) ────────────────────────────────────
+        if (email.Length > 255 || !new EmailAddressAttribute().IsValid(email))
+            return BadRequest(new { message = "A valid email address of at most 255 characters is required" });
+        var displayName = request.DisplayName.Trim();
+        if (displayName.Length < 2 || displayName.Length > 200)
+            return BadRequest(new { message = "Display name must be 2-200 characters" });
 
         var existingUser = await _dbContext.AffiliateUsers
             .IgnoreQueryFilters()
@@ -132,8 +138,7 @@ public class AffiliateAuthController : ControllerBase
 
         // Generate referral code: first 6 chars of display name + 6 random digits
         // Retry loop to handle collisions robustly (R2 audit fix)
-        var codeSeed = request.DisplayName
-            .Replace(" ", "")
+        var codeSeed = new string(displayName.Where(char.IsAsciiLetterOrDigit).ToArray())
             .ToUpperInvariant();
         if (codeSeed.Length > 6) codeSeed = codeSeed[..6];
 
@@ -159,7 +164,7 @@ public class AffiliateAuthController : ControllerBase
             tenantId,
             Guid.NewGuid(), // UserId — self-referencing the AffiliateUser.Id (placeholder for now)
             referralCode,
-            request.DisplayName);
+            displayName);
 
         _dbContext.AffiliateAccounts.Add(affiliateAccount);
 
@@ -208,7 +213,21 @@ public class AffiliateAuthController : ControllerBase
             affiliateUser.Id, affiliateAccount.Id, email);
 
         // Registration issues verification only; authenticated authority starts at verified login.
-        await SendVerificationEmailAsync(affiliateUser, rawVerificationToken);
+        try
+        {
+            await SendVerificationEmailAsync(affiliateUser, rawVerificationToken);
+        }
+        catch (Exception ex)
+        {
+            // Identity is committed. Direct retries to resend, not another enrollment.
+            _logger.LogWarning("Affiliate verification delivery unavailable | ErrorType: {ErrorType}", ex.GetType().Name);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                code = "AFFILIATE_VERIFICATION_DELIVERY_UNAVAILABLE",
+                accountCreated = true,
+                message = "Account registered. Verification delivery is unavailable; retry using resend verification."
+            });
+        }
 
         return Ok(new AffiliateAuthResponse
         {
@@ -553,7 +572,15 @@ public class AffiliateAuthController : ControllerBase
             {
                 await transaction.CommitAsync(ct);
                 await transaction.DisposeAsync();
-                await SendVerificationEmailAsync(affiliateUser, rawToken);
+                try
+                {
+                    await SendVerificationEmailAsync(affiliateUser, rawToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Affiliate verification resend unavailable | ErrorType: {ErrorType}", ex.GetType().Name);
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, new { code = "AFFILIATE_EMAIL_DELIVERY_UNAVAILABLE", message = "Email delivery is temporarily unavailable. Please retry later." });
+                }
             }
         }
 
@@ -573,7 +600,17 @@ public class AffiliateAuthController : ControllerBase
             .FirstOrDefaultAsync(u => u.Email == email && !u.IsDeleted, ct);
 
         if (affiliateUser != null)
-            await IssuePasswordResetEmailAsync(affiliateUser, ct);
+        {
+            try
+            {
+                await IssuePasswordResetEmailAsync(affiliateUser, ct);
+            }
+            catch (Exception ex)
+            {
+                // Keep account existence private and credential-bearing messages out of logs.
+                _logger.LogWarning("Affiliate recovery delivery unavailable | ErrorType: {ErrorType}", ex.GetType().Name);
+            }
+        }
 
         return Ok(new { message = "If the affiliate account exists, password reset instructions have been sent." });
     }
@@ -590,12 +627,33 @@ public class AffiliateAuthController : ControllerBase
         var now = DateTime.UtcNow;
         var tokenHash = AffiliatePasswordResetToken.HashToken(request.Token);
         var token = await _dbContext.AffiliatePasswordResetTokens
+            .IgnoreQueryFilters()
             .Include(t => t.AffiliateUser)
+            .ThenInclude(u => u.AffiliateAccount)
             .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
 
-        if (token == null || !token.CanConsume(now) || token.AffiliateUser.IsDeleted)
+        if (token == null || token.IsDeleted || !token.CanConsume(now) || token.AffiliateUser.IsDeleted ||
+            token.AffiliateUser.AffiliateAccount == null || token.AffiliateUser.AffiliateAccount.IsDeleted)
             return Unauthorized(new { message = "Invalid or expired reset token" });
 
+        // Issuance and consumption lock the identity before token rows, in the same order.
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        var userRows = await _dbContext.AffiliateUsers.IgnoreQueryFilters()
+            .Where(u => u.Id == token.AffiliateUserId && !u.IsDeleted)
+            .ExecuteUpdateAsync(update => update.SetProperty(u => u.UpdatedAt, now), ct);
+        var claimedRows = userRows == 1
+            ? await _dbContext.AffiliatePasswordResetTokens.IgnoreQueryFilters()
+                .Where(t => t.Id == token.Id && !t.IsDeleted && t.ConsumedAtUtc == null && t.ExpiresAtUtc > now)
+                .ExecuteUpdateAsync(update => update.SetProperty(t => t.ConsumedAtUtc, now).SetProperty(t => t.UpdatedAt, now), ct)
+            : 0;
+        if (claimedRows != 1)
+        {
+            await transaction.RollbackAsync(ct);
+            return Unauthorized(new { message = "Invalid or expired reset token" });
+        }
+        await _dbContext.AffiliatePasswordResetTokens.IgnoreQueryFilters()
+            .Where(t => t.AffiliateUserId == token.AffiliateUserId && t.ConsumedAtUtc == null)
+            .ExecuteUpdateAsync(update => update.SetProperty(t => t.ConsumedAtUtc, now).SetProperty(t => t.UpdatedAt, now), ct);
         token.Consume(now);
         token.AffiliateUser.SetPasswordHash(
             _passwordHasher.HashPassword(token.AffiliateUser, request.NewPassword));
@@ -611,6 +669,7 @@ public class AffiliateAuthController : ControllerBase
             true,
             ct);
 
+        await transaction.CommitAsync(ct);
         return Ok(new { message = "Password reset successfully" });
     }
 
@@ -757,10 +816,21 @@ public class AffiliateAuthController : ControllerBase
 
     private async Task IssuePasswordResetEmailAsync(AffiliateUser affiliateUser, CancellationToken ct)
     {
+        var now = DateTime.UtcNow;
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        var userRows = await _dbContext.AffiliateUsers.IgnoreQueryFilters()
+            .Where(u => u.Id == affiliateUser.Id && !u.IsDeleted)
+            .ExecuteUpdateAsync(update => update.SetProperty(u => u.UpdatedAt, now), ct);
+        if (userRows != 1) return;
+        await _dbContext.AffiliatePasswordResetTokens.IgnoreQueryFilters()
+            .Where(t => t.AffiliateUserId == affiliateUser.Id && t.ConsumedAtUtc == null)
+            .ExecuteUpdateAsync(update => update.SetProperty(t => t.ConsumedAtUtc, now).SetProperty(t => t.UpdatedAt, now), ct);
         var rawToken = GenerateRawToken();
         _dbContext.AffiliatePasswordResetTokens.Add(
             AffiliatePasswordResetToken.Create(affiliateUser.Id, rawToken, DateTime.UtcNow.AddHours(1)));
         await _dbContext.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        await transaction.DisposeAsync();
 
         var link = $"{AffiliatePublicBaseUrl().TrimEnd('/')}/affiliate/reset-password?token={Uri.EscapeDataString(rawToken)}";
         await _emailSender.SendEmailAsync(
@@ -940,7 +1010,8 @@ public class AffiliateLoginDto
 
 public class AffiliateRefreshDto
 {
-    public string RefreshToken { get; set; } = string.Empty;
+    // Cookie transport is authoritative; a body token is optional legacy transport.
+    public string? RefreshToken { get; set; }
 }
 
 public class AffiliateVerifyEmailDto

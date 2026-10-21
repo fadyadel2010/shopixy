@@ -1,5 +1,0 @@
-{
-    "exitCode":  0,
-    "command":  "node ../PointOfSale.Web/scripts/lint.cjs \u003cfive changed files\u003e --resolve-plugins-relative-to ../PointOfSale.Web --max-warnings 0",
-    "observedUtc":  "2026-10-20T17:15:56.5565031Z"
-}

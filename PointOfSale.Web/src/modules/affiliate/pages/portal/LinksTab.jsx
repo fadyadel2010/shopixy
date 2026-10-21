@@ -1,13 +1,12 @@
 /**
  * AF-15: My Links Tab — Promotion links table with copy/disable
  * 
- * NOTE: The /affiliate/promotion-links endpoint requires the AF-15 migration
- * to be applied. If the endpoint is unavailable, we gracefully show empty state.
+ * Links and destinations are read from current backend ownership/eligibility authority.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
-import { Link2, Copy, Check, ToggleLeft, Sparkles } from 'lucide-react'
+import { Link2, Copy, Check, ToggleLeft, AlertCircle } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 
 export default function LinksTab() {
@@ -16,19 +15,26 @@ export default function LinksTab() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
     const [copiedId, setCopiedId] = useState(null)
+    const [pendingId, setPendingId] = useState(null)
+    const activeRef = useRef(false)
+    const requestRef = useRef(0)
 
     useEffect(() => {
-        fetchLinks()
+        activeRef.current = true
+        void fetchLinks()
+        return () => { activeRef.current = false }
     }, [])
 
     const fetchLinks = async () => {
+        const request = ++requestRef.current
         setLoading(true)
         setError(null)
         try {
             const data = await affiliateApi.listPromotionLinks()
+            if (!activeRef.current || request !== requestRef.current) return
             setLinks(data || [])
         } catch (err) {
-            // Don't let 401/500 propagate — show friendly empty state instead
+            if (!activeRef.current || request !== requestRef.current) return
             console.warn('[LinksTab] Failed to fetch promotion links:', err?.response?.status || err.message)
             setLinks([])
             if (err?.response?.status === 401) {
@@ -38,7 +44,7 @@ export default function LinksTab() {
                 setError('unavailable')
             }
         } finally {
-            setLoading(false)
+            if (activeRef.current && request === requestRef.current) setLoading(false)
         }
     }
 
@@ -59,18 +65,22 @@ export default function LinksTab() {
         }
 
         navigator.clipboard.writeText(url).then(() => {
+            if (!activeRef.current) return
             setCopiedId(link.id)
-            setTimeout(() => setCopiedId(null), 2000)
-        })
+            setTimeout(() => { if (activeRef.current) setCopiedId(null) }, 2000)
+        }).catch(() => { if (activeRef.current) setError('action') })
     }
 
     const toggleLink = async (link) => {
+        if (pendingId) return
+        setPendingId(link.id)
         try {
             if (link.isActive) {
                 await affiliateApi.deactivatePromotionLink(link.id)
             }
-            fetchLinks()
-        } catch { /* silently fail */ }
+            if (activeRef.current) await fetchLinks()
+        } catch { if (activeRef.current) setError('action') }
+        finally { if (activeRef.current) setPendingId(null) }
     }
 
     if (loading) {
@@ -86,11 +96,12 @@ export default function LinksTab() {
     if (error === 'unavailable') {
         return (
             <div className="text-center py-20">
-                <Sparkles className="w-14 h-14 text-gray-700 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('portal.linksTab.comingSoon')}</h3>
+                <AlertCircle className="w-14 h-14 text-gray-700 mx-auto mb-4" />
+                <h3 role="alert" className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('portal.linksTab.loadError')}</h3>
                 <p className="text-gray-500 text-sm max-w-sm mx-auto">
-                    {t('portal.linksTab.comingSoonDesc')}
+                    {t('portal.linksTab.retryDesc')}
                 </p>
+                <button onClick={fetchLinks} className="mt-4 px-4 py-2 rounded-lg border">{t('portal.discoverTab.retry')}</button>
             </div>
         )
     }
@@ -119,6 +130,7 @@ export default function LinksTab() {
 
     return (
         <div className="space-y-4">
+            {error === 'action' && <p role="alert" className="text-red-500">{t('portal.linksTab.actionError')}</p>}
             <div className="flex items-center justify-between">
                 <p className="text-sm text-gray-500">{links.length} {t('portal.linksTab.linksCount')}</p>
             </div>
@@ -150,7 +162,8 @@ export default function LinksTab() {
                                         </code>
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 max-w-[200px] truncate">
-                                        {link.productId?.substring(0, 8)}...
+                                        <span>{link.productName || link.productId}</span>
+                                        <span className="block text-xs text-gray-500">{link.storeName}</span>
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium ${link.isActive
@@ -165,6 +178,7 @@ export default function LinksTab() {
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="flex items-center justify-end gap-2">
+                                            {resolveBackendPromotionUrl(link) && <a href={link.promotionUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-[#6C63FF]">{t('portal.drawer.visitStorefront')}</a>}
                                             <button
                                                 onClick={() => copyLink(link)}
                                                 disabled={!resolveBackendPromotionUrl(link)}
@@ -179,6 +193,7 @@ export default function LinksTab() {
                                             {link.isActive && (
                                                 <button
                                                     onClick={() => toggleLink(link)}
+                                                    disabled={pendingId === link.id}
                                                     className="p-2 rounded-lg bg-white dark:bg-white/[0.03] text-gray-500 hover:text-red-400 transition-all"
                                                     title={t('portal.linksTab.disable')}
                                                 >

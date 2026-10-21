@@ -41,7 +41,7 @@ const AFFILIATE_SESSION_REVALIDATION_INTERVAL_MS = 60000
 const AffiliatePortal = () => {
     const navigate = useNavigate()
     const [searchParams, setSearchParams] = useSearchParams()
-    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'dashboard')
+    const activeTab = searchParams.get('tab') || 'dashboard'
     const [sidebarOpen, setSidebarOpen] = useState(true)
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
     const [profile, setProfile] = useState(null)
@@ -106,7 +106,6 @@ const AffiliatePortal = () => {
     }, [restoreSession])
 
     const switchTab = useCallback((tab) => {
-        setActiveTab(tab)
         // AF-32: When switching away from discover, clear filter params
         // When staying on discover, let the tab manage its own params
         if (tab !== 'discover') {

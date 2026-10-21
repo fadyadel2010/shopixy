@@ -9,8 +9,8 @@
  * UX transparency so users don't look for a login button.
  */
 
-import React from 'react';
-import { isAffiliateRefActive } from '@/bootstrap/affiliateRefTracker';
+import React, { useSyncExternalStore } from 'react';
+import { subscribeAffiliateRef, getConfirmedAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
 
 interface AffiliateGuestCheckoutBannerProps {
     /** Optional className override */
@@ -21,7 +21,8 @@ export const AffiliateGuestCheckoutBanner: React.FC<AffiliateGuestCheckoutBanner
     className = '',
 }) => {
     // Only show in affiliate mode
-    if (!isAffiliateRefActive()) return null;
+    const refCode = useSyncExternalStore(subscribeAffiliateRef, getConfirmedAffiliateRefCode);
+    if (!refCode) return null;
 
     return (
         <div

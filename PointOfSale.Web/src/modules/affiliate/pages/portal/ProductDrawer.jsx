@@ -12,15 +12,16 @@
  * 
  * Affiliate link: backend-issued promotionUrl.
  */
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
 import affiliateApi from '../../../../services/affiliateApi'
 import {
     X, ExternalLink, Copy, Check, MessageCircle, Share2,
-    TrendingUp, AlertCircle, ChevronLeft, ChevronRight
+    TrendingUp, AlertCircle, ChevronLeft, ChevronRight, Package
 } from 'lucide-react'
 import StockBadge from './badges/StockBadge'
 import { useLanguage } from '../../i18n/LanguageContext'
+import { affiliateProductMediaUrl } from '../../lib/affiliateProductMedia'
 
 const resolveProductCurrency = (product) => {
     const currency = typeof product?.currency === 'string' ? product.currency.trim().toUpperCase() : ''
@@ -35,32 +36,70 @@ export default function ProductDrawer({ productId, onClose }) {
     const [promoLink, setPromoLink] = useState(null)
     const [copied, setCopied] = useState(false)
     const [currentImageIndex, setCurrentImageIndex] = useState(0)
+    const [linkError, setLinkError] = useState(false)
+    const [reload, setReload] = useState(0)
+    const generationRef = useRef(0)
+    const submittingRef = useRef(false)
+    const linkReadRef = useRef(0)
 
     // AF-22: Format currency properly (25 EGP instead of EGP 25.00)
     const formatPrice = (amount) => {
         const currency = resolveProductCurrency(product)
-        return currency ? `${Math.round(amount)} ${currency}` : 'Currency unavailable'
+        return currency ? `${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${currency}` : 'Currency unavailable'
     }
 
     // FE-1A: Prevent double fetch - guard against empty productId
     useEffect(() => {
         if (!productId) return
+        const generation = ++generationRef.current
+        const linkRead = ++linkReadRef.current
+        let active = true
         setLoading(true)
+        setProduct(null)
+        setPromoLink(null)
+        setLinkError(false)
+        setCopied(false)
+        setCurrentImageIndex(0)
+        setGeneratingLink(false)
+        submittingRef.current = false
         affiliateApi.getProductIntelligence(productId)
             .then(p => {
+                if (!active) return
                 setProduct(p)
-                // AF-15: Auto-generate the backend promotion link record
-                if (p.tenantId && p.productId) {
-                    setGeneratingLink(true)
-                    affiliateApi.createPromotionLink(p.tenantId, p.productId)
-                        .then(link => setPromoLink(link))
-                        .catch(err => console.warn('[ProductDrawer] Failed to generate promotion link:', err?.message))
-                        .finally(() => setGeneratingLink(false))
-                }
             })
-            .catch(() => setProduct(null))
-            .finally(() => setLoading(false))
-    }, [productId])
+            .catch(() => { if (active) setProduct(null) })
+            .finally(() => { if (active) setLoading(false) })
+        // Browsing is read-only. Locate an owned link without silently creating one.
+        affiliateApi.listPromotionLinks().then(links => {
+            if (active && linkReadRef.current === linkRead) setPromoLink(links.find(link => link.productId === productId && link.isActive) || null)
+        }).catch(() => { /* Explicit Promote is an idempotent retry/readback path. */ })
+        return () => {
+            active = false
+            generationRef.current = generation + 1
+        }
+    }, [productId, reload])
+
+    const promote = async () => {
+        if (!product || submittingRef.current) return
+        const generation = generationRef.current
+        linkReadRef.current++
+        submittingRef.current = true
+        setGeneratingLink(true)
+        setLinkError(false)
+        try {
+            const link = await affiliateApi.createPromotionLink(product.tenantId, product.productId)
+            if (generationRef.current !== generation) return
+            if (!link?.promotionUrl) throw new Error('Promotion destination unavailable')
+            setPromoLink(link)
+        } catch {
+            if (generationRef.current === generation) setLinkError(true)
+        } finally {
+            if (generationRef.current === generation) {
+                submittingRef.current = false
+                setGeneratingLink(false)
+            }
+        }
+    }
 
     // FE-1A: Close drawer with ESC key
     useEffect(() => {
@@ -81,12 +120,14 @@ export default function ProductDrawer({ productId, onClose }) {
 
     const copyLink = () => {
         if (!affiliateLink) return
+        const generation = generationRef.current
         navigator.clipboard.writeText(affiliateLink).then(() => {
+            if (generationRef.current !== generation) return
             setCopied(true)
-            setTimeout(() => setCopied(false), 2000)
+            setTimeout(() => { if (generationRef.current === generation) setCopied(false) }, 2000)
             // FE-1A: Copy feedback (optional toast - implement if toast library available)
             // toast?.success?.('Affiliate link copied')
-        })
+        }).catch(() => { if (generationRef.current === generation) setLinkError(true) })
     }
 
     // FE-1A: Defensive optional chaining in image navigation
@@ -109,6 +150,9 @@ export default function ProductDrawer({ productId, onClose }) {
             onClick={onClose}
         >
             <motion.div
+                role="dialog"
+                aria-modal="true"
+                aria-label={t('portal.drawer.promoteProduct')}
                 initial={{ x: '100%' }}
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}
@@ -116,6 +160,9 @@ export default function ProductDrawer({ productId, onClose }) {
                 onClick={e => e.stopPropagation()}
                 className="w-full sm:w-[480px] h-full bg-white dark:bg-[#0D1117] border-l border-gray-200 dark:border-white/[0.08] overflow-y-auto"
             >
+                <button onClick={onClose} aria-label={t('portal.discoverTab.close')} className="absolute top-2 end-2 z-10 p-2 rounded-lg bg-white dark:bg-[#0D1117] text-gray-600 dark:text-gray-400">
+                    <X className="w-5 h-5" />
+                </button>
                 {loading && <DrawerSkeleton />}
 
                 {!loading && product && (
@@ -127,24 +174,20 @@ export default function ProductDrawer({ productId, onClose }) {
                                 <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-1">{product?.name || 'Product'}</h2>
                                 <p className="text-sm text-gray-600 dark:text-gray-400">{product?.storeName || 'Store'}</p>
                             </div>
-                            <button
-                                onClick={onClose}
-                                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/[0.05] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
                         </div>
 
                         {/* Gallery Carousel */}
                         {product?.images && product.images.length > 0 && (
-                            <div className="relative aspect-square rounded-xl overflow-hidden bg-white dark:bg-white/[0.02] border border-gray-200 dark:border-white/[0.06]">
+                            <div className="relative aspect-square rounded-xl overflow-hidden bg-white dark:bg-white/[0.02] border border-gray-200 dark:border-white/[0.06] flex items-center justify-center">
+                                <Package className="absolute w-10 h-10 text-gray-700" aria-hidden="true" />
                                 {/* FE-1A: Image fallback for broken thumbnails */}
                                 <img
-                                    src={product.images[currentImageIndex]}
+                                    src={affiliateProductMediaUrl(product.images[currentImageIndex], product.storefrontUrl)}
                                     alt={product?.name || 'Product'}
-                                    className="w-full h-full object-cover"
+                                    className="relative w-full h-full object-cover"
                                     onError={(e) => {
-                                        e.currentTarget.src = '/img/placeholder.png'
+                                        e.currentTarget.onerror = null
+                                        e.currentTarget.style.display = 'none'
                                     }}
                                 />
                                 {product.images.length > 1 && (
@@ -182,7 +225,7 @@ export default function ProductDrawer({ productId, onClose }) {
                                 {/* FE-1: Variant price rule | FE-1A: Defensive optional chaining | AF-22: Currency formatting */}
                                 {product?.variants && product.variants.length > 0 ? (
                                     <p className="text-lg font-bold text-gray-900 dark:text-white">
-                                        {t('portal.badges.from')} {formatPrice(Math.min(...product.variants.map(v => v.price)))}
+                                        {t('portal.badges.from')} {formatPrice(product.price)}
                                     </p>
                                 ) : (
                                     <p className="text-lg font-bold text-gray-900 dark:text-white">
@@ -222,14 +265,14 @@ export default function ProductDrawer({ productId, onClose }) {
                                 <StockBadge isOutOfStock={product?.isOutOfStock} lowStock={product?.lowStock} />
                             </div>
                             <p className="text-xs text-gray-600 dark:text-gray-400">
-                                {t('portal.drawer.totalAvailable')}: <span className="text-gray-900 dark:text-white font-medium">{product?.totalStock || 0} {t('portal.drawer.units')}</span>
+                                {t('portal.drawer.totalAvailable')}: <span className="text-gray-900 dark:text-white font-medium">{product?.totalAvailableStock ?? 0} {t('portal.drawer.units')}</span>
                             </p>
                         </div>
 
                         {/* Variants | FE-1A: Defensive optional chaining */}
                         {product?.variants && product.variants.length > 0 && (
                             <div className="space-y-3">
-                                <p className="text-sm font-medium text-gray-900 dark:text-white">Available Variants</p>
+                                <p className="text-sm font-medium text-gray-900 dark:text-white">{t('portal.drawer.variants')}</p>
                                 <div className="space-y-2">
                                     {product.variants.map(v => (
                                         <div
@@ -285,15 +328,20 @@ export default function ProductDrawer({ productId, onClose }) {
 
                         {/* Promotion Actions */}
                         <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-white/[0.06]">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white">Promote This Product</p>
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{t('portal.drawer.promoteProduct')}</p>
+                            <button type="button" onClick={promote} disabled={generatingLink} className="w-full py-3 rounded-lg bg-[#6C63FF] text-white disabled:opacity-50">
+                                {generatingLink ? t('portal.drawer.generating') : t('portal.discoverTab.promoteAction')}
+                            </button>
+                            {linkError && <p role="alert" className="text-sm text-red-500">{t('portal.drawer.linkError')}</p>}
 
                             {/* Copy Link */}
                             <div className="flex items-center gap-2">
-                                <div className="flex-1 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-[#0B0F19] border border-gray-200 dark:border-white/[0.08] text-xs text-gray-600 dark:text-gray-400 truncate font-mono">
-                                    {generatingLink ? 'Generating link...' : (affiliateLink || 'Promotion link unavailable')}
+                                <div dir="ltr" data-testid="promotion-url" className="min-w-0 flex-1 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-[#0B0F19] border border-gray-200 dark:border-white/[0.08] text-xs text-gray-600 dark:text-gray-400 truncate font-mono">
+                                    {generatingLink ? t('portal.drawer.generating') : (affiliateLink || t('portal.drawer.noLink'))}
                                 </div>
                                 <button
                                     onClick={copyLink}
+                                    aria-label={t('portal.drawer.copyLink')}
                                     disabled={!affiliateLink || generatingLink}
                                     className={`flex-shrink-0 p-2.5 rounded-lg transition-all ${copied
                                             ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
@@ -334,7 +382,7 @@ export default function ProductDrawer({ productId, onClose }) {
                                 className={`w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-[#6C63FF] text-gray-900 dark:text-white text-sm font-medium hover:bg-[#5850E6] transition-all ${!affiliateLink ? 'pointer-events-none opacity-40' : ''}`}
                             >
                                 <ExternalLink className="w-4 h-4" />
-                                Visit Storefront
+                                {t('portal.drawer.visitStorefront')}
                             </a>
                         </div>
                     </div>
@@ -343,7 +391,8 @@ export default function ProductDrawer({ productId, onClose }) {
                 {!loading && !product && (
                     <div className="p-6 text-center">
                         <AlertCircle className="w-12 h-12 text-gray-700 mx-auto mb-3" />
-                        <p className="text-gray-600 dark:text-gray-400">Failed to load product details</p>
+                        <p className="text-gray-600 dark:text-gray-400">{t('portal.drawer.loadError')}</p>
+                        <button onClick={() => setReload(v => v + 1)} className="mt-4 px-4 py-2 rounded-lg border">{t('portal.discoverTab.retry')}</button>
                     </div>
                 )}
             </motion.div>

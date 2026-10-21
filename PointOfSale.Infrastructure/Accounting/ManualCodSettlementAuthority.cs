@@ -18,6 +18,17 @@ public static class ManualCodSettlementAuthority
     public static async Task<(Account Cashbox, Account Clearing, string Currency)> ResolveAccountsAsync(
         ApplicationDbContext db, Guid tenantId, CancellationToken ct)
     {
+        var (cashbox, currency) = await ResolveMainCashboxAsync(db, tenantId, ct);
+        var clearing = await db.LedgerAccounts.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(a => a.TenantId == tenantId && a.AccountCode == "1130" && !a.IsDeleted, ct);
+        Require(clearing != null && clearing.IsActive && clearing.IsClearing && clearing.AccountType == AccountType.Asset,
+            "COD_MANUAL_COLLECTION_LINEAGE_REQUIRED");
+        return (cashbox, clearing!, currency);
+    }
+
+    public static async Task<(Account Cashbox, string Currency)> ResolveMainCashboxAsync(
+        ApplicationDbContext db, Guid tenantId, CancellationToken ct)
+    {
         var currency = await db.Tenants.IgnoreQueryFilters().AsNoTracking()
             .Where(t => t.Id == tenantId && t.IsActive && t.Status == TenantStatus.Active && t.DeletedAtUtc == null)
             .Select(t => t.Currency).SingleOrDefaultAsync(ct);
@@ -34,11 +45,7 @@ public static class ManualCodSettlementAuthority
         Require(cashbox != null && cashbox.TenantId == tenantId && cashbox.IsActive && !cashbox.IsDeleted &&
             cashbox.AccountType == AccountType.Asset && !cashbox.IsClearing && cashbox.AccountCode == "1010",
             "COD_MANUAL_CASHBOX_REQUIRED");
-        var clearing = await db.LedgerAccounts.IgnoreQueryFilters().AsNoTracking()
-            .SingleOrDefaultAsync(a => a.TenantId == tenantId && a.AccountCode == "1130" && !a.IsDeleted, ct);
-        Require(clearing != null && clearing.IsActive && clearing.IsClearing && clearing.AccountType == AccountType.Asset,
-            "COD_MANUAL_COLLECTION_LINEAGE_REQUIRED");
-        return (cashbox!, clearing!, currency!.Trim().ToUpperInvariant());
+        return (cashbox!, currency!.Trim().ToUpperInvariant());
     }
 
     public static async Task ValidateOrdersAsync(ApplicationDbContext db, Guid tenantId,

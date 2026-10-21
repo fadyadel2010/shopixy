@@ -49,13 +49,16 @@ public class OrderFulfillmentService : IOrderFulfillmentService
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<OrderFulfillmentService> _logger;
     private readonly IProductVariantStockRepository _stockRepository;
+    private readonly PointOfSale.Infrastructure.Services.SyntheticQaCertificationAuthority? _syntheticQa;
 
     public OrderFulfillmentService(
         ApplicationDbContext db,
         IEventPublisher eventPublisher,
         ILogger<OrderFulfillmentService> logger,
-        IProductVariantStockRepository? stockRepository = null)
+        IProductVariantStockRepository? stockRepository = null,
+        PointOfSale.Infrastructure.Services.SyntheticQaCertificationAuthority? syntheticQa = null)
     {
+        _syntheticQa = syntheticQa;
         _db = db;
         _eventPublisher = eventPublisher;
         _logger = logger;
@@ -757,6 +760,11 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         }
 
         var oldStatus = order.FulfillmentStatus;
+        if (order.PaymentStatus == PaymentStatus.SyntheticQaCollected)
+        {
+            if (_syntheticQa == null) throw new InvalidOperationException("SYNTHETIC_QA_UNAVAILABLE");
+            await _syntheticQa.EnsureSyntheticCollectionAsync(order, ct);
+        }
 
         if (oldStatus == targetStatus)
         {
@@ -898,8 +906,11 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         if (source == FulfillmentRequestSource.Manual && targetStatus == FulfillmentStatus.Delivered &&
             await ManualDeliveryAffiliateBoundary.HasObligationAsync(_db, order, ct))
         {
-            return OrderFulfillmentResult.Failed(orderId, order.OrderNumber, oldStatus, source,
-                "AFFILIATE_MANUAL_DELIVERY_VERIFIED_EVIDENCE_REQUIRED: Trusted delivery verification is required for an attributed Manual order.", idempotencyKey);
+            var proof = eventFactory(order, oldStatus, targetStatus) as FulfillmentDeliveredEvent;
+            if (_syntheticQa == null || proof == null ||
+                !await _syntheticQa.HasDeliveryAuthorityAsync(order, proof.DeliveryReference, proof.ProofOfDeliveryUrl, ct))
+                return OrderFulfillmentResult.Failed(orderId, order.OrderNumber, oldStatus, source,
+                    "AFFILIATE_MANUAL_DELIVERY_VERIFIED_EVIDENCE_REQUIRED: Trusted delivery verification is required for an attributed Manual order.", idempotencyKey);
         }
 
         // Validate transition
@@ -929,6 +940,12 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 {
                     order.DeliveryReference = delivered.DeliveryReference;
                     order.ProofOfDeliveryUrl = delivered.ProofOfDeliveryUrl;
+                    if (delivered.DeliveryReference?.StartsWith("SYNTHETIC-QA:", StringComparison.Ordinal) == true && _syntheticQa != null)
+                    {
+                        var evidenceId = Guid.ParseExact(delivered.DeliveryReference[13..], "N");
+                        var evidence = await _syntheticQa.RequireEvidenceAsync(order, evidenceId, "Delivery", ct);
+                        evidence.ConsumedAtUtc ??= DateTime.UtcNow;
+                    }
                 }
 
                 order.FulfillmentStatus = targetStatus;

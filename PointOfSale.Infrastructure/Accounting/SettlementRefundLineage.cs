@@ -53,6 +53,7 @@ public static class SettlementRefundLineage
             "OFFLINE_COLLECTION" => "CODSettlement",
             "GATEWAY" => "GatewaySettlement",
             "MANUAL_COD_COLLECTION" => "ManualCodSettlement",
+            "MANUAL_WALLET_COLLECTION" => "ManualWalletSettlement",
             "CARRIER_CASH_RECEIPT" => CarrierRemittanceAuthority.SourceType,
             _ => throw InvalidLineage()
         };
@@ -99,6 +100,21 @@ public static class SettlementRefundLineage
         if (credits.Count != 1 || credits[0].CreditAmount != batch.GrossAmount ||
             !accounts[credits[0].AccountId].IsClearing || accounts[credits[0].AccountId].AccountType != AccountType.Asset)
             throw InvalidLineage();
+
+        if (batch.SettlementType == ManualWalletSettlementAuthority.SettlementType)
+        {
+            if (batch.Fees != 0m || accounts[credits[0].AccountId].AccountCode != "1140" ||
+                lines.Count != 2 || !batch.CreatedBy.HasValue || journal.CreatedByUserId != batch.CreatedBy ||
+                journal.IdempotencyKey != ManualWalletSettlementAuthority.Key(tenantId, batch.SettlementId) ||
+                members.Any(m => !m.PaymentIntentId.HasValue)) throw InvalidLineage();
+            var intentIds = members.Select(m => m.PaymentIntentId!.Value).ToArray();
+            var accepted = await db.PaymentIntents.IgnoreQueryFilters().AsNoTracking()
+                .Where(p => p.TenantId == tenantId && intentIds.Contains(p.Id) && !p.IsDeleted).ToListAsync(ct);
+            // Refunds can subsequently change payment state; immutable source identity and original accepted amount remain required.
+            if (accepted.Count != members.Count || members.Any(m => !accepted.Any(p => p.Id == m.PaymentIntentId &&
+                p.OrderId == m.OrderId && p.Provider == PaymentProvider.ManualWallet && p.Amount == m.OrderTotal &&
+                p.Currency == m.Currency && p.VerifiedAtUtc.HasValue))) throw InvalidLineage();
+        }
 
         var mappings = await db.TreasuryAccounts.IgnoreQueryFilters().AsNoTracking()
             .Where(item => item.TenantId == tenantId && ids.Contains(item.AccountId) &&

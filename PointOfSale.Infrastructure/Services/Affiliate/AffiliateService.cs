@@ -13,6 +13,7 @@ using PointOfSale.Core.Events.Affiliate;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.EventBus;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Reliability;
 
@@ -38,7 +39,7 @@ namespace PointOfSale.Infrastructure.Services.Affiliate;
 /// - CorrelationId flows from incoming events to outgoing events (set by consumer scope)
 /// - No PII logged (no customer names, emails, or payment card data)
 /// </summary>
-public class AffiliateService : IAffiliateService
+public partial class AffiliateService : IAffiliateService
 {
     private const int AttributionRecoveryBatchSize = 25;
 
@@ -50,6 +51,7 @@ public class AffiliateService : IAffiliateService
     private readonly IAffiliatePayoutService _payoutService;
     private readonly IAffiliateSettlementOrchestrator _orchestrator;
     private readonly AffiliateSettlementOptions _settlementOptions;
+    private readonly SyntheticQaCertificationAuthority? _syntheticQa;
 
     public AffiliateService(
         ApplicationDbContext context,
@@ -59,8 +61,10 @@ public class AffiliateService : IAffiliateService
         ILogger<AffiliateService> logger,
         IAffiliatePayoutService payoutService,
         IAffiliateSettlementOrchestrator orchestrator,
-        IOptions<AffiliateSettlementOptions> settlementOptions)
+        IOptions<AffiliateSettlementOptions> settlementOptions,
+        SyntheticQaCertificationAuthority? syntheticQa = null)
     {
+        _syntheticQa = syntheticQa;
         _context = context;
         _tenantContext = tenantContext;
         _eventPublisher = eventPublisher;
@@ -1328,12 +1332,17 @@ public class AffiliateService : IAffiliateService
 
     public async Task RecordCommissionForOrderAsync(Guid orderId, CancellationToken ct = default)
     {
+        // Lock before financial reads, using the same order lock as approval/refund.
+        // Under READ COMMITTED, a waiter sees the winner's committed ledger rows.
+        var ownsTransaction = _context.Database.CurrentTransaction == null;
+        var retryState = ownsTransaction && !_context.ChangeTracker.HasChanges()
+            ? OwnedTransactionRetryState.Capture(_context) : null;
+        await using IDbContextTransaction? transaction = ownsTransaction
+            ? await _context.Database.BeginTransactionAsync(ct)
+            : null;
         // CRITICAL: Use IgnoreQueryFilters — called from MassTransit consumer (no HTTP tenant context).
         // Derive TenantId from the Order entity itself.
-        var order = await _context.Orders
-            .IgnoreQueryFilters()
-            .Include(o => o.Items)
-            .FirstOrDefaultAsync(o => o.Id == orderId && !o.IsDeleted, ct);
+        var order = await LoadCommissionOrderAuthorityAsync(orderId, ct);
 
         if (order == null)
         {
@@ -1344,6 +1353,8 @@ public class AffiliateService : IAffiliateService
         }
 
         var tenantId = order.TenantId;
+        order.Items = await _context.OrderItems.IgnoreQueryFilters().AsNoTracking()
+            .Where(item => item.OrderId == orderId && !item.IsDeleted).ToListAsync(ct);
 
         // Guard: attribution must exist
         var attribution = await _context.AffiliateAttributions
@@ -1378,6 +1389,14 @@ public class AffiliateService : IAffiliateService
                 _telemetry.RecordSkipped(tenantId, "no_attribution");
                 return;
             }
+        }
+
+        await ValidateCommissionAttributionAsync(order, attribution, ct);
+
+        if (order.PaymentStatus == PaymentStatus.SyntheticQaCollected)
+        {
+            if (_syntheticQa == null) throw new InvalidOperationException("SYNTHETIC_QA_UNAVAILABLE");
+            await _syntheticQa.EnsureSyntheticCollectionAsync(order, ct);
         }
 
         if (order.Status is OrderStatus.Cancelled or OrderStatus.Refunded)
@@ -1453,11 +1472,6 @@ public class AffiliateService : IAffiliateService
         var skippedUnpaid = 0;
         var skippedNoPolicy = 0;
         var idempotentSkips = 0;
-        var ownsTransaction = _context.Database.CurrentTransaction == null;
-
-        await using IDbContextTransaction? transaction = ownsTransaction
-            ? await _context.Database.BeginTransactionAsync(ct)
-            : null;
 
         try
         {
@@ -1495,6 +1509,7 @@ public class AffiliateService : IAffiliateService
                 }
 
                 if (!item.AffiliateCommissionRateSnapshot.HasValue ||
+                    !item.AffiliateCommissionPolicyIdSnapshot.HasValue ||
                     !item.AffiliateCommissionBaseAmountSnapshot.HasValue ||
                     item.AffiliateCommissionBaseAmountSnapshot.Value <= 0m ||
                     !item.AffiliateCommissionAmountSnapshot.HasValue ||
@@ -1503,6 +1518,22 @@ public class AffiliateService : IAffiliateService
                 {
                     throw new InvalidOperationException(
                         $"OrderItem {item.Id} is marked affiliate-eligible but is missing immutable commission snapshot values.");
+                }
+
+                ValidateCommissionSnapshot(item);
+                await ValidateCommissionLineageAsync(order, item, ct);
+                var existing = await _context.AffiliateCommissionLedger.IgnoreQueryFilters()
+                    .SingleOrDefaultAsync(entry => entry.OrderItemId == item.Id && entry.EntryType == CommissionEntryType.Earned, ct);
+                if (existing != null)
+                {
+                    if (existing.OrderId != order.Id || existing.StoreTenantId != tenantId ||
+                        existing.AttributionId != attribution.Id || existing.AffiliateAccountId != affiliate.Id ||
+                        existing.BaseAmount != commissionableAmount || existing.CommissionRate != item.AffiliateCommissionRateSnapshot.Value ||
+                        existing.CommissionAmount != item.AffiliateCommissionAmountSnapshot.Value || existing.Currency != order.Currency)
+                        throw new InvalidOperationException("AFFILIATE_COMMISSION_IDEMPOTENCY_CONFLICT: Persisted earning differs from immutable order authority.");
+                    idempotentSkips++;
+                    _telemetry.RecordIdempotentSkip(tenantId, "earned");
+                    continue;
                 }
 
                 var snapshotEntry = AffiliateCommissionLedger.CreateEarnedFromSnapshot(
@@ -1544,6 +1575,10 @@ public class AffiliateService : IAffiliateService
             // AF-18: Emit event in affiliate's tenant (where commission ledger is stored)
             if (earnedEntries.Count > 0)
             {
+                if (order.PaymentStatus == PaymentStatus.SyntheticQaCollected)
+                    _context.SyntheticQaCommissionPostings.Add(new SyntheticQaCommissionPosting {
+                        Id = Guid.NewGuid(), OrderId = order.Id, Amount = earnedEntries.Sum(e => e.CommissionAmount),
+                        Currency = order.Currency, PostedAtUtc = DateTime.UtcNow });
                 await _eventPublisher.PublishAsync(new AffiliateCommissionEarnedEvent
                 {
                     TenantId = order.TenantId,
@@ -1610,6 +1645,8 @@ public class AffiliateService : IAffiliateService
             if (ownsTransaction && transaction != null)
             {
                 await transaction.RollbackAsync(ct);
+                await transaction.DisposeAsync();
+                retryState?.ClearRolledBackAttempt();
             }
 
             throw;
@@ -1630,7 +1667,7 @@ public class AffiliateService : IAffiliateService
 
     private static bool HasPendingCommissionPaymentAuthority(PaymentStatus paymentStatus)
     {
-        return paymentStatus is PaymentStatus.Collected
+        return paymentStatus is PaymentStatus.SyntheticQaCollected or PaymentStatus.Collected
             or PaymentStatus.Settled
             or PaymentStatus.PartiallyRefunded;
     }
@@ -1742,7 +1779,7 @@ public class AffiliateService : IAffiliateService
             var idempotencyKey = BuildRefundReversalIdempotencyKey(
                 $"CUMULATIVE:{order.Id:N}",
                 earned.OrderItemId,
-                reversalAuthority.BaseAmount);
+                refundedBaseAmount);
 
             var reversal = AffiliateCommissionLedger.CreateReversalWithCustomKey(
                 earned.StoreTenantId,
@@ -1860,7 +1897,9 @@ public class AffiliateService : IAffiliateService
 
         var remainingBase = earned.BaseAmount - alreadyReversedBase;
         var remainingCommission = earned.CommissionAmount - alreadyReversedCommission;
-        var baseToReverse = Math.Min(refundedBaseAmount, remainingBase);
+        // RefundedAmount is cumulative SQL authority, not another event delta.
+        var cumulativeBase = Math.Min(refundedBaseAmount, earned.BaseAmount);
+        var baseToReverse = Math.Max(0m, cumulativeBase - alreadyReversedBase);
 
         if (baseToReverse <= 0m || remainingCommission <= 0m)
         {
@@ -1868,11 +1907,11 @@ public class AffiliateService : IAffiliateService
         }
 
         var proportionalCommission = Math.Round(
-            earned.CommissionAmount * (baseToReverse / earned.BaseAmount),
+            earned.CommissionAmount * (cumulativeBase / earned.BaseAmount),
             4,
             MidpointRounding.ToZero);
 
-        var commissionToReverse = Math.Min(proportionalCommission, remainingCommission);
+        var commissionToReverse = Math.Min(Math.Max(0m, proportionalCommission - alreadyReversedCommission), remainingCommission);
         var isFinalReversal = baseToReverse >= remainingBase;
         if (isFinalReversal || remainingCommission - commissionToReverse < 0.0001m)
         {
@@ -1918,14 +1957,15 @@ public class AffiliateService : IAffiliateService
             return;
         }
 
-        EnsureAffiliateDeliveryApprovalAuthority(
+        await EnsureAffiliateDeliveryShipmentAuthorityAsync(order, ct);
+        await EnsureAffiliateDeliveryApprovalAuthorityAsync(
             order,
             order.TenantId,
             deliveredAtUtc: order.DeliveredAt ?? DateTime.UtcNow,
             sourceEvent: "RecordCommissionDeliveredOrderReconciliation",
             eventVersion: 1,
             deliveryReference: order.DeliveryReference,
-            proofOfDeliveryUrl: order.ProofOfDeliveryUrl);
+            proofOfDeliveryUrl: order.ProofOfDeliveryUrl, ct: ct);
 
         var existingTerminalEntries = await _context.AffiliateCommissionLedger
             .IgnoreQueryFilters()
@@ -2095,6 +2135,16 @@ public class AffiliateService : IAffiliateService
         decimal? refundedBaseAmount = null,
         string? refundIdempotencyKey = null)
     {
+        var ownsTransaction = _context.Database.CurrentTransaction == null;
+        await using IDbContextTransaction? transaction = ownsTransaction
+            ? await _context.Database.BeginTransactionAsync(ct)
+            : null;
+        var orderAuthority = await LoadCommissionOrderAuthorityAsync(orderId, ct);
+        if (orderAuthority == null || orderAuthority.TenantId != tenantId) return;
+        var itemAuthority = await _context.OrderItems.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == orderItemId && item.OrderId == orderId && !item.IsDeleted, ct);
+        if (itemAuthority == null || itemAuthority.RefundedAmount <= 0m) return;
+
         // CRITICAL: Use IgnoreQueryFilters — called from MassTransit consumer (no HTTP tenant context).
         // Find the original Earned entry
         var original = await _context.AffiliateCommissionLedger
@@ -2124,14 +2174,7 @@ public class AffiliateService : IAffiliateService
             return;
         }
 
-        // Load order for event payload (IgnoreQueryFilters for consumer context)
-        var order = await _context.Orders
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(o =>
-                o.Id == orderId &&
-                o.TenantId == tenantId &&
-                !o.IsDeleted,
-                ct);
+        var order = orderAuthority;
 
         var existingReversalTotalsByOriginalId = await LoadReversalTotalsByOriginalEntryIdAsync(
             new[] { original.Id },
@@ -2140,7 +2183,7 @@ public class AffiliateService : IAffiliateService
         var reversalAuthority = CalculateRefundCommissionReversalAuthority(
             original,
             existingReversalTotalsByOriginalId,
-            refundedBaseAmount ?? original.BaseAmount);
+            itemAuthority.RefundedAmount);
 
         if (reversalAuthority == null)
         {
@@ -2151,9 +2194,9 @@ public class AffiliateService : IAffiliateService
             return;
         }
 
-        var idempotencyKey = !string.IsNullOrWhiteSpace(refundIdempotencyKey)
-            ? refundIdempotencyKey
-            : BuildRefundReversalIdempotencyKey("FULL", orderItemId, reversalAuthority.BaseAmount);
+        // Event-supplied deltas/keys are hints. All delivery paths converge on SQL's cumulative refund.
+        var idempotencyKey = BuildRefundReversalIdempotencyKey(
+            $"CUMULATIVE:{orderId:N}", orderItemId, itemAuthority.RefundedAmount);
 
         var reversal = AffiliateCommissionLedger.CreateReversalWithCustomKey(
             original.StoreTenantId,
@@ -2168,7 +2211,6 @@ public class AffiliateService : IAffiliateService
             original.Currency,
             idempotencyKey);
 
-        await using var transaction = await _context.Database.BeginTransactionAsync(ct);
         try
         {
             _context.AffiliateCommissionLedger.Add(reversal);
@@ -2179,7 +2221,7 @@ public class AffiliateService : IAffiliateService
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
-            await transaction.RollbackAsync(ct);
+            if (ownsTransaction) await transaction!.RollbackAsync(ct);
             _context.Entry(reversal).State = EntityState.Detached;
             _telemetry.RecordIdempotentSkip(original.StoreTenantId, "reversed");
 
@@ -2193,7 +2235,7 @@ public class AffiliateService : IAffiliateService
             original.AffiliateAccountId,
             ct);
 
-        // OUTBOX RULE: Event published ONLY AFTER successful DB commit.
+        // OUTBOX RULE: Stage with the reversal before the same transaction commits.
         // AF-19C: Add StoreTenantId for correct MongoDB projection
         await _eventPublisher.PublishAsync(new AffiliateCommissionReversedEvent
         {
@@ -2212,7 +2254,7 @@ public class AffiliateService : IAffiliateService
         }, ct);
 
         await _context.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (ownsTransaction) await transaction!.CommitAsync(ct);
 
         _logger.LogInformation(
             "Reversed commission for OrderItem {OrderItemId}: amount={Amount}",
@@ -2256,10 +2298,7 @@ public class AffiliateService : IAffiliateService
 
         var order = await LoadAffiliateApprovalOrderAuthorityAsync(orderId, ct);
         EnsureDeliveryEventEvidence(order, eventTenantId, sourceEvent, eventVersion, deliveryReference, proofOfDeliveryUrl);
-        if (order.FulfillmentMode == FulfillmentMode.Manual && order.ShippingMethodId.HasValue &&
-            !await _context.Shipments.IgnoreQueryFilters().AnyAsync(s => s.TenantId == order.TenantId && s.OrderId == order.Id &&
-                !s.IsDeleted && s.Status == ShipmentStatus.Delivered && s.CarrierCode == "manual", ct))
-            throw new InvalidOperationException("AFFILIATE_MANUAL_DELIVERY_EVIDENCE_REQUIRED: The original Manual shipment must be delivered.");
+        await EnsureAffiliateDeliveryShipmentAuthorityAsync(order, ct);
         if (!await PointOfSale.Infrastructure.Fulfillment.ManualDeliveryAffiliateBoundary.HasObligationAsync(_context, order, ct))
         {
             // A broadcast logistics fact does not create an affiliate obligation.
@@ -2267,14 +2306,35 @@ public class AffiliateService : IAffiliateService
             _logger.LogInformation("[Affiliate:Approve] No SQL affiliate obligation for Order {OrderId}; logistics event accepted without approval", orderId);
             return;
         }
-        EnsureAffiliateDeliveryApprovalAuthority(
+        await EnsureAffiliateDeliveryApprovalAuthorityAsync(
             order,
             eventTenantId,
             deliveredAtUtc,
             sourceEvent,
             eventVersion,
             deliveryReference,
-            proofOfDeliveryUrl);
+            proofOfDeliveryUrl, ct);
+
+        order.Items = await _context.OrderItems.IgnoreQueryFilters().AsNoTracking()
+            .Where(item => item.OrderId == orderId && !item.IsDeleted).ToListAsync(ct);
+        var attribution = await _context.AffiliateAttributions.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(a => a.OrderId == orderId && a.TenantId == order.TenantId && !a.IsDeleted, ct)
+            ?? throw new InvalidOperationException("AFFILIATE_COMMISSION_ATTRIBUTION_MISSING: Approval requires canonical attribution.");
+        await ValidateCommissionAttributionAsync(order, attribution, ct);
+        var currentEarned = await LoadCurrentEarnedEntriesForOrderAsync(orderId, ct);
+        foreach (var earned in currentEarned)
+        {
+            var item = order.Items.SingleOrDefault(item => item.Id == earned.OrderItemId)
+                ?? throw new InvalidOperationException("AFFILIATE_COMMISSION_ITEM_MISSING: Earning has no authoritative order item.");
+            ValidateCommissionSnapshot(item);
+            await ValidateCommissionLineageAsync(order, item, ct);
+            if (earned.AttributionId != attribution.Id || earned.AffiliateAccountId != attribution.AffiliateAccountId ||
+                earned.StoreTenantId != order.TenantId || earned.Currency != order.Currency ||
+                earned.BaseAmount != item.AffiliateCommissionBaseAmountSnapshot ||
+                earned.CommissionRate != item.AffiliateCommissionRateSnapshot || earned.CommissionAmount != item.AffiliateCommissionAmountSnapshot)
+                throw new InvalidOperationException("AFFILIATE_COMMISSION_APPROVAL_CONFLICT: Earning differs from immutable SQL order authority.");
+        }
+        await ReconcileRefundedCommissionEntriesAsync(order, currentEarned, ct);
 
         var allEntries = await _context.AffiliateCommissionLedger
             .IgnoreQueryFilters()
@@ -2517,6 +2577,7 @@ public class AffiliateService : IAffiliateService
                       AND ""IsDeleted"" = FALSE
                     FOR UPDATE")
                 .IgnoreQueryFilters()
+                .AsNoTracking()
                 .FirstOrDefaultAsync(ct);
         }
         else if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) ||
@@ -2529,12 +2590,14 @@ public class AffiliateService : IAffiliateService
                     WHERE [Id] = {orderId}
                       AND [IsDeleted] = 0")
                 .IgnoreQueryFilters()
+                .AsNoTracking()
                 .FirstOrDefaultAsync(ct);
         }
         else
         {
             order = await _context.Orders
                 .IgnoreQueryFilters()
+                .AsNoTracking()
                 .FirstOrDefaultAsync(o => o.Id == orderId && !o.IsDeleted, ct);
         }
 
@@ -2579,13 +2642,21 @@ public class AffiliateService : IAffiliateService
         }
     }
 
-    private void EnsureAffiliateDeliveryApprovalAuthority(Order order, Guid? eventTenantId, DateTime deliveredAtUtc,
-        string sourceEvent, int eventVersion, string? deliveryReference, string? proofOfDeliveryUrl)
+    private async Task EnsureAffiliateDeliveryApprovalAuthorityAsync(Order order, Guid? eventTenantId, DateTime deliveredAtUtc,
+        string sourceEvent, int eventVersion, string? deliveryReference, string? proofOfDeliveryUrl, CancellationToken ct)
     {
         EnsureDeliveryEventEvidence(order, eventTenantId, sourceEvent, eventVersion, deliveryReference, proofOfDeliveryUrl);
 
+        if (order.PaymentStatus == PaymentStatus.SyntheticQaCollected)
+        {
+            if (_syntheticQa == null) throw new InvalidOperationException("SYNTHETIC_QA_UNAVAILABLE");
+            await _syntheticQa.EnsureSyntheticCollectionAsync(order, ct);
+        }
+
+        var hasSyntheticAuthority = _syntheticQa != null &&
+            await _syntheticQa.HasDeliveryAuthorityAsync(order, deliveryReference, proofOfDeliveryUrl, ct, requireConsumed: true);
         if (order.FulfillmentMode == FulfillmentMode.Manual &&
-            _settlementOptions.RequireVerifiedManualDeliveryEvidence)
+            _settlementOptions.RequireVerifiedManualDeliveryEvidence && !hasSyntheticAuthority)
         {
             if (_settlementOptions.AllowManualDeliveryEvidenceOverride)
             {

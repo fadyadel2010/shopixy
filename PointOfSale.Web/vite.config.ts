@@ -21,8 +21,18 @@ const adminCsp = [
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const apiTarget = loadEnv(mode, process.cwd()).VITE_DEV_API_TARGET || 'http://localhost:5010'
+  // Local merchant storefront media is cross-origin in the affiliate portal.
+  // Production/preview retain HTTPS-only remote image sources.
+  const developmentCsp = adminCsp.replace("img-src 'self' data: blob: https:", "img-src 'self' data: blob: https: http://*.localhost:5174")
   return {
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'local-merchant-media-csp',
+    transformIndexHtml(html, context) {
+      return context.server
+        ? html.replace("img-src 'self' data: blob: https:", "img-src 'self' data: blob: https: http://*.localhost:5174")
+        : html
+    },
+  }],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -59,7 +69,7 @@ export default defineConfig(({ mode }) => {
       allow: [path.resolve(__dirname), path.resolve(__dirname, '../theme-authority')],
     },
     headers: {
-      'Content-Security-Policy': adminCsp,
+      'Content-Security-Policy': developmentCsp,
     },
     port: 5173,
     proxy: {

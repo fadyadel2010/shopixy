@@ -71,6 +71,7 @@ const PAYMENT_STATUS_OPTIONS = [
     'CashOnDelivery',
     'Expired',
     'AmountMismatch',
+    'SyntheticQaCollected',
 ]
 const SORT_OPTIONS = [
     { value: 'createdAt:desc', labelKey: 'orders.management.sort.newest' },
@@ -214,6 +215,8 @@ function resolveOrderTone(status) {
 
 function resolvePaymentTone(status) {
     switch (status) {
+        case 'SyntheticQaCollected':
+            return 'amber'
         case 'Paid':
         case 'Collected':
         case 'Settled':
@@ -879,6 +882,7 @@ export function OrderDetailsPanel({
 
                             {!order.isMarketplaceOrder ? (
                                 <SectionCard title={t('orders.management.details.paymentLifecycle')}>
+                                    {order.isSyntheticQa === true && <p role="note" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 font-semibold text-amber-950">{t('orders.payment.SyntheticQaCollected')} — SYNTHETIC QA — NO REAL DELIVERY OR MONEY</p>}
                                     <div className="grid gap-4 md:grid-cols-2">
                                         <div>
                                             <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{t('orders.management.details.canonicalPaymentStatus')}</p>

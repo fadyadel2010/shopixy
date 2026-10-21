@@ -2032,6 +2032,14 @@ public class CommerceAccountingService : ICommerceAccountingService
             "Inventory adjustment accounting requires an authoritative SQL adjustment workflow.");
     }
 
+    public async Task<PostingResult> PostManualWalletSettlementAsync(Guid tenantId, Guid settlementBatchId, CancellationToken ct = default)
+    {
+        if (_db == null) throw new InvalidOperationException("Manual wallet settlement requires SQL authority.");
+        var request = await ManualWalletSettlementAuthority.BuildPostingAsync(_db, tenantId, settlementBatchId, ct);
+        var journal = await _postingService.PostJournalAsync(request, ct);
+        return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+    }
+
     public async Task<PostingResult> PostManualCodSettlementAsync(Guid tenantId, Guid settlementBatchId, CancellationToken ct = default)
     {
         if (_db == null) throw new InvalidOperationException("Manual COD settlement requires SQL authority.");

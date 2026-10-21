@@ -107,7 +107,9 @@ public class AdminManualPaymentController : ControllerBase
                     (
                         pi.Status == PaymentIntentStatus.AwaitingVerification ||
                         pi.Status == PaymentIntentStatus.Pending ||
-                        (pi.Status == PaymentIntentStatus.Paid && pi.Order.PaymentStatus != PaymentStatus.Collected)
+                        // Paid recovery is only for an incomplete approval, never a later treasury/refund state.
+                        (pi.Status == PaymentIntentStatus.Paid &&
+                            (pi.Order.PaymentStatus == PaymentStatus.Pending || pi.Order.PaymentStatus == PaymentStatus.AwaitingVerification))
                     ));
 
             var totalCount = await query.CountAsync(cancellationToken);

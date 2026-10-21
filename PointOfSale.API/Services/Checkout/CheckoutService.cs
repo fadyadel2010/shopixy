@@ -24,6 +24,7 @@ using PointOfSale.API.Configuration;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services;
 using PointOfSale.API.Services.Cart;
+using PointOfSale.API.Services.Affiliate;
 using PointOfSale.API.Services.Catalog;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
@@ -281,6 +282,7 @@ public class CheckoutService : ICheckoutService
     // Row-level locking requirement for promotion capacity
     private readonly bool _requireRowLevelLocking;
     private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly SyntheticQaCertificationAuthority? _syntheticQa;
 
     // =============================================================================
     // CHECKOUT CONFIGURATION CONSTANTS
@@ -336,8 +338,10 @@ public class CheckoutService : ICheckoutService
         CommerceReliabilityTelemetry? reliabilityTelemetry = null,
         IAddressAdmissionService? addressAdmissionService = null,
         ICarrierIntegrationAuthority? carrierIntegrationAuthority = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        SyntheticQaCertificationAuthority? syntheticQa = null)
     {
+        _syntheticQa = syntheticQa;
         _scopeFactory = scopeFactory;
         // CRITICAL: Purpose string MUST match PaymentMethodsAdminController.DataProtectionPurpose
         _dataProtector = dataProtectionProvider.CreateProtector("PaymentMethodSecrets");
@@ -6790,27 +6794,9 @@ public class CheckoutService : ICheckoutService
         };
 
         // ═══════════════════════════════════════════════════════════════════
-        // AF-11/AF-18/AF-27A: AFFILIATE ATTRIBUTION STAMP
-        //
-        // PRIORITY 0: AF-27A Cart Metadata (trusted, server-stamped, anti-tampering)
-        // PRIORITY 1: HttpContext.Items (set by AffiliateReferralMiddleware)
-        // PRIORITY 2: AF-18 FIX - Request DTO AffiliateReferralCode (for SPA checkout)
-        //
-        // AF-27A ANTI-TAMPERING:
-        // When checkout is funnel-originated (cart.AffiliateSource == "Funnel"),
-        // the AffiliateAccountId was server-stamped into the Redis cart by the
-        // funnel endpoint. This takes absolute priority over URL-based ?ref=
-        // or middleware context, preventing ref-hijacking attacks.
-        //
-        // AF-18 ROOT CAUSE: SPAs make checkout API calls in a separate HTTP request
-        // from the initial page load. The middleware sets affiliate mode in HttpContext,
-        // but that context is lost when the SPA makes the checkout POST request.
-        //
-        // SOLUTION: Frontend captures ?ref= from URL and includes it in checkout request.
-        // Backend resolves the affiliate account from the referral code.
-        //
-        // This stamp is the single source of truth for attribution.
-        // Without it, no AffiliateAttribution → no commission.
+        // AFFILIATE ATTRIBUTION STAMP: current SQL authority, entered through
+        // middleware-validated first-touch evidence. DTO/cart identity hints have
+        // no authority. Order snapshot + canonical attribution commit atomically.
         // ═══════════════════════════════════════════════════════════════════
         var checkoutProductIds = snapshot.Items
             .Select(item => item.ProductId)
@@ -7193,6 +7179,8 @@ public class CheckoutService : ICheckoutService
                     correlationId,
                     cancellationToken);
             }
+
+            if (_syntheticQa != null) await _syntheticQa.EnrollCheckoutAsync(order, cancellationToken);
 
             await EmitOrderCreatedEventAsync(
                 tenantId,
@@ -8384,9 +8372,16 @@ public class CheckoutService : ICheckoutService
                 "AffiliateAttribution");
         }
 
-        var promotionAccountId = promotionLink.AffiliateAccountId
-            ?? await LoadAffiliateUserAccountIdForFinalCheckoutAsync(promotionLink.AffiliateUserId, cancellationToken);
-        if (promotionAccountId != account.Id)
+        // Lock and validate the credential bridge even when the saved link has a
+        // profile ID. A stale/mismatched saved bridge must not bypass global identity.
+        var credentialAccountId = await LoadAffiliateUserAccountIdForFinalCheckoutAsync(promotionLink.AffiliateUserId, cancellationToken);
+        var promotionAccountId = await ResolvePromotionLinkAffiliateAccountIdAsync(
+            promotionLink.AffiliateUserId, promotionLink.AffiliateAccountId, cancellationToken);
+        var promotedProduct = await _dbContext.Products.AsNoTracking().IgnoreQueryFilters()
+            .SingleOrDefaultAsync(p => p.Id == promotionLink.ProductId && p.TenantId == tenantId && !p.IsDeleted, cancellationToken);
+        if (credentialAccountId != account.Id || promotionAccountId != account.Id ||
+            promotedProduct == null ||
+            !await AffiliatePromotionAttributionAuthority.IsProductEligibleAsync(_dbContext, promotedProduct, cancellationToken))
         {
             throw new CheckoutException(
                 "AFFILIATE_PROMOTION_LINK_STALE",
@@ -8540,7 +8535,7 @@ public class CheckoutService : ICheckoutService
             return await _dbContext.AffiliateUsers
                 .AsNoTracking()
                 .IgnoreQueryFilters()
-                .Where(user => user.Id == affiliateUserId && !user.IsDeleted)
+                .Where(user => user.Id == affiliateUserId && !user.IsDeleted && user.EmailVerified)
                 .Select(user => (Guid?)user.AffiliateAccountId)
                 .SingleOrDefaultAsync(cancellationToken);
         }
@@ -8581,7 +8576,8 @@ public class CheckoutService : ICheckoutService
                 .IgnoreQueryFilters()
                 .ToListAsync(cancellationToken);
 
-        return users.SingleOrDefault()?.AffiliateAccountId;
+        var credential = users.SingleOrDefault();
+        return credential is { EmailVerified: true } ? credential.AffiliateAccountId : null;
     }
 
     private async Task<Guid?> ResolvePromotionLinkAffiliateAccountIdAsync(
@@ -8589,17 +8585,8 @@ public class CheckoutService : ICheckoutService
         Guid? affiliateAccountId,
         CancellationToken cancellationToken)
     {
-        if (affiliateAccountId.HasValue)
-        {
-            return affiliateAccountId.Value;
-        }
-
-        return await _dbContext.AffiliateUsers
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(user => user.Id == affiliateUserId && !user.IsDeleted)
-            .Select(user => (Guid?)user.AffiliateAccountId)
-            .SingleOrDefaultAsync(cancellationToken);
+        return await AffiliatePromotionAttributionAuthority.ResolveProfileAsync(
+            _dbContext, affiliateUserId, affiliateAccountId, cancellationToken);
     }
 
     private static string? NormalizeAffiliateReferralCode(string? referralCode)

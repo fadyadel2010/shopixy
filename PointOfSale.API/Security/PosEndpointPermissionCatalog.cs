@@ -36,6 +36,7 @@ public static class PosEndpointPermissionCatalog
         new Dictionary<string, Rule>(StringComparer.Ordinal)
         {
             ["Dashboard"] = R(PosPermissions.DashboardView),
+            ["SyntheticQa"] = R(PosPermissions.StorefrontOrdersManage),
 
             ["Categories"] = CatalogRule(),
             ["ProductMedia"] = CatalogRule(),
@@ -138,6 +139,8 @@ public static class PosEndpointPermissionCatalog
             ["PaymentLifecycle"] = R(PosPermissions.StorefrontPaymentsView, PosPermissions.StorefrontPaymentsManage,
                 overrides: O(
                     ("GetManualSettlementEligibility", PosPermissions.StorefrontPaymentsManage),
+                    ("GetManualWalletSettlementEligibility", PosPermissions.StorefrontPaymentsManage),
+                    ("GetManualWalletSettlement", PosPermissions.StorefrontPaymentsManage),
                     ("GetManualCodSettlement", PosPermissions.StorefrontPaymentsManage),
                     ("Refund", PosPermissions.StorefrontRefundsManage),
                     ("RefundPayment", PosPermissions.StorefrontRefundsManage))),

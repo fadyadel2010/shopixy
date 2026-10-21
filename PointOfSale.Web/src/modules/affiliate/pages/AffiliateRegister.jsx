@@ -83,6 +83,10 @@ const AffiliateRegister = () => {
             })
             navigate(`/affiliate/login?registered=1&email=${encodeURIComponent(form.email.trim())}`, { replace: true })
         } catch (err) {
+            if (err.response?.data?.code === 'AFFILIATE_VERIFICATION_DELIVERY_UNAVAILABLE' && err.response.data.accountCreated) {
+                navigate(`/affiliate/login?registered=1&deliveryFailed=1&email=${encodeURIComponent(form.email.trim())}`, { replace: true })
+                return
+            }
             if (err.response?.status === 409) setError(t('register.duplicateEmail'))
             else setError(t('register.failed'))
         } finally {
@@ -153,6 +157,8 @@ const AffiliateRegister = () => {
                                     onChange={e => setForm(f => ({ ...f, displayName: e.target.value }))}
                                     className="w-full pl-10 pr-4 py-3.5 rounded-xl bg-gray-50 dark:bg-[#0B0F19]/60 border border-gray-200 dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-600 text-sm focus:border-[#6C63FF]/50 focus:ring-2 focus:ring-[#6C63FF]/20 outline-none transition-all"
                                     required
+                                    minLength={2}
+                                    maxLength={200}
                                     autoComplete="name"
                                     autoFocus
                                 />
@@ -174,6 +180,7 @@ const AffiliateRegister = () => {
                                     onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                                     className="w-full pl-10 pr-4 py-3.5 rounded-xl bg-gray-50 dark:bg-[#0B0F19]/60 border border-gray-200 dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-600 text-sm focus:border-[#6C63FF]/50 focus:ring-2 focus:ring-[#6C63FF]/20 outline-none transition-all"
                                     required
+                                    maxLength={255}
                                     autoComplete="email"
                                 />
                             </div>

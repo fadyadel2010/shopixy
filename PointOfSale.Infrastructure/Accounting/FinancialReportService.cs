@@ -709,6 +709,60 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             })
             .Where(line => line.PendingAmount != 0)
             .ToList();
+
+        // Wallet aging follows source balances, not the dates/counts of all historic debit and credit lines.
+        // Allocate a posted batch's credit back to its permanent whole-payment members so old settled
+        // receipts cannot keep the account late or leave negative "current" buckets.
+        var walletAccount = await _db.LedgerAccounts.AsNoTracking()
+            .SingleOrDefaultAsync(a => a.TenantId == tenantId && a.AccountCode == "1140" && a.IsClearing, ct);
+        if (walletAccount != null)
+        {
+            var walletSources = await _db.LedgerEntries.AsNoTracking()
+                .Where(l => l.TenantId == tenantId && l.AccountId == walletAccount.Id &&
+                    (l.JournalEntry.Status == JournalStatus.Posted || l.JournalEntry.Status == JournalStatus.Reversed) &&
+                    l.JournalEntry.JournalDate <= asOfDate)
+                .GroupBy(l => new { l.JournalEntry.SourceId, l.JournalEntry.SourceType })
+                .Select(g => new { g.Key.SourceId, g.Key.SourceType, Amount = g.Sum(l => l.DebitAmount - l.CreditAmount),
+                    Date = g.Min(l => l.JournalEntry.JournalDate) }).ToListAsync(ct);
+            var reversedIds = walletSources.Where(s => s.SourceType == "Reversal").Select(s => s.SourceId).ToArray();
+            var reversalSources = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.TenantId == tenantId && reversedIds.Contains(j.Id))
+                .Select(j => new { j.Id, j.SourceId }).ToDictionaryAsync(j => j.Id, j => j.SourceId, ct);
+            var allocations = await (from member in _db.PaymentSettlementOrders.AsNoTracking()
+                join batch in _db.PaymentSettlementBatches.AsNoTracking() on member.SettlementBatchId equals batch.Id
+                join journal in _db.JournalEntries.AsNoTracking() on batch.Id equals journal.SourceId
+                where member.TenantId == tenantId && batch.TenantId == tenantId && journal.TenantId == tenantId &&
+                    batch.SettlementType == ManualWalletSettlementAuthority.SettlementType &&
+                    journal.SourceType == ManualWalletSettlementAuthority.SourceType &&
+                    journal.Status == JournalStatus.Posted && journal.JournalDate <= asOfDate
+                select new { member.OrderId, member.OrderTotal, BatchId = batch.Id }).ToListAsync(ct);
+            var batchIds = allocations.Select(a => a.BatchId).ToHashSet();
+            var outstanding = walletSources.Select(s => new { SourceId = s.SourceType == "Reversal" && reversalSources.TryGetValue(s.SourceId, out var original) ? original : s.SourceId, s.Date, s.Amount })
+                .GroupBy(s => s.SourceId).Select(g => new { SourceId = g.Key, Date = g.Min(s => s.Date), Amount = g.Sum(s => s.Amount) })
+                .Where(s => !batchIds.Contains(s.SourceId))
+                .Select(s => new { s.Date, Amount = s.Amount - allocations.Where(a => a.OrderId == s.SourceId).Sum(a => a.OrderTotal) })
+                .Where(s => s.Amount != 0m).ToList();
+            var walletLine = lines.SingleOrDefault(l => l.AccountId == walletAccount.Id);
+            if (walletLine != null)
+            {
+                // Never mask unmatched/corrupt history: use allocation-aware aging only when it reconciles exactly.
+                if (outstanding.Sum(s => s.Amount) == walletLine.PendingAmount)
+                {
+                    DateTime? oldest = outstanding.Count == 0 ? null : outstanding.Min(s => s.Date);
+                    lines[lines.IndexOf(walletLine)] = new ClearingAgingLine
+                    {
+                        AccountId = walletLine.AccountId, AccountCode = walletLine.AccountCode, AccountName = walletLine.AccountName,
+                        PendingAmount = walletLine.PendingAmount, OldestTransactionDate = oldest,
+                        AgeDays = oldest.HasValue ? (int)(asOfDate - oldest.Value).TotalDays : null,
+                        TransactionCount = outstanding.Count,
+                        Current = outstanding.Where(s => s.Date >= currentWindowStart).Sum(s => s.Amount),
+                        Days8To14 = outstanding.Where(s => s.Date < currentWindowStart && s.Date >= days8To14WindowStart).Sum(s => s.Amount),
+                        Days15To30 = outstanding.Where(s => s.Date < days8To14WindowStart && s.Date >= days15To30WindowStart).Sum(s => s.Amount),
+                        Over30Days = outstanding.Where(s => s.Date < days15To30WindowStart).Sum(s => s.Amount)
+                    };
+                }
+            }
+        }
         
         return new ClearingAgingReport
         {

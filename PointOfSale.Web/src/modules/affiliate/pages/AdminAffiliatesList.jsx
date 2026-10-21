@@ -80,12 +80,12 @@ function EmptyState({ search, status }) {
         <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="text-5xl mb-4">👥</div>
             <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                {search || status ? 'No Matching Affiliates' : 'No Affiliates Yet'}
+                {search || status ? 'No Matching Affiliates' : 'No Affiliate Earnings for This Store Yet'}
             </h3>
             <p className="text-gray-500 text-sm max-w-sm">
                 {search || status
                     ? 'Try adjusting your filters to find the affiliate you\'re looking for.'
-                    : 'Affiliates will appear here once users enroll through the Affiliate Portal.'
+                    : 'This merchant view lists global affiliates only after they earn commission for this store. Enrollment and promotions in other stores do not add an affiliate here.'
                 }
             </p>
         </div>
@@ -108,6 +108,7 @@ export default function AdminAffiliatesList() {
     const { formatCurrency } = useSettings()
     const [data, setData] = useState(null)
     const [loading, setLoading] = useState(true)
+    const [error, setError] = useState(false)
     const [page, setPage] = useState(1)
     const [statusFilter, setStatusFilter] = useState('')
     const [search, setSearch] = useState('')
@@ -131,6 +132,7 @@ export default function AdminAffiliatesList() {
         if (showLoading) {
             setLoading(true)
         }
+        setError(false)
 
         adminAffiliateApi.listAffiliates(page, pageSize, statusFilter, search)
             .then(d => {
@@ -141,6 +143,7 @@ export default function AdminAffiliatesList() {
             .catch(() => {
                 if (currentRequest === requestSeq.current) {
                     setData(null)
+                    setError(true)
                 }
             })
             .finally(() => {
@@ -236,7 +239,7 @@ export default function AdminAffiliatesList() {
             {/* Header */}
             <div>
                 <h2 className="text-3xl font-bold text-gray-900">Affiliate Management</h2>
-                <p className="text-gray-600 mt-1">Manage affiliate accounts, review commissions, and process settlements</p>
+                <p className="text-gray-600 mt-1">Global affiliates with earned commissions for this store only. This is not the global enrollment registry.</p>
             </div>
 
             {/* Filters Bar */}
@@ -333,6 +336,11 @@ export default function AdminAffiliatesList() {
                         <tbody className="divide-y divide-gray-200 bg-white">
                             {loading ? (
                                 [...Array(5)].map((_, i) => <SkeletonRow key={i} />)
+                            ) : error ? (
+                                <tr><td colSpan={9} className="p-8 text-center" role="alert">
+                                    Unable to load this store's affiliates.{' '}
+                                    <button type="button" onClick={() => fetchAffiliates()} className="underline">Retry</button>
+                                </td></tr>
                             ) : !data?.affiliates?.length ? (
                                 <tr>
                                     <td colSpan={9}>

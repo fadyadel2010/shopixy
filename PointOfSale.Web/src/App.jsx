@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Route, Navigate } from 'react-router-dom'
+import AdminNavigationRoutes from './navigation/AdminNavigationRoutes'
 import ProtectedRoute from './components/ProtectedRoute'
 import PosPermissionRouteGuard from './components/PosPermissionRouteGuard'
 import ShippingAccessDenied from './modules/shipping/components/ShippingAccessDenied'
@@ -83,6 +84,7 @@ import Coupons from './pages/Coupons'
 import Promotions from './pages/Promotions'
 import SmartOffersPage from './pages/SmartOffersPage'
 import Orders from './pages/Orders'
+import SyntheticQaCertification from './pages/SyntheticQaCertification'
 // Online Customers (Phase P1 - Storefront Customer Management)
 import { OnlineCustomersPage } from './modules/onlineCustomers'
 // Storefront Builder
@@ -135,6 +137,7 @@ import {
     TreasuryGeneralLedger,
     TreasuryClearingAging,
     TreasuryManualCodSettlement,
+    TreasuryManualWalletSettlement,
     TreasuryCarrierRemittance,
     TreasuryTransfers,
     TreasuryHub,
@@ -194,17 +197,9 @@ import AuthBootstrap from './components/AuthBootstrap'
 import { queryClient } from './queryClient'
 import { MarketplaceQueryBoundary, SuperAdminQueryBoundary } from './components/RuntimeQueryBoundaries'
 
-function App() {
-
+export function appRouteElements() {
     return (
-        <AppErrorBoundary>
-            <QueryClientProvider client={queryClient}>
-                <ToastProvider>
-                    <ConfirmDialogProvider>
-                        <AuthBootstrap />
-                        <SettingsProvider>
-                            <BrowserRouter>
-                            <Routes>
+                            <>
                                 <Route path="/login" element={<Login />} />
                                 <Route path="/register" element={<Register />} />
                                 <Route path="/super-admin/login" element={<SuperAdminLoginPage />} />
@@ -266,7 +261,7 @@ function App() {
 
 
                                 <Route element={<ProtectedRoute />}>
-                                    <Route path="/" element={<Layout />}>
+                                    <Route path="/" element={<Layout />} handle={{ application: 'pos' }}>
                                         <Route element={<PosPermissionRouteGuard permission="dashboard.view" />}>
                                             <Route index element={<Dashboard />} />
                                         </Route>
@@ -387,7 +382,7 @@ function App() {
                                         <Route element={<PosPermissionRouteGuard permission="storefront.orders.view" />}>
                                           <Route element={<StorefrontWorkspaceBoundary />}>
                                             {/* Operations Overview — canonical entry point */}
-                                            <Route path="ecommerce/overview" element={<OperationsOverview />} />
+                                            <Route path="ecommerce/overview" element={<OperationsOverview />} handle={{ ownsNavigationBreadcrumb: true }} />
                                             {/* Orders */}
                                             <Route path="ecommerce/orders" element={<Orders />} />
                                             <Route path="ecommerce/orders/:orderId" element={<Orders />} />
@@ -398,6 +393,7 @@ function App() {
                                              <Route path="ecommerce/abandoned-checkouts" element={<AbandonedCheckouts />} />
                                           </Route>
                                         </Route>
+                                        {import.meta.env.DEV && <Route path="qa/affiliate-certification" element={<SyntheticQaCertification />} />}
                                         <Route element={<PosPermissionRouteGuard permission="storefront.payments.manage" />}>
                                           <Route element={<StorefrontWorkspaceBoundary />}>
                                             <Route path="ecommerce/payment-methods" element={<PaymentMethods />} />
@@ -447,11 +443,11 @@ function App() {
                                         {/* Storefront administration: canonical IA routes plus legacy aliases */}
                                         <Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>
                                             <Route element={<StorefrontWorkspaceBoundary />}>
-                                            <Route path="storefront/builder" element={<StorefrontBuilderPage />} />
-                                            <Route path="storefront/homepage" element={<StorefrontBuilderPage />} />
-                                            <Route path="storefront/catalog/product-template" element={<StorefrontBuilderPage />} />
+                                            <Route path="storefront/builder" element={<StorefrontBuilderPage />} handle={{ ownsNavigationBreadcrumb: true }} />
+                                            <Route path="storefront/homepage" element={<StorefrontBuilderPage />} handle={{ ownsNavigationBreadcrumb: true }} />
+                                            <Route path="storefront/catalog/product-template" element={<StorefrontBuilderPage />} handle={{ ownsNavigationBreadcrumb: true }} />
 
-                                            <Route element={<StorefrontAdminFrame />}>
+                                            <Route element={<StorefrontAdminFrame />} handle={{ ownsNavigationBreadcrumb: true }}>
                                                 <Route path="storefront" element={<StorefrontDashboard />} />
                                                 <Route path="storefront/overview" element={<StorefrontDashboard />} />
                                                 <Route path="storefront/status" element={<StorefrontSettings />} />
@@ -545,6 +541,7 @@ function App() {
                                         {/* Treasury & Finance Control Center (Phase 5 + Phase FTM) */}
                                         <Route element={<PosPermissionRouteGuard permission="storefront.payments.manage" />}>
                                             <Route path="treasury/manual-cod-settlements" element={<TreasuryManualCodSettlement />} />
+                                            <Route path="treasury/manual-wallet-settlements" element={<TreasuryManualWalletSettlement />} />
                                             <Route path="treasury/carrier-remittances" element={<TreasuryCarrierRemittance />} />
                                         </Route>
                                         <Route element={<PosPermissionRouteGuard permission="reports.financial.view" />}>
@@ -568,14 +565,25 @@ function App() {
                                     </Route>
                                 </Route>
                                 <Route path="*" element={<Navigate to="/login" replace />} />
-                            </Routes>
-                            </BrowserRouter>
-                        </SettingsProvider>
-                    </ConfirmDialogProvider>
-                </ToastProvider>
-            </QueryClientProvider>
-        </AppErrorBoundary>
+                            </>
     )
+}
+
+function App() {
+    return <AppErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+            <ToastProvider>
+                <ConfirmDialogProvider>
+                    <AuthBootstrap />
+                    <SettingsProvider>
+                        <BrowserRouter>
+                            <AdminNavigationRoutes>{appRouteElements()}</AdminNavigationRoutes>
+                        </BrowserRouter>
+                    </SettingsProvider>
+                </ConfirmDialogProvider>
+            </ToastProvider>
+        </QueryClientProvider>
+    </AppErrorBoundary>
 }
 
 export default App

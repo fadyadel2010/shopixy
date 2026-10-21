@@ -393,6 +393,7 @@ export const OPERATIONS_NAVIGATION = {
 
 export const STOREFRONT_PRODUCT_NAVIGATION = {
     key: 'storefront',
+    application: 'storefront',
     defaultExpanded: true,
     labelKey: 'storefront.ia.root',
     fallbackLabel: 'Storefront',

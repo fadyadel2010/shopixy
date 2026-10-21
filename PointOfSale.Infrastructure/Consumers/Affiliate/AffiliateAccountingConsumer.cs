@@ -56,13 +56,16 @@ public class AffiliateCommissionEarnedAccountingConsumer : IConsumer<AffiliateCo
     private readonly IFinancialPostingService _postingService;
     private readonly AffiliateTelemetry _telemetry;
     private readonly ILogger<AffiliateCommissionEarnedAccountingConsumer> _logger;
+    private readonly PointOfSale.Infrastructure.Data.ApplicationDbContext? _db;
 
     public AffiliateCommissionEarnedAccountingConsumer(
         IAccountResolver accountResolver,
         IFinancialPostingService postingService,
         AffiliateTelemetry telemetry,
-        ILogger<AffiliateCommissionEarnedAccountingConsumer> logger)
+        ILogger<AffiliateCommissionEarnedAccountingConsumer> logger,
+        PointOfSale.Infrastructure.Data.ApplicationDbContext? db = null)
     {
+        _db = db;
         _accountResolver = accountResolver;
         _postingService = postingService;
         _telemetry = telemetry;
@@ -75,6 +78,15 @@ public class AffiliateCommissionEarnedAccountingConsumer : IConsumer<AffiliateCo
         var ct = context.CancellationToken;
         // AF-19B: Use StoreTenantId (store's tenant) for accounting, not TenantId (affiliate's tenant which is Guid.Empty)
         var tenantId = evt.StoreTenantId;
+        // QA postings have their own virtual journal; never touch the real GL.
+        if (_db != null && await _db.SyntheticQaOrders.AnyAsync(x => x.OrderId == evt.OrderId && x.TenantId == tenantId, ct))
+        {
+            var posting = await _db.SyntheticQaCommissionPostings.SingleAsync(x => x.OrderId == evt.OrderId, ct);
+            if (posting.Amount != evt.TotalCommission || posting.Currency != evt.Currency)
+                throw new InvalidOperationException("SYNTHETIC_QA_COMMISSION_POSTING_CONFLICT");
+            _logger.LogInformation("SYNTHETIC QA — NO REAL DELIVERY OR MONEY | Virtual commission journal {PostingId}", posting.Id);
+            return;
+        }
         var sw = Stopwatch.StartNew();
 
         using var scope = _logger.BeginScope(new Dictionary<string, object>

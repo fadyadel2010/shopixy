@@ -63,6 +63,7 @@ public partial class PaymentLifecycleService : IPaymentLifecycleService
     private readonly IsolationLevel _transactionIsolationLevel;
     private readonly bool _enableTransactionTelemetry;
     private readonly bool _requireRowLevelLocking;
+    private readonly PointOfSale.Infrastructure.Services.SyntheticQaCertificationAuthority? _syntheticQa;
 
     private const string SettlementTypeOfflineCollection = "OFFLINE_COLLECTION";
     private const string SettlementTypeGateway = "GATEWAY";
@@ -82,8 +83,10 @@ public partial class PaymentLifecycleService : IPaymentLifecycleService
         ILogger<PaymentLifecycleService> logger,
         IOptions<PaymentLifecycleSettings> settings,
         CommerceReliabilityTelemetry? reliabilityTelemetry = null,
-        IServiceScopeFactory? serviceScopeFactory = null)
+        IServiceScopeFactory? serviceScopeFactory = null,
+        PointOfSale.Infrastructure.Services.SyntheticQaCertificationAuthority? syntheticQa = null)
     {
+        _syntheticQa = syntheticQa;
         _db = db;
         _accountingOutbox = accountingOutbox;
         _commerceAccounting = commerceAccounting;

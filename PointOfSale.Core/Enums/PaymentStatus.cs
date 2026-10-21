@@ -103,5 +103,8 @@ public enum PaymentStatus
     /// Provider-reported amount or currency did not match the stored payment intent.
     /// No journal entry is created and fulfillment must remain blocked pending manual review.
     /// </summary>
-    AmountMismatch = 12
+    AmountMismatch = 12,
+
+    /// <summary>Development QA simulation only. NOT customer payment or cash receipt.</summary>
+    SyntheticQaCollected = 13
 }

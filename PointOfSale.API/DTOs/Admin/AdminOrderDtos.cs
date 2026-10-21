@@ -10,6 +10,8 @@ namespace PointOfSale.API.DTOs.Admin;
 /// </summary>
 public class AdminOrderListItemDto
 {
+    /// <summary>Durable audit provenance, not a real payment/delivery claim.</summary>
+    public bool IsSyntheticQa { get; set; }
     /// <summary>
     /// Current tenant/vendor authority evidence for frontend scope validation.
     /// </summary>
@@ -107,6 +109,7 @@ public class AdminOrderListItemDto
 /// </summary>
 public class AdminOrderDetailsDto
 {
+    public bool IsSyntheticQa { get; set; }
     /// <summary>
     /// Current tenant/vendor authority evidence for frontend scope validation.
     /// </summary>

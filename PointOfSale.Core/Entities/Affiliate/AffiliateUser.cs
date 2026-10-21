@@ -7,7 +7,7 @@ namespace PointOfSale.Core.Entities.Affiliate;
 ///
 /// INVARIANTS:
 /// - Exactly ONE AffiliateUser per AffiliateAccount (1:1, enforced DB + domain)
-/// - Email unique per tenant
+/// - Enrollment checks email globally; new identities use Guid.Empty legacy scope
 /// - AffiliateUser ≠ POS User: separate JWT, separate auth boundary
 /// - No PII leaks into POS user system
 /// - PasswordHash uses ASP.NET Core Identity PasswordHasher (Argon2/PBKDF2)
@@ -23,7 +23,7 @@ public class AffiliateUser : BaseEntity, ITenantOwned
 
     /// <summary>
     /// Email address — used as login credential.
-    /// UNIQUE per (TenantId, Email).
+    /// Global login credential. Legacy database index is (TenantId, Email).
     /// </summary>
     public string Email { get; private set; } = string.Empty;
 

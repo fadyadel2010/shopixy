@@ -325,6 +325,9 @@ public sealed class AffiliateEmailVerificationLifecycleTests
         var profileResult = await profileController.GetProfile(CancellationToken.None);
         var profile = Assert.IsType<OkObjectResult>(profileResult.Result);
         Assert.NotNull(profile.Value);
+        var identityProfile = Assert.IsType<AffiliateProfileResponse>(profile.Value);
+        Assert.Equal(email, identityProfile.Email);
+        Assert.True(identityProfile.EmailVerified);
     }
 
     [Fact]
@@ -406,11 +409,11 @@ public sealed class AffiliateEmailVerificationLifecycleTests
         var sender = new LoggingEmailSender(logger);
         var rawToken = AffiliateEmailVerificationToken.NewRawToken();
 
-        await sender.SendEmailAsync(
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sender.SendEmailAsync(
             "affiliate@example.com",
             "Verify account",
             $"<a href=\"https://shopixy.test/verify?token={rawToken}\">verify</a>",
-            $"https://shopixy.test/verify?token={rawToken}");
+            $"https://shopixy.test/verify?token={rawToken}"));
 
         Assert.DoesNotContain(logger.Messages, message => message.Contains(rawToken, StringComparison.Ordinal));
         Assert.DoesNotContain(logger.Messages, message => message.Contains("token=", StringComparison.OrdinalIgnoreCase));
@@ -739,6 +742,131 @@ public sealed class AffiliateEmailVerificationLifecycleTests
     // ═══════════════════════════════════════════════════════════════════
     // FIXTURE
     // ═══════════════════════════════════════════════════════════════════
+
+    [Theory]
+    [InlineData("not-an-email", "QA Affiliate")]
+    [InlineData("valid@example.test", "x")]
+    public async Task Registration_RejectsInvalidFieldsWithoutPersistingIdentity(string email, string name)
+    {
+        using var fixture = await VerificationFixture.CreateAsync();
+        await using var context = fixture.CreateContext();
+        var result = await CreateAuthController(context, new CapturingEmailSender()).Register(
+            new AffiliateRegisterDto { Email = email, DisplayName = name, Password = "QaAffiliate2026!" }, default);
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Empty(await context.AffiliateAccounts.IgnoreQueryFilters().ToListAsync());
+        Assert.Empty(await context.AffiliateUsers.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Registration_RejectsDatabaseLengthOverflowWithoutPersistingIdentity()
+    {
+        using var fixture = await VerificationFixture.CreateAsync();
+        await using var context = fixture.CreateContext();
+        var controller = CreateAuthController(context, new CapturingEmailSender());
+        foreach (var request in new[]
+        {
+            new AffiliateRegisterDto { Email = new string('a', 250) + "@example.test", DisplayName = "QA", Password = "QaAffiliate2026!" },
+            new AffiliateRegisterDto { Email = "valid@example.test", DisplayName = new string('a', 201), Password = "QaAffiliate2026!" }
+        }) Assert.IsType<BadRequestObjectResult>(await controller.Register(request, default));
+        Assert.Empty(await context.AffiliateAccounts.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Registration_DeliveryFailureRetainsOnePendingGlobalIdentityAndDuplicateConflicts()
+    {
+        using var fixture = await VerificationFixture.CreateAsync();
+        await using var context = fixture.CreateContext();
+        var controller = CreateAuthController(context, new FailingEmailSender());
+        var request = new AffiliateRegisterDto { Email = " QA@EXAMPLE.TEST ", DisplayName = " QA Affiliate ", Password = "QaAffiliate2026!" };
+        var unavailable = Assert.IsType<ObjectResult>(await controller.Register(request, default));
+        Assert.Equal(503, unavailable.StatusCode);
+        Assert.IsType<ConflictObjectResult>(await controller.Register(request, default));
+        var account = Assert.Single(await context.AffiliateAccounts.IgnoreQueryFilters().ToListAsync());
+        var user = Assert.Single(await context.AffiliateUsers.IgnoreQueryFilters().ToListAsync());
+        Assert.Equal(Guid.Empty, account.TenantId);
+        Assert.Equal(Guid.Empty, user.TenantId);
+        Assert.Equal(account.Id, user.AffiliateAccountId);
+        Assert.Equal(user.Id, account.UserId);
+        Assert.Equal("qa@example.test", user.Email);
+        Assert.Equal("QA Affiliate", account.DisplayName);
+        Assert.Equal(AffiliateStatus.Pending, account.Status);
+        Assert.False(user.EmailVerified);
+        Assert.Single(await context.AffiliateEmailVerificationTokens.ToListAsync());
+        Assert.False(controller.Response.Headers.ContainsKey("Set-Cookie"));
+    }
+
+    [Fact]
+    public async Task Recovery_OnlyNewestTokenWorks_ConsumesSiblingsAndRevokesSessions()
+    {
+        using var fixture = await VerificationFixture.CreateAsync();
+        var seeded = await fixture.SeedVerifiedPendingAffiliateAsync();
+        string email;
+        await using (var reader = fixture.CreateContext())
+            email = (await reader.AffiliateUsers.IgnoreQueryFilters().SingleAsync()).Email;
+        var sender = new CapturingEmailSender();
+        await using var context = fixture.CreateContext();
+        var controller = CreateAuthController(context, sender);
+        Assert.IsType<OkObjectResult>(await controller.ForgotPassword(new() { Email = email }, default));
+        var first = sender.TextBody!.Split("token=")[1];
+        Assert.IsType<OkObjectResult>(await controller.ForgotPassword(new() { Email = email }, default));
+        var newest = sender.TextBody!.Split("token=")[1];
+        Assert.IsType<UnauthorizedObjectResult>(await controller.ResetPassword(new() { Token = first, NewPassword = "QaAffiliate2026!" }, default));
+        Assert.IsType<OkObjectResult>(await controller.ResetPassword(new() { Token = newest, NewPassword = "QaAffiliate2026!" }, default));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.ResetPassword(new() { Token = newest, NewPassword = "OtherPassword2026!" }, default));
+        await using var readback = fixture.CreateContext();
+        var user = await readback.AffiliateUsers.IgnoreQueryFilters().SingleAsync();
+        Assert.NotNull(user.TokensValidAfterUtc);
+        Assert.Null(user.RefreshToken);
+        Assert.All(await readback.AffiliatePasswordResetTokens.ToListAsync(), t => Assert.NotNull(t.ConsumedAtUtc));
+        Assert.Single(await readback.AuditLogs.IgnoreQueryFilters().Where(a => a.ActionType == "PASSWORD_RESET_COMPLETED").ToListAsync());
+        Assert.Single(await readback.AffiliateAccounts.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Recovery_RejectsExpiredOrDeletedTokens(bool expired, bool deleted)
+    {
+        using var fixture = await VerificationFixture.CreateAsync();
+        var seeded = await fixture.SeedVerifiedPendingAffiliateAsync();
+        var raw = AffiliateEmailVerificationToken.NewRawToken();
+        await using var context = fixture.CreateContext();
+        var token = AffiliatePasswordResetToken.Create(seeded.AffiliateUserId, raw, DateTime.UtcNow.AddHours(expired ? -1 : 1));
+        token.IsDeleted = deleted;
+        context.AffiliatePasswordResetTokens.Add(token);
+        await context.SaveChangesAsync();
+        Assert.IsType<UnauthorizedObjectResult>(await CreateAuthController(context, new CapturingEmailSender()).ResetPassword(new() { Token = raw, NewPassword = "QaAffiliate2026!" }, default));
+        Assert.Null(token.ConsumedAtUtc);
+    }
+
+    private sealed class FailingEmailSender : IEmailSender
+    {
+        public Task SendEmailAsync(string to, string subject, string htmlBody, string textBody) =>
+            throw new InvalidOperationException("Synthetic unavailable transport");
+    }
+
+    [Theory]
+    [InlineData(AffiliateStatus.Pending)]
+    [InlineData(AffiliateStatus.Active)]
+    [InlineData(AffiliateStatus.Suspended)]
+    [InlineData(AffiliateStatus.Closed)]
+    public async Task VerifiedLogin_OnlyAdmitsActiveGlobalAccount(AffiliateStatus status)
+    {
+        using var fixture = await VerificationFixture.CreateAsync();
+        var seeded = await fixture.SeedVerifiedPendingAffiliateAsync();
+        await using var context = fixture.CreateContext();
+        var user = await context.AffiliateUsers.IgnoreQueryFilters().Include(u => u.AffiliateAccount).SingleAsync();
+        user.VerifyEmail();
+        user.SetPasswordHash(new PasswordHasher<AffiliateUser>().HashPassword(user, "QaAffiliate2026!"));
+        if (status != AffiliateStatus.Pending) user.AffiliateAccount.Activate();
+        if (status == AffiliateStatus.Suspended) user.AffiliateAccount.Suspend("Synthetic regression");
+        if (status == AffiliateStatus.Closed) user.AffiliateAccount.Close("Synthetic regression");
+        await context.SaveChangesAsync();
+        var result = await CreateAuthController(context, new CapturingEmailSender()).Login(new() { Email = user.Email, Password = "QaAffiliate2026!" }, default);
+        if (status == AffiliateStatus.Active) Assert.IsType<OkObjectResult>(result);
+        else Assert.IsType<UnauthorizedObjectResult>(result);
+        Assert.Equal(seeded.AccountId, user.AffiliateAccountId);
+    }
 
     private static async Task<int> ClaimFreshTokenAsync(VerificationFixture fixture, Guid tokenId, DateTime now)
     {

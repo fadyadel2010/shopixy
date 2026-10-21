@@ -17,7 +17,7 @@
  */
 
 import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
-import { getAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
+import { getConfirmedAffiliateRefCode, subscribeAffiliateRef } from '@/bootstrap/affiliateRefTracker';
 
 interface AffiliateContextValue {
     /** The affiliate referral code (e.g., "AFFLIA9689") */
@@ -42,21 +42,13 @@ export const AffiliateProvider: React.FC<AffiliateProviderProps> = ({ children }
     const [affiliateRef, setAffiliateRef] = useState<string | null>(null);
     const [isInitialized, setIsInitialized] = useState(false);
 
-    // Synchronize with the global affiliate tracker which handles session storage
+    // Only a server admission verdict may activate presentation/guest affordances.
     useEffect(() => {
-        const trackerRef = getAffiliateRefCode();
-
-        if (trackerRef && !affiliateRef) {
-            setAffiliateRef(trackerRef.trim().toUpperCase());
-            if (import.meta.env.DEV) {
-                console.log('[AffiliateContext] Synced ref code from tracker:', trackerRef);
-            }
-        }
-
-        if (!isInitialized) {
-            setIsInitialized(true);
-        }
-    }, [affiliateRef, isInitialized]);
+        const sync = () => setAffiliateRef(getConfirmedAffiliateRefCode());
+        sync();
+        setIsInitialized(true);
+        return subscribeAffiliateRef(sync);
+    }, []);
 
     const value = useMemo<AffiliateContextValue>(
         () => ({

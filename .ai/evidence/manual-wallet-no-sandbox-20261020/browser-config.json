@@ -1,5 +1,0 @@
-{
-  "checks": [],
-  "failed": "locator.innerText: Error: strict mode violation: locator('form') resolved to 2 elements:\n    1) <form class=\"space-y-4 p-6\">…</form> aka locator('form').filter({ hasText: 'Empty or null configuration' })\n    2) <form class=\"mt-4 space-y-3\">…</form> aka locator('form').filter({ hasText: 'Example: Why is the assistant' })\n\nCall log:\n\u001b[2m  - waiting for locator('form')\u001b[22m\n",
-  "mustRestore": true
-}

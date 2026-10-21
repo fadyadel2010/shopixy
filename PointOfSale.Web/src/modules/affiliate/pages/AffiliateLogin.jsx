@@ -132,6 +132,7 @@ const AffiliateLogin = () => {
                                     <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
                                     <span>{t('login.registrationPending')}</span>
                                 </div>
+                                {searchParams.get('deliveryFailed') === '1' && <p role="alert" className="mt-2 text-red-500">{t('login.resendFailed')}</p>}
                                 {registeredEmail && (
                                     <button type="button" onClick={handleResendVerification} disabled={resendStatus === 'submitting'} className="mt-2 text-xs font-semibold underline disabled:opacity-50">
                                         {resendStatus === 'submitting' ? t('login.resending') : resendStatus === 'success' ? t('login.resendSent') : t('login.resendVerification')}

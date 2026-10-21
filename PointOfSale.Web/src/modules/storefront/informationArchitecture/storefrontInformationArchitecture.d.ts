@@ -1,5 +1,6 @@
 export interface StorefrontNavigationNode {
     key?: string;
+    application?: string;
     path?: string;
     labelKey: string;
     fallbackLabel: string;

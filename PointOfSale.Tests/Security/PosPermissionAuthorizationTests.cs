@@ -161,6 +161,23 @@ public sealed class PosPermissionAuthorizationTests
         }
     }
 
+    [Theory]
+    [InlineData(UserRole.Owner, true)]
+    [InlineData(UserRole.Admin, true)]
+    [InlineData(UserRole.Manager, false)]
+    [InlineData(UserRole.Cashier, false)]
+    [InlineData(UserRole.Warehouse, false)]
+    public async Task ManualWalletSettlement_EnforcesPaymentMutationPermissionForEveryEndpoint(UserRole role, bool expected)
+    {
+        foreach (var (action, verb) in new[] { ("RecordManualWalletSettlement", "POST"), ("PreviewManualWalletSettlement", "POST"),
+            ("GetManualWalletSettlementEligibility", "GET"), ("GetManualWalletSettlement", "GET") })
+        {
+            Assert.True(PosEndpointPermissionCatalog.TryResolve("PaymentLifecycle", action, [verb], out var permission));
+            Assert.Equal(PosPermissions.StorefrontPaymentsManage, permission);
+            Assert.Equal(expected, await AuthorizeAsync(PosPrincipal(role), permission));
+        }
+    }
+
     [Fact]
     public async Task Handler_DeniesForgedRoleWithoutSqlAuthorityMarker()
     {

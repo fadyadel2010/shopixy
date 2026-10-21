@@ -94,17 +94,20 @@ public class AdminAffiliateController : ControllerBase
 
         // Check dashboards
         var dashboards = await _mongoDbContext.AffiliateDashboards.Find(
-            Builders<AffiliateDashboardDocument>.Filter.Eq(d => d.AffiliateAccountId, id)
+            Builders<AffiliateDashboardDocument>.Filter.Eq(d => d.AffiliateAccountId, id) &
+            Builders<AffiliateDashboardDocument>.Filter.Eq(d => d.TenantId, tenantId)
         ).ToListAsync(ct);
 
         // Check orders
         var orders = await _mongoDbContext.AffiliateOrders.Find(
-            Builders<AffiliateOrderDocument>.Filter.Eq(d => d.AffiliateAccountId, id)
+            Builders<AffiliateOrderDocument>.Filter.Eq(d => d.AffiliateAccountId, id) &
+            Builders<AffiliateOrderDocument>.Filter.Eq(d => d.TenantId, tenantId)
         ).ToListAsync(ct);
 
         // Check earnings
         var earnings = await _mongoDbContext.AffiliateEarningsSummaries.Find(
-            Builders<AffiliateEarningsSummaryDocument>.Filter.Eq(d => d.AffiliateAccountId, id)
+            Builders<AffiliateEarningsSummaryDocument>.Filter.Eq(d => d.AffiliateAccountId, id) &
+            Builders<AffiliateEarningsSummaryDocument>.Filter.Eq(d => d.TenantId, tenantId)
         ).ToListAsync(ct);
 
         return Ok(new

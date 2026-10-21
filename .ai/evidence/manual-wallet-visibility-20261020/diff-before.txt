@@ -1,5 +1,0 @@
-11	10	PointOfSale.Storefront/src/auth/api/authApi.registration.test.ts
-1	1	PointOfSale.Storefront/src/auth/api/authApi.ts
-1	51	PointOfSale.Storefront/src/auth/components/RegisterForm.tsx
-17	9	PointOfSale.Storefront/src/auth/pages/RegisterPage.registration.test.tsx
-0	1	PointOfSale.Storefront/src/auth/types/auth.types.ts

@@ -15,6 +15,18 @@ namespace PointOfSale.Core.Interfaces.Payments;
 /// </summary>
 public interface IPaymentLifecycleService
 {
+    /// <summary>Local QA only: no money, PaidAmount allocation, Treasury or real journal.</summary>
+    Task<PaymentTransitionResult> RecordSyntheticQaCollectionAsync(Guid tenantId, Guid orderId, Guid verifierId, Guid evidenceId, CancellationToken ct = default)
+        => throw new NotSupportedException();
+    Task<ManualWalletSettlementSelection> GetManualWalletSettlementSelectionAsync(Guid tenantId, int page = 1, CancellationToken ct = default)
+        => throw new NotSupportedException();
+    Task<ManualWalletSettlementPreview> PreviewManualWalletSettlementAsync(Guid tenantId, IReadOnlyList<Guid> orderIds, CancellationToken ct = default)
+        => throw new NotSupportedException();
+    Task<ManualWalletSettlementResult> RecordManualWalletSettlementAsync(Guid tenantId, Guid actorUserId, ManualWalletSettlementRequest request, CancellationToken ct = default)
+        => throw new NotSupportedException();
+    Task<ManualWalletSettlementResult?> GetManualWalletSettlementAsync(Guid tenantId, Guid settlementId, CancellationToken ct = default)
+        => throw new NotSupportedException();
+
     Task<CarrierRemittanceSelection> SelectCarrierRemittanceAsync(Guid tenantId, Guid actorId, int page = 1, CancellationToken ct = default);
 
     Task<CarrierRemittanceResult?> GetCarrierRemittanceAsync(Guid tenantId, Guid actorId, Guid operationId, CancellationToken ct = default);

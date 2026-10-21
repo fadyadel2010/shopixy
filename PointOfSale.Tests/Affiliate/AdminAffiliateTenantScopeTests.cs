@@ -17,6 +17,30 @@ namespace PointOfSale.Tests.Affiliate;
 public sealed class AdminAffiliateTenantScopeTests
 {
     [Fact]
+    public async Task MerchantRegistry_DoesNotExposeGlobalEnrolleeWithOnlyForeignEarnings()
+    {
+        var tenant = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new ApplicationDbContext(options, new TestTenantContext(tenant));
+        var account = AffiliateAccount.Create(Guid.Empty, Guid.NewGuid(), "GLOBAL123", "Global Affiliate");
+        account.Activate();
+        db.AffiliateAccounts.Add(account);
+        db.AffiliateCommissionLedger.Add(AffiliateCommissionLedger.CreateEarnedFromSnapshot(
+            Guid.NewGuid(), Guid.NewGuid(), account.Id, Guid.NewGuid(), Guid.NewGuid(), 100m, .1m, 10m, "EGP"));
+        await db.SaveChangesAsync();
+        var readiness = new Mock<IAffiliateReadinessService>();
+        readiness.Setup(s => s.CheckAsync(tenant, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PointOfSale.Core.Models.Affiliate.AffiliateReadinessResult { IsReady = true });
+        var controller = new AdminAffiliateController(db, null!, Mock.Of<IAffiliateService>(), Mock.Of<IAffiliatePayoutService>(),
+            Mock.Of<IAffiliateSettlementOrchestrator>(), readiness.Object, Mock.Of<IEventPublisher>(), Mock.Of<ITreasuryReadService>(),
+            new TestTenantContext(tenant), NullLogger<AdminAffiliateController>.Instance);
+        var result = Assert.IsType<OkObjectResult>((await controller.ListAffiliates()).Result);
+        Assert.Empty(Assert.IsType<AdminAffiliateListResponse>(result.Value).Affiliates);
+        Assert.IsType<NotFoundObjectResult>((await controller.GetAffiliateDetail(account.Id, default)).Result);
+        Assert.Single(await db.AffiliateAccounts.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
     public async Task GetAffiliateDetail_UsesTrustedTenantContextInsteadOfJwtTenantClaim()
     {
         var trustedTenantId = Guid.NewGuid();

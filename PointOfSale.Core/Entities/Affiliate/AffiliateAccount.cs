@@ -3,22 +3,21 @@ using PointOfSale.Core.Interfaces;
 namespace PointOfSale.Core.Entities.Affiliate;
 
 /// <summary>
-/// Aggregate root: A user's affiliate identity within a tenant.
+/// Aggregate root: the independent global Affiliate program profile.
 ///
 /// INVARIANTS:
-/// - Exactly ONE AffiliateAccount per (TenantId, UserId) — enforced DB + domain
+/// - One independent AffiliateUser owns the profile (legacy TenantId is not merchant ownership)
 /// - Status transitions: Pending -> Active -> Suspended -> Active; Active -> Closed is terminal
 /// - IsActive computed from Status == Active
 /// - Cannot earn commission unless Status == Active
-/// - ReferralCode is unique per tenant, immutable after creation
+/// - ReferralCode is globally unique, immutable after creation
 /// </summary>
 public class AffiliateAccount : BaseEntity, ITenantOwned
 {
     public Guid TenantId { get; set; }
 
     /// <summary>
-    /// The platform User who owns this affiliate account.
-    /// FK → Users.Id. UNIQUE per tenant.
+    /// The independent AffiliateUser who owns this profile (not a POS User FK).
     /// </summary>
     public Guid UserId { get; private set; }
 

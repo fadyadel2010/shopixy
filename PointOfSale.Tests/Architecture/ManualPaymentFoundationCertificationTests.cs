@@ -53,7 +53,7 @@ public sealed class ManualPaymentFoundationCertificationTests
     }
 
     [Fact]
-    public void Validation_MustRejectDisabledProviderButIgnoreLegacyEnvironmentMismatch()
+    public void Validation_MustIgnoreTheLegacyRuntimeEnableSwitchAndEnvironmentMismatch()
     {
         var disabledProvider = ManualPaymentConfigurationValidator.Validate(ValidOptions() with
         {
@@ -72,10 +72,13 @@ public sealed class ManualPaymentFoundationCertificationTests
             FeatureFlags = new ManualPaymentFeatureFlags { Enabled = true, ProductionEnabled = false }
         });
 
-        Assert.False(disabledProvider.IsValid);
+        // Manual Wallet has no gateway, so the independent deployment-level runtime-enable
+        // switch must not make an otherwise correctly configured foundation invalid. The
+        // merchant activation remains the tenant-owned payment method state.
+        Assert.True(disabledProvider.IsValid);
+        Assert.Empty(disabledProvider.Errors);
         Assert.True(sandboxMismatch.IsValid);
         Assert.True(productionFlagDisabled.IsValid);
-        Assert.Contains(disabledProvider.Errors, error => error.Contains("provider must be enabled", StringComparison.OrdinalIgnoreCase));
         Assert.Empty(sandboxMismatch.Errors);
         Assert.Empty(productionFlagDisabled.Errors);
     }

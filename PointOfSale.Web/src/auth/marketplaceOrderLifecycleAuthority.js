@@ -57,7 +57,12 @@ export function requireMarketplaceOrderLifecycleAuthority(order) {
     }
 
     if (paymentStatus) {
-        if (!isMarketplacePaymentStatus(paymentStatus)) {
+        // A known, explicitly synthetic Storefront state is readable for audit.
+        // It is NEVER admitted as Marketplace paid evidence or a general fallback
+        // for unknown future enum values. Durable SQL provenance is required.
+        const isSyntheticStorefront = !isMarketplaceOrder && order?.source === 'Ecommerce' &&
+            order?.isSyntheticQa === true && paymentStatus === 'SyntheticQaCollected'
+        if (!isMarketplacePaymentStatus(paymentStatus) && !isSyntheticStorefront) {
             throw new Error('Marketplace order lifecycle authority rejected malformed payment lifecycle evidence.')
         }
 

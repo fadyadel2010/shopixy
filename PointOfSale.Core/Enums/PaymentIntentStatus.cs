@@ -37,5 +37,8 @@ public enum PaymentIntentStatus
     AmountMismatch = 9,
 
     /// <summary>Payment is quarantined for manual investigation</summary>
-    Suspicious = 10
+    Suspicious = 10,
+
+    /// <summary>Local virtual collection only; no provider payment or real money.</summary>
+    SyntheticQaCollected = 11
 }

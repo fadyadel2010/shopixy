@@ -13,8 +13,15 @@ import { useRTL } from '../hooks/useRTL'
 import api from '../services/api'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
 import { broadcastPosVendorLogout } from '../auth/posVendorSessionAuthority'
+import SmartNavigationProvider from '../navigation/SmartNavigationProvider'
+import CommandPalette from '../navigation/CommandPalette'
+import NavigationBreadcrumbs from '../navigation/NavigationBreadcrumbs'
 
 export default function Layout() {
+    return <SmartNavigationProvider><LayoutContent /></SmartNavigationProvider>
+}
+
+function LayoutContent() {
     const { t } = useTranslation()
     const { user, logout } = useAuthStore()
     const navigate = useNavigate()
@@ -59,9 +66,10 @@ export default function Layout() {
                     <div className="px-4 sm:px-6 lg:px-8">
                         <div className="flex justify-between items-center h-16">
                             {/* Mobile Menu Button & Logo */}
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 sm:gap-4">
                                 <button
                                     onClick={() => setSidebarOpen(true)}
+                                    aria-label={t('smartNavigation.openNavigation')}
                                     className="lg:hidden text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg p-2 transition-colors"
                                 >
                                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,7 +77,7 @@ export default function Layout() {
                                     </svg>
                                 </button>
 
-                                <div className="flex items-center gap-2">
+                                <div className="hidden items-center gap-2 sm:flex">
                                     <div className="w-8 h-8 bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-lg flex items-center justify-center shadow-md">
                                         <span className="text-white font-bold text-lg">🏪</span>
                                     </div>
@@ -78,14 +86,15 @@ export default function Layout() {
                             </div>
 
                             {/* User Menu */}
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1 sm:gap-3">
+                                <CommandPalette onNavigate={() => setSidebarOpen(false)} />
                                 {/* Marketplace Notifications */}
                                 <MarketplaceNotificationBell />
 
                                 {/* Settings */}
                                 <button
                                     onClick={() => navigate('/settings')}
-                                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                    className="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                                     title={t('settings.settings')}
                                 >
                                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -94,7 +103,7 @@ export default function Layout() {
                                     </svg>
                                 </button>
 
-                                <div className="h-6 w-px bg-gray-200 mx-1"></div>
+                                <div className="hidden h-6 w-px bg-gray-200 mx-1 sm:block"></div>
                                 <LanguageSwitcher />
 
                                 <div className="hidden md:flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg">
@@ -114,7 +123,7 @@ export default function Layout() {
                                 <button
                                     onClick={handleLogout}
                                     disabled={isLoggingOut}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                    className="flex items-center gap-2 px-2 sm:px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                     title={t('app.logout')}
                                     aria-busy={isLoggingOut}
                                 >
@@ -133,6 +142,7 @@ export default function Layout() {
 
                 {/* Main Content */}
                 <main className="px-4 sm:px-6 lg:px-8 py-6">
+                    <NavigationBreadcrumbs />
                     <div className="mb-4 flex justify-end">
                         <HelpButton
                             onClick={() => setHelpOpen(true)}

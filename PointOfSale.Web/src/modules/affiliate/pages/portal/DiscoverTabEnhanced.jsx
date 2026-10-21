@@ -40,6 +40,7 @@ const fadeUp = {
 // ═══════════════════════════════════════════════════════════════════
 
 const CategoryFilterBar = memo(function CategoryFilterBar({ categories, selectedSlug, onChange }) {
+    const { t } = useLanguage()
     return (
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-white/10" id="af32-category-filter-bar">
             {/* All chip */}
@@ -52,7 +53,7 @@ const CategoryFilterBar = memo(function CategoryFilterBar({ categories, selected
             >
                 <span className="flex items-center gap-1.5">
                     <Grid3X3 className="w-3.5 h-3.5" />
-                    All
+                    {t('portal.discoverTab.all')}
                 </span>
             </button>
 
@@ -93,9 +94,9 @@ export default function DiscoverTabEnhanced() {
 
     // AF-32H FIX: Derive filter state from URL (stable references)
     // Using .toString() for stable dependency tracking
-    const paramsString = searchParams.toString()
     const categorySlug = searchParams.get('category') || null
     const urlSearch = searchParams.get('search') || ''
+    const storeTenantId = searchParams.get('storeTenantId') || undefined
     // AF-33: Sort from URL (validated, with safe fallback)
     const urlSort = searchParams.get('sort') || DEFAULT_SORT
     const activeSort = isValidSort(urlSort) ? urlSort : DEFAULT_SORT
@@ -105,6 +106,8 @@ export default function DiscoverTabEnhanced() {
     const [state, setState] = useState('loading') // loading | loaded | empty | error
     const [categories, setCategories] = useState([])
     const [categoriesLoaded, setCategoriesLoaded] = useState(false)
+    const [categoriesError, setCategoriesError] = useState(false)
+    const [categoryReload, setCategoryReload] = useState(0)
     const [searchInput, setSearchInput] = useState(urlSearch)
     const [page, setPage] = useState(1)
     const [inStockOnly, setInStockOnly] = useState(false)
@@ -145,22 +148,30 @@ export default function DiscoverTabEnhanced() {
     // ── Keep searchInput in sync if URL changes externally (back/forward) ──
     // AF-32H FIX: Use stable paramsString dependency instead of searchParams.get()
     useEffect(() => {
-        const urlVal = searchParams.get('search') || ''
-        setSearchInput(prev => prev !== urlVal ? urlVal : prev)
-    }, [paramsString])
+        setSearchInput(urlSearch)
+    }, [urlSearch])
+
+    useEffect(() => { setPage(1); setSelectedProductId(null) }, [categorySlug, urlSearch, activeSort, storeTenantId])
 
     // ── Fetch categories (once on mount) ──
     useEffect(() => {
-        affiliateApi.getDiscoverCategories()
+        let active = true
+        setCategoriesLoaded(false)
+        setCategoriesError(false)
+        affiliateApi.getDiscoverCategories(storeTenantId)
             .then(cats => {
+                if (!active) return
                 setCategories(cats || [])
                 setCategoriesLoaded(true)
             })
             .catch(() => {
+                if (!active) return
                 setCategories([])
                 setCategoriesLoaded(true)
+                setCategoriesError(true)
             })
-    }, [])
+        return () => { active = false }
+    }, [storeTenantId, categoryReload])
 
     // ── Fetch products (re-runs when URL filters, pagination, or stock filter change) ──
     // AF-32H: fetchId pattern prevents stale responses from overwriting newer state
@@ -175,6 +186,7 @@ export default function DiscoverTabEnhanced() {
             inStockOnly,
             minCommissionRate,
             categorySlug: categorySlug || undefined,
+            storeTenantId,
             sort: activeSort,
             page,
             pageSize
@@ -195,7 +207,7 @@ export default function DiscoverTabEnhanced() {
                 setData(null)
                 setState('error')
             })
-    }, [urlSearch, inStockOnly, minCommissionRate, categorySlug, activeSort, page])
+    }, [urlSearch, inStockOnly, minCommissionRate, categorySlug, storeTenantId, activeSort, page])
 
     useEffect(() => { fetchProducts() }, [fetchProducts])
 
@@ -267,11 +279,15 @@ export default function DiscoverTabEnhanced() {
                         }`}
                 >
                     <Box className="w-4 h-4" />
-                    In Stock Only
+                    {t('portal.discoverTab.inStock')}
                 </button>
             </div>
 
             {/* ═══ Category Filter Bar ═══ */}
+            {categoriesError && <div role="alert" className="text-sm text-red-500 flex items-center gap-3">
+                {t('portal.discoverTab.categoryError')}
+                <button onClick={() => setCategoryReload(v => v + 1)} className="px-3 py-2 rounded-lg border">{t('portal.discoverTab.retry')}</button>
+            </div>}
             {categoriesLoaded && categories.length > 0 && (
                 <CategoryFilterBar
                     categories={categories}
@@ -309,14 +325,14 @@ export default function DiscoverTabEnhanced() {
                 <div className="text-center py-16">
                     <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
                     <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
-                        Failed to load products
+                        {t('portal.discoverTab.loadError')}
                     </h3>
-                    <p className="text-gray-500 text-sm mb-4">Something went wrong. Please try again.</p>
+                    <p className="text-gray-500 text-sm mb-4">{t('portal.discoverTab.noProductsDesc')}</p>
                     <button
                         onClick={fetchProducts}
                         className="inline-flex items-center gap-2 px-5 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-all"
                     >
-                        <RefreshCw className="w-4 h-4" /> Retry
+                        <RefreshCw className="w-4 h-4" /> {t('portal.discoverTab.retry')}
                     </button>
                 </div>
             )}
@@ -327,7 +343,7 @@ export default function DiscoverTabEnhanced() {
                     <Package className="w-14 h-14 text-gray-500 mx-auto mb-4" />
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
                         {activeCategoryName
-                            ? `No products in "${activeCategoryName}"`
+                            ? `${t('portal.discoverTab.noProducts')}: ${activeCategoryName}`
                             : (t('portal.discoverTab.noProducts') || 'No products available')
                         }
                     </h3>
@@ -345,7 +361,7 @@ export default function DiscoverTabEnhanced() {
                             className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#6C63FF]/10 text-[#6C63FF] text-sm font-medium border border-[#6C63FF]/20 hover:bg-[#6C63FF]/20 transition-all"
                         >
                             <Grid3X3 className="w-4 h-4" />
-                            Browse all products
+                            {t('portal.discoverTab.browseAll')}
                         </button>
                     )}
                 </div>

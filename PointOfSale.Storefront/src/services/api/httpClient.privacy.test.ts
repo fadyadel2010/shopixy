@@ -4,7 +4,7 @@ vi.mock('../../bootstrap/index', () => ({
     isRequestContextReady: () => true,
     getRequestHeaders: () => ({ 'X-Tenant-Id': 'tenant-qa', 'X-Session-Id': 'session-qa' }),
 }));
-vi.mock('@/bootstrap/affiliateRefTracker', () => ({ getAffiliateRefCode: () => null }));
+vi.mock('@/bootstrap/affiliateRefTracker', () => ({ getAffiliateRefCode: () => null, getConfirmedAffiliateRefCode: () => null, acceptAffiliateRefVerdict: vi.fn() }));
 vi.mock('@/i18n', () => ({ useLanguageStore: { getState: () => ({ language: 'en' }) } }));
 vi.mock('@/storefront/preview/themePreviewMode', () => ({ getThemePreviewToken: () => null }));
 vi.mock('./csrf', () => ({ appendCsrfHeader: (headers: Record<string, string>) => headers }));

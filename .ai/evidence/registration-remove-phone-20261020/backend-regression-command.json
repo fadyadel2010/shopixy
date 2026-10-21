@@ -1,5 +1,0 @@
-{
-    "exitCode":  1,
-    "command":  "dotnet test PointOfSale.Tests/PointOfSale.Tests.csproj --no-restore --filter FullyQualifiedName~StorefrontRegistrationPhoneConfiguredTests.|FullyQualifiedName~StorefrontAuthenticationLifecycleTests.|FullyQualifiedName~PhoneNumberNormalizerTests.|FullyQualifiedName~PhoneRiskProfileServiceTests.|FullyQualifiedName~PhoneRiskPhase4Tests.|FullyQualifiedName~StorefrontTenantIsolationTests.|FullyQualifiedName~StorefrontPhoneVerificationReliabilityTests.|FullyQualifiedName~StorefrontAuthProviderAdminServiceOutboxTests.|FullyQualifiedName~CookieAuthSecurityTests.|FullyQualifiedName~StorefrontCustomerAuthorityCertificationTests. --logger trx --results-directory \u003ctask evidence\u003e/trx",
-    "observedUtc":  "2026-10-20T17:15:29.3587799Z"
-}

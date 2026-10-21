@@ -107,8 +107,8 @@ export const affiliateApi = {
      * AF-32: Get active main categories for filter bar.
      * Returns [{id, name, slug, productCount, isActive}]
      */
-    getDiscoverCategories: () =>
-        affiliateAxios.get('/affiliate/discover/categories').then(r => r.data),
+    getDiscoverCategories: (storeTenantId) =>
+        affiliateAxios.get('/affiliate/discover/categories', { params: { ...(storeTenantId && { storeTenantId }) } }).then(r => r.data),
 
     /**
      * AF-22: Get full product intelligence details.

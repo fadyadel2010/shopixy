@@ -44,6 +44,7 @@ public class AffiliatePortalController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly StorefrontUrlResolver _storefrontUrlResolver;
     private readonly ILogger<AffiliatePortalController> _logger;
+    private readonly int _lowStockThreshold;
 
     public AffiliatePortalController(
         ApplicationDbContext dbContext,
@@ -52,7 +53,8 @@ public class AffiliatePortalController : ControllerBase
         IAffiliatePayoutService payoutService,
         ITenantContext tenantContext,
         StorefrontUrlResolver storefrontUrlResolver,
-        ILogger<AffiliatePortalController> logger)
+        ILogger<AffiliatePortalController> logger,
+        IConfiguration? configuration = null)
     {
         _dbContext = dbContext;
         _mongoDbContext = mongoDbContext;
@@ -61,6 +63,7 @@ public class AffiliatePortalController : ControllerBase
         _tenantContext = tenantContext;
         _storefrontUrlResolver = storefrontUrlResolver;
         _logger = logger;
+        _lowStockThreshold = configuration?.GetValue<int>("AffiliateProductIntelligence:LowStockThreshold", 10) ?? 10;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -358,6 +361,15 @@ public class AffiliatePortalController : ControllerBase
         if (affiliate == null)
             return NotFound(new { message = "No affiliate account found for this user" });
 
+        var identity = await _dbContext.AffiliateUsers.IgnoreQueryFilters()
+            .Where(u => u.AffiliateAccountId == affiliateAccountId.Value && !u.IsDeleted)
+            .Select(u => new { u.Id, u.Email, u.EmailVerified })
+            .SingleOrDefaultAsync(ct);
+        if (identity == null) return Unauthorized();
+        affiliate.AffiliateUserId = identity.Id;
+        affiliate.Email = identity.Email;
+        affiliate.EmailVerified = identity.EmailVerified;
+
         return Ok(affiliate);
     }
 
@@ -553,7 +565,7 @@ public class AffiliatePortalController : ControllerBase
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [HttpGet("discover/categories")]
     public async Task<ActionResult<List<AffiliateCategoryDiscoveryItem>>> DiscoverCategories(
-        CancellationToken ct)
+        CancellationToken ct, [FromQuery] Guid? storeTenantId = null)
     {
         // Fetch active Level 1 (main) categories from PostgreSQL
         var mainCategories = await _dbContext.AffiliateCategories
@@ -576,6 +588,7 @@ public class AffiliatePortalController : ControllerBase
 
         var visibleDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
         var productCounts = visibleDocs
+            .Where(doc => !storeTenantId.HasValue || doc.TenantId == storeTenantId.Value)
             .Select(ResolveAffiliateEffectiveCategorySlug)
             .Where(slug => !string.IsNullOrWhiteSpace(slug))
             .GroupBy(slug => slug!, StringComparer.Ordinal)
@@ -610,6 +623,7 @@ public class AffiliatePortalController : ControllerBase
     /// AF-33: Deterministic backend sorting with URL-driven sort parameter.
     /// </summary>
     [HttpGet("discover/products")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<ActionResult<AffiliateProductDiscoveryResponse>> DiscoverProducts(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
@@ -693,21 +707,21 @@ public class AffiliatePortalController : ControllerBase
     /// SQL authority is recomposed over the Mongo display projection.
     /// </summary>
     [HttpGet("discover/products/{productId:guid}")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<ActionResult<AffiliateProductDetailResponse>> GetProductDetail(
         Guid productId,
         CancellationToken ct)
     {
-        var doc = await _mongoDbContext.AffiliateProductIntelligence
-            .Find(d => d.ProductId == productId)
-            .FirstOrDefaultAsync(ct);
-
-        // AF-22 HARDENING: Defensive API contract (return 404 for missing products)
-        doc = doc == null ? null : await RecomposeAffiliateIntelligenceDocumentBySqlAuthorityAsync(doc, ct);
+        // Resolve ownership from SQL, not a possibly missing/stale Mongo identity.
+        var owner = await _dbContext.Products.AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.Id == productId && !p.IsDeleted)
+            .Select(p => new { p.TenantId }).SingleOrDefaultAsync(ct);
+        var doc = owner == null ? null : await RecomposeAffiliateIntelligenceDocumentBySqlAuthorityAsync(
+            new AffiliateProductIntelligenceDocument { ProductId = productId, TenantId = owner.TenantId }, ct);
         if (doc == null || doc.BasePrice <= 0m || doc.IsOutOfStock)
             return NotFound(new { message = "Product not found" });
 
-        // AF-22 HARDENING: Immutable affiliate link contract (never store affiliate code in MongoDB)
-        // Affiliate link = StorefrontUrl + ?ref={AffiliateCode} (appended in frontend)
+        // Product-specific referral URLs are issued only by the promotion-link API.
         return Ok(new AffiliateProductDetailResponse
         {
             ProductId = doc.ProductId,
@@ -1360,7 +1374,7 @@ public class AffiliatePortalController : ControllerBase
         var ordered = sort.ToLowerInvariant() switch
         {
             "commission_asc" => documents.OrderBy(document => document.CommissionRate),
-            "newest" => documents.OrderByDescending(document => document.LastUpdatedUtc),
+            "newest" => documents.OrderByDescending(document => document.CreatedAtUtc ?? document.LastUpdatedUtc),
             "price_desc" => documents.OrderByDescending(document => document.BasePrice),
             "price_asc" => documents.OrderBy(document => document.BasePrice),
             "ranking" => documents.OrderByDescending(document => document.RankingScore),
@@ -1595,6 +1609,7 @@ public class AffiliatePortalController : ControllerBase
             candidate.Currency = tenant.Currency ?? candidate.Currency;
             candidate.TotalAvailableStock = pricing.TotalAvailableStock;
             candidate.IsOutOfStock = !pricing.InStock;
+            ApplyCurrentAffiliateVariants(candidate, product, _lowStockThreshold);
             candidate.StoreName = tenant.Name;
             candidate.StoreSlug = tenant.Slug ?? candidate.StoreSlug;
             try
@@ -1703,6 +1718,7 @@ public class AffiliatePortalController : ControllerBase
             ct);
 
         if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
+            !product.IsAffiliateEnabled ||
             !product.TryResolveAffiliatePublicPricing(out var pricing) ||
             !pricing.InStock)
         {
@@ -1712,7 +1728,7 @@ public class AffiliatePortalController : ControllerBase
         var tenant = await _dbContext.Tenants
             .AsNoTracking()
             .IgnoreQueryFilters()
-            .Where(item => item.Id == candidate.TenantId && item.IsActive && item.DeletedAtUtc == null)
+            .Where(item => item.Id == candidate.TenantId && item.IsActive && item.Status == TenantStatus.Active && item.DeletedAtUtc == null)
             .Select(item => new { item.Id, item.Name, item.Slug, item.StorefrontBaseUrl, item.Currency })
             .FirstOrDefaultAsync(ct);
 
@@ -1740,6 +1756,7 @@ public class AffiliatePortalController : ControllerBase
         candidate.Currency = tenant.Currency ?? candidate.Currency;
         candidate.TotalAvailableStock = pricing.TotalAvailableStock;
         candidate.IsOutOfStock = !pricing.InStock;
+        ApplyCurrentAffiliateVariants(candidate, product, _lowStockThreshold);
         candidate.StoreName = tenant.Name;
         candidate.StoreSlug = tenant.Slug ?? candidate.StoreSlug;
         try
@@ -1763,6 +1780,24 @@ public class AffiliatePortalController : ControllerBase
         candidate.AffiliateParentCategoryName = parentCategoryName;
         candidate.AffiliateParentCategorySlug = parentCategorySlug;
         return candidate;
+    }
+
+    internal static void ApplyCurrentAffiliateVariants(AffiliateProductIntelligenceDocument candidate, ProductDocument product, int lowStockThreshold = 10)
+    {
+        // Never retain projection-only variant prices/stock after SQL recomposition.
+        candidate.Variants = product.HasVariants
+            ? product.Variants.Where(v => v.IsActive && v.EffectivePrice > 0m)
+                .Select(v => new VariantStockSubDocument
+                {
+                    VariantId = v.VariantId,
+                    Name = string.Join(" - ", v.Attributes.Select(a => a.Value)),
+                    Price = v.EffectivePrice,
+                    Stock = Math.Max(0, (int)decimal.Truncate(v.TotalStock))
+                }).ToList()
+            : [];
+        candidate.LowStock = product.TrackStock && !product.AllowBackorder &&
+            candidate.TotalAvailableStock > 0 && candidate.TotalAvailableStock <= lowStockThreshold;
+        candidate.CreatedAtUtc = product.CreatedAtUtc;
     }
 
     private async Task<List<AffiliateAuthorityKey>> ResolveLiveAffiliateCategoryProductKeysAsync(
@@ -2004,6 +2039,9 @@ public class AffiliateRegisterRequest
 public class AffiliateProfileResponse
 {
     public Guid AffiliateAccountId { get; set; }
+    public Guid AffiliateUserId { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public bool EmailVerified { get; set; }
     public string ReferralCode { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;

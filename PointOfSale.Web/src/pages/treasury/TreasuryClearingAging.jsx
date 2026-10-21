@@ -171,14 +171,17 @@ export default function TreasuryClearingAging() {
                 {hasPosPermission(user, 'storefront.payments.manage') && <button className="btn-primary mb-3" onClick={() => navigate('/treasury/manual-cod-settlements')}>
                     {t('manualCod.title')}
                 </button>}
+                {hasPosPermission(user, 'storefront.payments.manage') && <button className="btn-primary mb-3 ms-3" onClick={() => navigate('/treasury/manual-wallet-settlements')}>
+                    {t('manualWalletSettlement.title')}
+                </button>}
                 {hasPosPermission(user, 'storefront.payments.manage') && hasPosPermission(user, 'finance.operate') &&
                     <button className="btn-primary mb-3 ms-3" onClick={() => navigate('/treasury/carrier-remittances')}>{t('carrierRemittance.title')}</button>}
                 <p className="text-sm text-slate-700">
                     <strong>{t('treasury.inTransit', 'In transit')}: </strong>
-                     {t('treasury.clearingEvidenceBoundary', 'Clearing balances settle only through authenticated provider or carrier evidence in the payment lifecycle. Manual transfer or settlement from this screen is not possible.')}
+                      {t('manualWalletSettlement.clearingBoundary')}
                  </p>
                  <p className="text-sm text-slate-700 mt-2">
-                     {t('treasury.clearingSettlementUnavailable', 'COD and gateway clearing settlement is currently unavailable because authenticated carrier remittance or provider payout evidence is not integrated. Clearing balances cannot be moved through Treasury Transfers.')}
+                     {t('manualWalletSettlement.providerBoundary')}
                  </p>
             </div>
 
@@ -321,6 +324,10 @@ export default function TreasuryClearingAging() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-3 text-center">
+                                                {line.accountCode === '1140' && hasPosPermission(user, 'storefront.payments.manage') ? <button
+                                                    type="button" className="btn-primary text-xs" onClick={() => navigate('/treasury/manual-wallet-settlements')}>
+                                                    {t('manualWalletSettlement.title')}
+                                                </button> :
                                                 <button
                                                     type="button"
                                                     disabled
@@ -331,7 +338,7 @@ export default function TreasuryClearingAging() {
                                                     )}
                                                 >
                                                     {t('treasury.awaitingProviderSettlement', 'Provider workflow')}
-                                                </button>
+                                                </button>}
                                             </td>
                                         </tr>
                                     )

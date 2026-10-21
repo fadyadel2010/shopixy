@@ -18,6 +18,7 @@ import { Package, DollarSign, Sparkles } from 'lucide-react'
 import CommissionBadge from './badges/CommissionBadge'
 import StockBadge from './badges/StockBadge'
 import { useLanguage } from '../../i18n/LanguageContext'
+import { affiliateProductMediaUrl } from '../../lib/affiliateProductMedia'
 
 const resolveProductCurrency = (product) => {
     const currency = typeof product?.currency === 'string' ? product.currency.trim().toUpperCase() : ''
@@ -33,7 +34,7 @@ export default function ProductCard({ product, onClick, disabled = false }) {
     // AF-22: Format currency properly (25 EGP instead of EGP 25.00)
     const formatPrice = (amount) => {
         const currency = resolveProductCurrency(product)
-        return currency ? `${Math.round(amount)} ${currency}` : 'Currency unavailable'
+        return currency ? `${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${currency}` : 'Currency unavailable'
     }
 
     // FE-1: Variant price rule | FE-1A: Defensive optional chaining
@@ -54,22 +55,22 @@ export default function ProductCard({ product, onClick, disabled = false }) {
         >
             {/* Image */}
             <div className="aspect-square bg-gradient-to-br from-white/[0.03] to-transparent flex items-center justify-center overflow-hidden relative">
+                <Package className="absolute w-10 h-10 text-gray-700" aria-hidden="true" />
                 {/* FE-1A: Defensive optional chaining & image fallback */}
                 {product?.images && product.images.length > 0 ? (
                     <img
-                        src={product.images[0]}
+                        src={affiliateProductMediaUrl(product.images[0], product.storefrontUrl)}
                         alt={product?.name || 'Product'}
-                        className={`w-full h-full object-cover transition-transform duration-500 ${
+                        className={`relative w-full h-full object-cover transition-transform duration-500 ${
                             isDisabled ? '' : 'group-hover:scale-105'
                         }`}
                         loading="lazy"
                         onError={(e) => {
-                            e.currentTarget.src = '/img/placeholder.png'
+                            e.currentTarget.onerror = null
+                            e.currentTarget.style.display = 'none'
                         }}
                     />
-                ) : (
-                    <Package className="w-10 h-10 text-gray-700" />
-                )}
+                ) : null}
 
                 {/* Commission Badge (Top Right) | FE-1A: Defensive optional chaining */}
                 <div className="absolute top-2 right-2">

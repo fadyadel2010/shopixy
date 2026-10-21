@@ -207,6 +207,48 @@ public class PaymentLifecycleController : ControllerBase
     // SETTLEMENT OPERATIONS (Admin Only)
     // ═══════════════════════════════════════════════════════════════════════════
     
+    [HttpGet("~/api/payments/wallet/manual-settlements/eligible-payments")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<IActionResult> GetManualWalletSettlementEligibility([FromQuery] int page = 1, CancellationToken ct = default)
+    {
+        try { return Ok(await _lifecycleService.GetManualWalletSettlementSelectionAsync(_tenantContext.RequiredTenantId, page, ct)); }
+        catch (ManualWalletSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+        catch (ManualCodSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+    }
+
+    [HttpPost("~/api/payments/wallet/manual-settlements/preview")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<IActionResult> PreviewManualWalletSettlement([FromBody] ManualWalletSettlementPreviewApiRequest request, CancellationToken ct)
+    {
+        try { return Ok(await _lifecycleService.PreviewManualWalletSettlementAsync(_tenantContext.RequiredTenantId, request.OrderIds, ct)); }
+        catch (ManualWalletSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+        catch (ManualCodSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+    }
+
+    [HttpPost("~/api/payments/wallet/manual-settlements")]
+    [Authorize(Roles = "Owner,Admin")]
+    [EnableRateLimiting("FinancialWrite")]
+    public async Task<IActionResult> RecordManualWalletSettlement([FromBody] ManualWalletSettlementApiRequest request, CancellationToken ct)
+    {
+        var rawActor = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(rawActor, out var actor) || actor == Guid.Empty) return Forbid();
+        try
+        {
+            return Ok(await _lifecycleService.RecordManualWalletSettlementAsync(_tenantContext.RequiredTenantId, actor,
+                new(request.SettlementId, request.OrderIds, request.PreviewToken), ct));
+        }
+        catch (ManualWalletSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+        catch (ManualCodSettlementException ex) { return Conflict(new { error = ex.Code, code = ex.Code }); }
+    }
+
+    [HttpGet("~/api/payments/wallet/manual-settlements/{settlementId:guid}")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<IActionResult> GetManualWalletSettlement(Guid settlementId, CancellationToken ct)
+    {
+        var result = await _lifecycleService.GetManualWalletSettlementAsync(_tenantContext.RequiredTenantId, settlementId, ct);
+        return result == null ? NotFound() : Ok(result);
+    }
+
     [HttpGet("~/api/payments/cod/manual-settlements/eligible-orders")]
     [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> GetManualSettlementEligibility([FromQuery] int page = 1, CancellationToken ct = default)
@@ -347,6 +389,12 @@ public class PaymentLifecycleController : ControllerBase
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ManualCodSettlementApiRequest(Guid SettlementId, List<Guid> OrderIds);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ManualWalletSettlementApiRequest(Guid SettlementId, List<Guid> OrderIds, string PreviewToken);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ManualWalletSettlementPreviewApiRequest(List<Guid> OrderIds);
 
 public class CodDeliveredRequest
 {

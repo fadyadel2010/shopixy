@@ -45,6 +45,10 @@ public class ApplicationDbContext : DbContext
 
     // Master Data
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<SyntheticQaRun> SyntheticQaRuns => Set<SyntheticQaRun>();
+    public DbSet<SyntheticQaOrder> SyntheticQaOrders => Set<SyntheticQaOrder>();
+    public DbSet<SyntheticQaEvidence> SyntheticQaEvidence => Set<SyntheticQaEvidence>();
+    public DbSet<SyntheticQaCommissionPosting> SyntheticQaCommissionPostings => Set<SyntheticQaCommissionPosting>();
     public DbSet<ShipmentCancellationOperation> ShipmentCancellationOperations => Set<ShipmentCancellationOperation>();
     public DbSet<CarrierCollectionEvidence> CarrierCollectionEvidence => Set<CarrierCollectionEvidence>();
     public DbSet<CarrierCodShipmentBinding> CarrierCodShipmentBindings => Set<CarrierCodShipmentBinding>();
@@ -3679,6 +3683,7 @@ public class ApplicationDbContext : DbContext
 
     private void ApplyAuditAndCommerceHubImmutabilityGuards()
     {
+        GuardSyntheticQaEvidence();
         GuardPersistedShippingEvidenceAsync(false).GetAwaiter().GetResult();
         NormalizeCouponCodes();
         NormalizePosUserIdentities();
@@ -3691,6 +3696,7 @@ public class ApplicationDbContext : DbContext
 
     private async Task ApplyAuditAndCommerceHubImmutabilityGuardsAsync(CancellationToken cancellationToken)
     {
+        GuardSyntheticQaEvidence();
         await GuardPersistedShippingEvidenceAsync(true, cancellationToken);
         NormalizeCouponCodes();
         NormalizePosUserIdentities();
@@ -3699,6 +3705,19 @@ public class ApplicationDbContext : DbContext
         await GuardPosTenantForeignKeyCoOwnershipAsync(cancellationToken);
         await GuardShippingMethodWarehouseAuthorityAsync(cancellationToken);
         ApplyAuditAndCommerceHubImmutabilityGuardsCore();
+    }
+
+    private void GuardSyntheticQaEvidence()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries().Where(x => x.Entity is SyntheticQaRun or SyntheticQaOrder or Core.Entities.SyntheticQaEvidence or SyntheticQaCommissionPosting))
+        {
+            if (entry.State == EntityState.Deleted) throw new InvalidOperationException("Synthetic QA audit history cannot be deleted.");
+            if (entry.State != EntityState.Modified) continue;
+            if (entry.Entity is not Core.Entities.SyntheticQaEvidence || entry.Properties.Any(p => p.IsModified &&
+                (p.Metadata.Name != nameof(Core.Entities.SyntheticQaEvidence.ConsumedAtUtc) || p.OriginalValue != null || p.CurrentValue == null)))
+                throw new InvalidOperationException("Synthetic QA evidence is immutable; consumption is one-way.");
+        }
     }
 
     private void GuardShippingMethodWarehouseAuthority()
@@ -5816,14 +5835,15 @@ public class ApplicationDbContext : DbContext
 
         if (order.AffiliateAccountId.HasValue)
         {
+            // Attribution relates the referring affiliate to the order, not to the
+            // buyer's identity. Never merge these distinct people through checkout.
             EnsureCanonicalIdentityLink(
                 plannedCanonicalIds,
                 CanonicalIdentitySubjectType.AffiliateAccount,
                 order.AffiliateAccountId.Value,
                 tenantId: null,
                 "Affiliate",
-                order.AffiliateReferralCode,
-                currentCanonicalId);
+                order.AffiliateReferralCode);
         }
     }
 

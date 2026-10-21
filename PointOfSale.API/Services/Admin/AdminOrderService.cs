@@ -98,6 +98,7 @@ public class AdminOrderService : IAdminOrderService
         // truth (not a projected/browser status), while preserving their detail/audit
         // routes and the ordinary COD/online workflows. Retain approved refund history.
         standardOrdersQuery = standardOrdersQuery.Where(o =>
+            _context.SyntheticQaOrders.Any(qa => qa.OrderId == o.Id && qa.TenantId == tenantId) ||
             (o.PaymentMethodCode != "MANUALWALLET" &&
              !_context.PaymentIntents.Any(pi => pi.TenantId == tenantId && pi.OrderId == o.Id && pi.Provider == PaymentProvider.ManualWallet)) ||
             (o.Status != OrderStatus.Pending &&
@@ -170,6 +171,7 @@ public class AdminOrderService : IAdminOrderService
                 MarketplaceOrderId = null,
                 SourceLabel = o.Source == OrderSource.Marketplace ? "Marketplace" : null,
                 IsMarketplaceOrder = false,
+                IsSyntheticQa = _context.SyntheticQaOrders.Any(qa => qa.OrderId == o.Id && qa.TenantId == tenantId),
                 CreatedAtUtc = o.CreatedAt
             });
 
@@ -242,6 +244,7 @@ public class AdminOrderService : IAdminOrderService
                 MarketplaceOrderId = subOrder.MarketplaceOrderId,
                 SourceLabel = "Marketplace",
                 IsMarketplaceOrder = true,
+                IsSyntheticQa = false,
                 CreatedAtUtc = subOrder.CreatedAt
             });
 
@@ -316,6 +319,7 @@ public class AdminOrderService : IAdminOrderService
         SourceOrderId = row.SourceOrderId ?? row.MarketplaceOrderId?.ToString(),
         SourceLabel = row.SourceLabel,
         IsMarketplaceOrder = row.IsMarketplaceOrder,
+        IsSyntheticQa = row.IsSyntheticQa,
         MarketplaceLineage = null,
         CreatedAtUtc = row.CreatedAtUtc
     };
@@ -341,6 +345,7 @@ public class AdminOrderService : IAdminOrderService
         public Guid? MarketplaceOrderId { get; init; }
         public string? SourceLabel { get; init; }
         public bool IsMarketplaceOrder { get; init; }
+        public bool IsSyntheticQa { get; init; }
         public DateTime CreatedAtUtc { get; init; }
     }
 
@@ -406,6 +411,8 @@ public class AdminOrderService : IAdminOrderService
             cancellationToken);
 
         var orderDetails = MapToDetailsDto(order, paymentIntents, shipment, affiliateAttribution);
+        orderDetails.IsSyntheticQa = await _context.SyntheticQaOrders.AsNoTracking()
+            .AnyAsync(qa => qa.OrderId == orderId && qa.TenantId == tenantId, cancellationToken);
 
         _logger.LogInformation(
             "GetOrderDetails | TenantId: {TenantId} | OrderId: {OrderId} | OrderNumber: {OrderNumber} | Status: {Status} | CorrelationId: {CorrelationId}",

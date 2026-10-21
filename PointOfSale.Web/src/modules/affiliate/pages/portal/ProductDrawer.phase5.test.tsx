@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import ProductDrawer from './ProductDrawer'
 
 vi.mock('../../../../services/affiliateApi', () => ({ default: {
-  getProductIntelligence: vi.fn().mockResolvedValue(null), createPromotionLink: vi.fn(),
+  getProductIntelligence: vi.fn().mockResolvedValue(null), createPromotionLink: vi.fn(), listPromotionLinks: vi.fn().mockResolvedValue([]),
 } }))
 vi.mock('../../i18n/LanguageContext', () => ({ useLanguage: () => ({ t: (key: string) => key }) }))
 

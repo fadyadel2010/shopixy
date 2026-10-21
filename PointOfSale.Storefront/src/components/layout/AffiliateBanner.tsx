@@ -8,15 +8,12 @@
  * and that the products shown are curated by the affiliate.
  */
 
-import React from 'react';
-import { isAffiliateRefActive, getAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
+import React, { useSyncExternalStore } from 'react';
+import { subscribeAffiliateRef, getConfirmedAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
 
 export const AffiliateBanner: React.FC = () => {
-    const isActive = isAffiliateRefActive();
-
-    if (!isActive) return null;
-
-    const refCode = getAffiliateRefCode();
+    const refCode = useSyncExternalStore(subscribeAffiliateRef, getConfirmedAffiliateRefCode);
+    if (!refCode) return null;
 
     return (
         <div

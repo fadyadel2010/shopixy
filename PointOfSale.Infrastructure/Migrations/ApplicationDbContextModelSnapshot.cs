@@ -298,6 +298,7 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("UpdatedAtUtc")
+                        .IsConcurrencyToken()
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("CampaignCostId");
@@ -10829,13 +10830,6 @@ namespace PointOfSale.Infrastructure.Migrations
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Geographic.AddressAdmissionEvidence", b =>
                 {
-                    b.Property<string>("CanonicalAddressEvidenceJson")
-                        .HasColumnType("text");
-
-                    b.Property<string>("PostalCode")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
@@ -10851,6 +10845,9 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.Property<DateTime>("AdmittedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CanonicalAddressEvidenceJson")
+                        .HasColumnType("text");
 
                     b.Property<Guid>("CatalogReleaseId")
                         .HasColumnType("uuid");
@@ -10882,6 +10879,10 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.Property<Guid?>("OwnerId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("RawInputEvidenceObjectKey")
                         .HasColumnType("text");
@@ -20067,7 +20068,50 @@ namespace PointOfSale.Infrastructure.Migrations
                         });
                 });
 
-            ShippingWebhookOwnerClaims.AddClaimTarget(modelBuilder);
+            modelBuilder.Entity("PointOfSale.Core.Entities.ShippingWebhookClaim", b =>
+                {
+                    b.Property<Guid>("LogId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Generation")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("AcquiredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("Owner")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("LogId", "Generation");
+
+                    b.HasIndex("LogId", "Owner")
+                        .IsUnique();
+
+                    b.ToTable("ShippingWebhookClaims", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ShippingWebhookClaims_Generation", "\"Generation\" > 0");
+
+                            t.HasCheckConstraint("CK_ShippingWebhookClaims_Outcome", "\"Outcome\" IN ('Processing','Completed','Failed') AND ((\"Outcome\" = 'Processing' AND \"FinishedAt\" IS NULL) OR (\"Outcome\" <> 'Processing' AND \"FinishedAt\" IS NOT NULL))");
+                        });
+                });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.ShippingWebhookLog", b =>
                 {
@@ -21482,6 +21526,7 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTime?>("UpdatedAtUtc")
+                        .IsConcurrencyToken()
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid?>("UpdatedByUserId")
@@ -22056,6 +22101,193 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasFilter("\"IsDeleted\" = false AND \"TransactionType\" = 11");
 
                     b.ToTable("SupplierTransactions", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaCommissionPosting", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Credit")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Debit")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("PostedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Provenance")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .IsUnique();
+
+                    b.ToTable("SyntheticQaCommissionPostings", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime?>("ConsumedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Credit")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Debit")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTime>("IssuedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Nonce")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provenance")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ShipmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Signature")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("VerifierId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Nonce")
+                        .IsUnique();
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("ShipmentId");
+
+                    b.HasIndex("OrderId", "Kind")
+                        .IsUnique();
+
+                    b.ToTable("SyntheticQaEvidence", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaOrder", b =>
+                {
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("EnrolledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("OrderId");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("SyntheticQaOrders", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PromotionLinkId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provenance")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("VerifierId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("PromotionLinkId");
+
+                    b.ToTable("SyntheticQaRuns", (string)null);
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.SystemSchemaVersion", b =>
@@ -26121,6 +26353,15 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("FulfillmentWarehouse");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.ShippingWebhookClaim", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.ShippingWebhookLog", null)
+                        .WithMany()
+                        .HasForeignKey("LogId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificate", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Domain", "Domain")
@@ -26527,6 +26768,65 @@ namespace PointOfSale.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Supplier");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaCommissionPosting", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.SyntheticQaOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaEvidence", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.SyntheticQaOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.SyntheticQaRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Shipment", null)
+                        .WithMany()
+                        .HasForeignKey("ShipmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaOrder", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.SyntheticQaRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SyntheticQaRun", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.OnlineCustomer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Affiliate.AffiliatePromotionLink", null)
+                        .WithMany()
+                        .HasForeignKey("PromotionLinkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.SystemSetting", b =>

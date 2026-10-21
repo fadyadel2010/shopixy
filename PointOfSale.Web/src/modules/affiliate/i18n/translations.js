@@ -190,6 +190,11 @@ const translations = {
             },
 
             discoverTab: {
+                all: 'All',
+                retry: 'Retry',
+                browseAll: 'Browse all products',
+                loadError: 'Failed to load products',
+                categoryError: 'Failed to load categories',
                 searchPlaceholder: 'Search products to promote...',
                 productsCount: 'products',
                 forQuery: 'for',
@@ -222,6 +227,11 @@ const translations = {
             },
 
             drawer: {
+                generating: 'Generating link...',
+                linkError: 'The link could not be created or copied. Please retry.',
+                noLink: 'Click Promote to create a product link',
+                loadError: 'Failed to load product details',
+                visitStorefront: 'Visit Storefront',
                 productPrice: 'Product Price',
                 yourCommission: 'Your Commission',
                 rate: 'rate',
@@ -240,6 +250,9 @@ const translations = {
             },
 
             linksTab: {
+                loadError: 'Failed to load promotion links',
+                retryDesc: 'Your saved links have not been removed. Please retry.',
+                actionError: 'The action failed. Please retry.',
                 comingSoon: 'Coming Soon',
                 comingSoonDesc: 'Product-level promotion links are being set up. You can still promote products using your referral code from the Promote tab.',
                 sessionExpired: 'Session Expired',
@@ -583,6 +596,11 @@ const translations = {
             },
 
             discoverTab: {
+                all: 'الكل',
+                retry: 'إعادة المحاولة',
+                browseAll: 'تصفح جميع المنتجات',
+                loadError: 'تعذر تحميل المنتجات',
+                categoryError: 'تعذر تحميل التصنيفات',
                 searchPlaceholder: 'ابحث عن منتجات للترويج...',
                 productsCount: 'منتج',
                 forQuery: 'لـ',
@@ -615,6 +633,11 @@ const translations = {
             },
 
             drawer: {
+                generating: 'جارٍ إنشاء الرابط...',
+                linkError: 'تعذر إنشاء الرابط أو نسخه. يرجى إعادة المحاولة.',
+                noLink: 'انقر على روّج لإنشاء رابط للمنتج',
+                loadError: 'تعذر تحميل تفاصيل المنتج',
+                visitStorefront: 'زيارة المتجر',
                 productPrice: 'سعر المنتج',
                 yourCommission: 'عمولتك',
                 rate: 'نسبة',
@@ -633,6 +656,9 @@ const translations = {
             },
 
             linksTab: {
+                loadError: 'تعذر تحميل روابط الترويج',
+                retryDesc: 'لم تتم إزالة روابطك المحفوظة. يرجى إعادة المحاولة.',
+                actionError: 'تعذر تنفيذ الإجراء. يرجى إعادة المحاولة.',
                 comingSoon: 'قريباً',
                 comingSoonDesc: 'جاري إعداد إدارة روابط المنتجات. لا يزال بإمكانك ترويج المنتجات باستخدام كود الإحالة الخاص بك من تبويب الترويج.',
                 sessionExpired: 'انتهت الجلسة',

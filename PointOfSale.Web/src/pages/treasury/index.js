@@ -15,6 +15,7 @@ export { default as TreasuryCashFlow } from './TreasuryCashFlow'
 export { default as TreasuryGeneralLedger } from './TreasuryGeneralLedger'
 export { default as TreasuryClearingAging } from './TreasuryClearingAging'
 export { default as TreasuryManualCodSettlement } from './TreasuryManualCodSettlement'
+export { default as TreasuryManualWalletSettlement } from './TreasuryManualWalletSettlement'
 export { default as TreasuryCarrierRemittance } from './TreasuryCarrierRemittance'
 export { default as TreasuryTransfers } from './TreasuryTransfers'
 

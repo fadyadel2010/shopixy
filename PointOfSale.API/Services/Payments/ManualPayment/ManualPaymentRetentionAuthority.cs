@@ -148,7 +148,7 @@ public sealed class ManualPaymentRetentionAuthority : IManualPaymentRetentionAut
     {
         var options = _options.Value;
         var validation = ManualPaymentConfigurationValidator.Validate(options);
-        if (!validation.IsValid || !ManualPaymentOptionsValidator.IsProviderEnabled(options))
+        if (!validation.IsValid)
         {
             throw ManualPaymentApplicationException.InvalidConfiguration();
         }

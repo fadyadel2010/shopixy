@@ -20,6 +20,15 @@ const order = {
 }
 
 describe('Marketplace order lifecycle authority', () => {
+    it('admits the exact synthetic Storefront enum only with backend audit provenance', () => {
+        const synthetic = { orderId: 'qa', source: 'Ecommerce', isMarketplaceOrder: false,
+            isSyntheticQa: true, status: 'Delivered', paymentStatus: 'SyntheticQaCollected', rowVersion: '123' }
+        expect(requireMarketplaceOrderLifecycleAuthority(synthetic)).toBe(synthetic)
+        expect(() => requireMarketplaceOrderLifecycleAuthority({ ...synthetic, isSyntheticQa: false })).toThrow(/malformed payment/)
+        expect(() => requireMarketplaceOrderLifecycleAuthority({ ...synthetic, isMarketplaceOrder: true })).toThrow(/malformed payment/)
+        expect(() => requireMarketplaceOrderLifecycleAuthority({ ...synthetic, source: 'Marketplace' })).toThrow(/malformed payment/)
+        expect(() => requireMarketplaceOrderLifecycleAuthority({ ...synthetic, paymentStatus: 'UnknownFuturePaid' })).toThrow(/malformed payment/)
+    })
     it('accepts current backend lifecycle and split lifecycle evidence', () => {
         expect(requireMarketplaceOrderLifecycleAuthority(order)).toBe(order)
         expect(requireMarketplaceOrderLifecycleListAuthority({ items: [order] })).toEqual({ items: [order] })

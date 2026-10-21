@@ -2,11 +2,14 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using PointOfSale.API.Services;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Elasticsearch.Services;
+using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Reliability;
 
@@ -69,6 +72,15 @@ public class AffiliatePromotionLinksController : ControllerBase
         if (!Guid.TryParse(affiliateUserIdClaim, out var affiliateUserId))
             return Unauthorized(new { error = "Invalid affiliate identity" });
 
+        var affiliate = await _dbContext.AffiliateUsers.IgnoreQueryFilters()
+            .Include(u => u.AffiliateAccount)
+            .SingleOrDefaultAsync(u => u.Id == affiliateUserId && !u.IsDeleted, ct);
+        if (affiliate == null || !affiliate.EmailVerified ||
+            affiliate.AffiliateAccount is not { IsDeleted: false, IsActive: true } ||
+            affiliate.AffiliateAccount.UserId != affiliateUserId ||
+            User.FindFirst("affiliate_account_id")?.Value != affiliate.AffiliateAccountId.ToString())
+            return Unauthorized(new { error = "Invalid affiliate identity" });
+
         // Selection Admission: current backend SQL eligibility is required before
         // an affiliate/product relationship can be created or reactivated.
         var product = await _dbContext.Products
@@ -95,32 +107,50 @@ public class AffiliatePromotionLinksController : ControllerBase
                 existingLink.Activate();
                 await _dbContext.SaveChangesAsync(ct);
             }
-            return Ok(await MapToResponseAsync(existingLink, requireCurrentSelectionAdmission: true, ct));
+            var existingResponse = await MapToResponseAsync(existingLink, requireCurrentSelectionAdmission: true, ct);
+            return existingResponse == null
+                ? BadRequest(new { error = "Product is not enabled for affiliate promotion" })
+                : Ok(existingResponse);
         }
 
-        // Generate unique referral code
-        var referralCode = await GenerateUniqueReferralCodeAsync(ct);
-
-        // Resolve AffiliateAccountId for dual-write bridge
-        var affiliateAccountId = await _dbContext.AffiliateUsers
-            .IgnoreQueryFilters()
-            .Where(u => u.Id == affiliateUserId && !u.IsDeleted)
-            .Select(u => (Guid?)u.AffiliateAccountId)
-            .FirstOrDefaultAsync(ct);
-
-        var link = AffiliatePromotionLink.Create(
-            tenantId, affiliateUserId, request.ProductId,
-            referralCode, affiliateAccountId);
-
-        _dbContext.AffiliatePromotionLinks.Add(link);
-        await _dbContext.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "[AF-15] Promotion link created | LinkId: {LinkId} | AffiliateUserId: {AffiliateUserId} | " +
-            "ProductId: {ProductId} | StoreId: {StoreId} | ReferralCode: {ReferralCode}",
-            link.Id, affiliateUserId, request.ProductId, tenantId, referralCode);
-
-        return CreatedAtAction(nameof(GetById), new { id = link.Id }, await MapToResponseAsync(link, requireCurrentSelectionAdmission: true, ct));
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var referralCode = await GenerateUniqueReferralCodeAsync(ct);
+            var link = AffiliatePromotionLink.Create(
+                product.TenantId, affiliateUserId, product.Id, referralCode, affiliate.AffiliateAccountId);
+            _dbContext.AffiliatePromotionLinks.Add(link);
+            // Do not persist a relationship for which no supported destination exists.
+            var response = await MapToResponseAsync(link, requireCurrentSelectionAdmission: true, ct);
+            if (response?.PromotionUrl == null)
+            {
+                _dbContext.Entry(link).State = EntityState.Detached;
+                return BadRequest(new { error = "Product is not enabled for affiliate promotion" });
+            }
+            try
+            {
+                await _dbContext.SaveChangesAsync(ct);
+                response.CreatedAt = link.CreatedAt;
+                _logger.LogInformation("[AF-15] Promotion link created | LinkId: {LinkId} | ProductId: {ProductId} | StoreId: {StoreId}",
+                    link.Id, product.Id, product.TenantId);
+                return CreatedAtAction(nameof(GetById), new { id = link.Id }, response);
+            }
+            catch (DbUpdateException ex) when (IsPromotionUniqueConflict(ex))
+            {
+                // A competing retry may have committed the logical link. The failed
+                // insert is atomic; detach it before reading the winner or retrying a code.
+                _dbContext.Entry(link).State = EntityState.Detached;
+                var winner = await _dbContext.AffiliatePromotionLinks.IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(l => l.AffiliateUserId == affiliateUserId &&
+                        l.TenantId == product.TenantId && l.ProductId == product.Id && !l.IsDeleted, ct);
+                if (winner != null)
+                {
+                    var admitted = await MapToResponseAsync(winner, requireCurrentSelectionAdmission: true, ct);
+                    if (admitted == null) return BadRequest(new { error = "Product is not enabled for affiliate promotion" });
+                    return Ok(admitted);
+                }
+            }
+        }
+        return Conflict(new { error = "Promotion link could not be created. Please retry." });
     }
 
     /// <summary>
@@ -218,6 +248,10 @@ public class AffiliatePromotionLinksController : ControllerBase
     }
 
     // ═══════════════════════════════════════════════════════════════════
+
+    internal static bool IsPromotionUniqueConflict(DbUpdateException exception) =>
+        exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } postgres &&
+        postgres.ConstraintName is "UQ_AffiliatePromotionLinks_User_Store_Product" or "UQ_AffiliatePromotionLinks_ReferralCode";
     // HELPERS
     // ═══════════════════════════════════════════════════════════════════
 
@@ -244,8 +278,8 @@ public class AffiliatePromotionLinksController : ControllerBase
                 return code;
         }
 
-        // Fallback: longer code to reduce collision probability
-        return GenerateCode(14);
+        // Never return an unchecked code or reserve one outside the atomic insert.
+        throw new InvalidOperationException("Unable to generate a unique promotion code");
     }
 
     private static string GenerateCode(int length)
@@ -264,7 +298,7 @@ public class AffiliatePromotionLinksController : ControllerBase
         if (product.IsDeleted ||
             !product.IsActive ||
             product.PublishStatus != PublishStatus.Published ||
-            !product.IsOnlineVisible)
+            !product.IsOnlineVisible || !product.IsSearchable)
         {
             return false;
         }
@@ -290,8 +324,9 @@ public class AffiliatePromotionLinksController : ControllerBase
                   _dbContext.AffiliateCategories
                       .IgnoreQueryFilters()
                       .Any(parent =>
-                          parent.Id == item.category.ParentId.Value &&
-                          parent.Level == 1 &&
+                           parent.Id == item.category.ParentId.Value &&
+                           parent.Level == 1 &&
+                           parent.ParentId == null &&
                           parent.IsActive &&
                           !parent.IsDeleted))),
                 ct);
@@ -305,7 +340,20 @@ public class AffiliatePromotionLinksController : ControllerBase
             return false;
         }
 
-        return await HasAvailableAffiliateInventoryAsync(product, ct);
+        if (!await HasAvailableAffiliateInventoryAsync(product, ct)) return false;
+
+        // Use the same current catalog pricing, semantic variants, unit/category,
+        // merchant lifecycle and stock authority as discovery. In particular, a
+        // priced variant and a DIFFERENT stocked/unpriced variant cannot combine
+        // to make a product promotable.
+        var current = await ProductSearchSqlAuthorityOverlay.ApplyAsync(_dbContext,
+            new ProductDocument { ProductId = product.Id, TenantId = product.TenantId }, product.TenantId, ct);
+        var tenant = await _dbContext.Tenants.AsNoTracking().IgnoreQueryFilters()
+            .SingleOrDefaultAsync(t => t.Id == product.TenantId && t.IsActive &&
+                t.Status == TenantStatus.Active && t.DeletedAtUtc == null, ct);
+        return current is { IsActive: true, IsOnlineVisible: true, IsSearchable: true, IsAffiliateEnabled: true } &&
+            current.TryResolveAffiliatePublicPricing(out var pricing) && pricing.InStock &&
+            tenant != null && _urlResolver.TryResolve(tenant, out _);
     }
 
     private async Task<bool> HasPositiveAffiliatePriceAsync(Product product, CancellationToken ct)
@@ -388,7 +436,7 @@ public class AffiliatePromotionLinksController : ControllerBase
         var tenant = await _dbContext.Tenants
             .AsNoTracking()
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(t => t.Id == link.TenantId && t.IsActive && t.DeletedAtUtc == null, ct);
+            .FirstOrDefaultAsync(t => t.Id == link.TenantId && t.IsActive && t.Status == TenantStatus.Active && t.DeletedAtUtc == null, ct);
 
         string? storefrontBaseUrl = null;
         if (tenant != null)
@@ -417,6 +465,8 @@ public class AffiliatePromotionLinksController : ControllerBase
             Id = link.Id,
             ProductId = link.ProductId,
             ProductSlug = productSlug,
+            ProductName = product.Name,
+            StoreName = tenant?.Name,
             StoreId = link.TenantId,
             ReferralCode = link.ReferralCode,
             IsActive = link.IsActive,
@@ -444,6 +494,8 @@ public class PromotionLinkResponse
     public Guid ProductId { get; set; }
     /// <summary>AF-16D: Product slug for URL path construction.</summary>
     public string? ProductSlug { get; set; }
+    public string? ProductName { get; set; }
+    public string? StoreName { get; set; }
     public Guid StoreId { get; set; }
     public string ReferralCode { get; set; } = string.Empty;
     public bool IsActive { get; set; }

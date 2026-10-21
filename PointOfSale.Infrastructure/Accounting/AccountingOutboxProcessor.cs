@@ -80,6 +80,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         "GatewaySettlement",
         "CodSettlement",
         "ManualCodSettlement",
+        "ManualWalletSettlement",
         "CarrierCashRemittance",
         "CommerceHubLedgerPosting"
     };
@@ -779,6 +780,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             "GatewaySettlement"         => await ProcessGatewaySettlementAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "CodSettlement"             => await ProcessCodSettlementAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "ManualCodSettlement"       => await ManualCodSettlementAuthority.RecoverReceiptAsync(db, message, ct),
+            "ManualWalletSettlement"    => await ManualWalletSettlementAuthority.RecoverReceiptAsync(db, message, ct),
             "CarrierCashRemittance"     => await CarrierRemittanceAuthority.RecoverReceiptAsync(db, message, ct),
             // CommerceHub: posts each operational ledger entry to the GL so the ReadinessGate
             // can verify accounting coverage before authorising outward money movement.

@@ -123,6 +123,14 @@ public sealed class ManualPaymentOptionsValidator : IValidateOptions<ManualPayme
             : ValidateOptionsResult.Fail(result.Errors);
     }
 
+    /// <summary>
+    /// Legacy deployment activation diagnostic.
+    ///
+    /// Manual Wallet has no gateway, so an independent deployment-level runtime-enable
+    /// switch can only make an otherwise correctly configured and operational wallet
+    /// unavailable. It is retained for backwards-compatible configuration binding and
+    /// reporting only; the activation contract does not read it.
+    /// </summary>
     public static bool IsProviderEnabled(ManualPaymentOptions options) =>
         options.Enabled || options.FeatureFlags.Enabled;
 }
@@ -142,19 +150,21 @@ public static class ManualPaymentConfigurationValidator
     {
         var errors = new List<string>();
         var warnings = new List<string>();
-        var enabled = ManualPaymentOptionsValidator.IsProviderEnabled(options);
 
-        if (!options.Enabled && options.FeatureFlags.Enabled)
-        {
-            errors.Add("Manual Payment provider must be enabled when the Manual Payment foundation feature flag is enabled.");
-        }
+        // The Manual Payment foundation is a platform capability, not a gateway.
+        //
+        // There is deliberately no independent deployment-level runtime-enable switch:
+        // a merchant wallet is activated by the tenant-owned payment method state, and
+        // the runtime additionally requires a complete, valid foundation - a usable
+        // manual channel, customer instructions, customer proof, an expiration policy and
+        // the certified review, approval and rejection workflows. A deployment may narrow
+        // the foundation (for example restrict the supported channels) but it can no
+        // longer hide an otherwise correctly configured and operational wallet.
+        const bool enabled = true;
 
         ValidateProofConfiguration(options.Proof, errors);
 
-        if (enabled)
-        {
-            ValidateEnabledConfiguration(options, errors);
-        }
+        ValidateEnabledConfiguration(options, errors);
 
         if (!options.Capabilities.SupportsTenantScopedConfiguration)
         {

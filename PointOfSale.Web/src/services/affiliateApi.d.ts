@@ -5,7 +5,7 @@ export const affiliateApi: {
     updatePayoutWallet(walletNumber: string, walletType: string): Promise<ApiJson>;
     discoverProducts(options?: { q?: string; categoryId?: string; page?: number; pageSize?: number }): Promise<ApiJson>;
     discoverProductsIntelligence(options?: { search?: string; minCommissionRate?: number; inStockOnly?: boolean; storeTenantId?: string; categorySlug?: string; sort?: string; page?: number; pageSize?: number }): Promise<ApiJson>;
-    getDiscoverCategories(): Promise<ApiJson>; getProductIntelligence(id: string): Promise<ApiJson>;
+    getDiscoverCategories(storeTenantId?: string): Promise<ApiJson>; getProductIntelligence(id: string): Promise<ApiJson>;
     getAnalyticsSummary(range?: number): Promise<ApiJson>; getAnalyticsTrend(range?: number): Promise<ApiJson>;
     getAnalyticsTopProducts(range?: number, limit?: number): Promise<ApiJson>; getAnalyticsTopStores(range?: number, limit?: number): Promise<ApiJson>;
     getAnalyticsClicks(page?: number, pageSize?: number): Promise<ApiJson>; createPromotionLink(tenantId: string, productId: string): Promise<ApiJson>;

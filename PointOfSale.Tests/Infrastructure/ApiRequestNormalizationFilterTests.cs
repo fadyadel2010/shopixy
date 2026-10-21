@@ -15,6 +15,23 @@ namespace PointOfSale.Tests.Infrastructure;
 public class ApiRequestNormalizationFilterTests
 {
     [Fact]
+    public async Task AffiliateCookieRefresh_EmptyBodyDoesNotRequireLegacyBodyToken()
+    {
+        var context = CreateActionExecutingContext(new Dictionary<string, object?>
+        {
+            ["request"] = new PointOfSale.API.Controllers.AffiliateRefreshDto()
+        }, "affiliate-cookie-refresh");
+        var invoked = false;
+        await new ApiRequestNormalizationFilter().OnActionExecutionAsync(context, () =>
+        {
+            invoked = true;
+            return Task.FromResult(new ActionExecutedContext(context, [], context.Controller));
+        });
+        Assert.True(invoked);
+        Assert.Null(context.Result);
+    }
+
+    [Fact]
     public async Task HeaderAnnouncement_OptionalEmptyFieldsPassCanonicalRequestNormalization()
     {
         var context = CreateActionExecutingContext(new Dictionary<string, object?>

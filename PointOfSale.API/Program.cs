@@ -63,6 +63,9 @@ using Polly;
 using Polly.Extensions.Http;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.Configure<PointOfSale.Infrastructure.Services.SyntheticQaOptions>(
+    builder.Configuration.GetSection("SyntheticQa"));
+builder.Services.AddScoped<PointOfSale.Infrastructure.Services.SyntheticQaCertificationAuthority>();
 builder.Configuration
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true)
@@ -2106,6 +2109,7 @@ builder.Services.AddMassTransit(x =>
     // All consumers are idempotent — duplicate events are silently ignored.
     // =============================================================================
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.OnlinePaymentCapturedAffiliateConsumer>();
+    x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.SyntheticQaCollectionAffiliateConsumer>();
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.CodDeliveredAffiliateConsumer>();
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.WalletPaymentApprovedAffiliateConsumer>();
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.OrderCollectionAccountingPostedAffiliateConsumer>();

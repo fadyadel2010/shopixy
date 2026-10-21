@@ -1,7 +1,0 @@
-### Error
-Error: page.evaluate: AxiosError: Request failed with status code 403
-    at settle (http://ahramstore.localhost:5174/node_modules/.vite/deps/axios.js?v=e24ba418:1534:12)
-    at XMLHttpRequest.onloadend (http://ahramstore.localhost:5174/node_modules/.vite/deps/axios.js?v=e24ba418:1997:7)
-    at Axios.request (http://ahramstore.localhost:5174/node_modules/.vite/deps/axios.js?v=e24ba418:2930:41)
-    at async eval (eval at evaluate (:367:30), <anonymous>:3:17)
-    at async <anonymous>:393:30
